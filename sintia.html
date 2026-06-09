@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CosmoTools — SINTIA</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --navy:#0b1520;--sidebar:#080f1a;--panel:#111d2e;
+  --border:rgba(41,121,200,.2);--accent:#2979c8;--accent2:#1aab6d;
+  --warn:#e6a817;--text:#c8d8ea;--muted:#5a7a9a;
+  --mono:'IBM Plex Mono',monospace;--sans:'IBM Plex Sans',sans-serif;
+  --sidebar-w:220px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);background:var(--navy);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
+.app{display:flex;flex:1;min-height:0}
+
+/* Sidebar */
+.sidebar{width:var(--sidebar-w);min-width:var(--sidebar-w);background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;position:relative;z-index:50;transition:transform .25s ease}
+.sidebar-brand{padding:1.25rem 1.2rem .9rem;border-bottom:1px solid var(--border)}
+.sidebar-brand .name{font-family:var(--mono);font-size:.9rem;font-weight:600;color:#fff}
+.sidebar-brand .sub{font-size:.62rem;color:var(--muted);margin-top:.15rem}
+.sidebar-nav{flex:1;padding:.5rem 0;overflow-y:auto}
+.nav-section{font-family:var(--mono);font-size:.58rem;color:var(--muted);letter-spacing:.15em;text-transform:uppercase;padding:.75rem 1.2rem .3rem}
+.nav-item{display:flex;align-items:center;gap:.7rem;padding:.6rem 1.2rem;cursor:pointer;color:var(--muted);font-size:.82rem;transition:all .15s;border-left:2px solid transparent;user-select:none;text-decoration:none}
+.nav-item:hover{color:var(--text);background:rgba(41,121,200,.06)}
+.nav-item.active{color:var(--accent);background:rgba(41,121,200,.1);border-left-color:var(--accent)}
+.nav-icon{font-size:.95rem;width:18px;text-align:center;flex-shrink:0}
+.sidebar-footer{padding:.9rem 1.2rem;border-top:1px solid var(--border)}
+.db-pill{font-family:var(--mono);font-size:.63rem;padding:.3rem .6rem;border-radius:2px;border:1px solid;margin-bottom:.6rem;display:block}
+.db-pill.ok{border-color:var(--accent2);color:var(--accent2)}
+.db-pill.missing{border-color:var(--warn);color:var(--warn)}
+.back-link{font-size:.72rem;color:var(--accent);text-decoration:none;display:block;margin-bottom:.5rem}
+.back-link:hover{color:#fff}
+.logout{font-size:.72rem;color:var(--muted);text-decoration:none;display:block}
+.logout:hover{color:var(--text)}
+
+/* Main */
+.main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.topbar{background:#0a1220;border-bottom:1px solid var(--border);padding:.75rem 1.5rem;display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-shrink:0}
+.topbar-left{display:flex;align-items:center;gap:.75rem}
+.hamburger{display:none;background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer;padding:.25rem;line-height:1}
+.hamburger:hover{color:var(--text)}
+.topbar-title{font-family:var(--mono);font-size:.8rem;color:var(--accent);letter-spacing:.1em}
+.topbar-user{font-family:var(--mono);font-size:.7rem;color:var(--muted)}
+.content{flex:1;padding:1.75rem;overflow-y:auto}
+.panel{display:none}.panel.active{display:block}
+
+/* Cards / Forms */
+.card{background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:1.5rem;margin-bottom:1.25rem}
+.card-title{font-family:var(--mono);font-size:.68rem;color:var(--muted);letter-spacing:.12em;text-transform:uppercase;margin-bottom:.9rem}
+label{display:block;font-size:.7rem;font-weight:600;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:.3rem}
+input[type=text],input[type=number],select{width:100%;background:#0b1520;border:1px solid var(--border);border-radius:3px;color:var(--text);font-family:var(--mono);font-size:.85rem;padding:.55rem .8rem;outline:none;transition:border-color .2s}
+input:focus,select:focus{border-color:var(--accent)}
+select option{background:#111d2e}
+.form-row{display:grid;gap:.9rem;margin-bottom:.9rem}
+.form-row.cols2{grid-template-columns:1fr 1fr}
+.toggle-row{display:flex;align-items:center;gap:.75rem;margin-bottom:1rem}
+.toggle{position:relative;width:40px;height:21px;cursor:pointer;flex-shrink:0}
+.toggle input{opacity:0;width:0;height:0}
+.slider{position:absolute;inset:0;background:#1a2a3a;border-radius:21px;transition:.2s}
+.slider::before{content:"";position:absolute;height:15px;width:15px;left:3px;bottom:3px;background:var(--muted);border-radius:50%;transition:.2s}
+input:checked+.slider{background:rgba(41,121,200,.35)}
+input:checked+.slider::before{transform:translateX(19px);background:var(--accent)}
+.toggle-label{font-size:.8rem;color:var(--text)}
+.btn{display:inline-flex;align-items:center;gap:.5rem;border:none;border-radius:3px;cursor:pointer;font-family:var(--sans);font-weight:600;font-size:.85rem;padding:.6rem 1.2rem;transition:all .2s}
+.btn-primary{background:var(--accent);color:#fff}.btn-primary:hover{background:#1a6ab8}
+.btn-primary:disabled{background:#1a2a3a;color:var(--muted);cursor:not-allowed}
+.btn-full{width:100%;justify-content:center}
+.log-box{background:#070f18;border:1px solid var(--border);border-radius:3px;font-family:var(--mono);font-size:.72rem;color:#7aa8cc;padding:.9rem;height:160px;overflow-y:auto;margin-top:.9rem;display:none}
+.log-box.visible{display:block}
+.log-line{margin-bottom:.2rem}
+.log-line.ok{color:var(--accent2)}
+.log-line.err{color:#e07070}
+.download-area{display:none;margin-top:.9rem}
+.download-area.visible{display:flex;gap:.6rem;flex-wrap:wrap}
+.download-btn{display:inline-flex;align-items:center;gap:.4rem;background:rgba(26,171,109,.1);border:1px solid rgba(26,171,109,.3);border-radius:3px;color:var(--accent2);font-family:var(--mono);font-size:.72rem;padding:.45rem .9rem;text-decoration:none;cursor:pointer;transition:all .2s}
+.download-btn:hover{background:rgba(26,171,109,.2)}
+.alert{padding:.7rem .9rem;border-radius:3px;font-size:.8rem;margin-bottom:.9rem}
+.alert-warn{background:rgba(230,168,23,.1);border:1px solid rgba(230,168,23,.3);color:var(--warn)}
+.sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:40}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{width:13px;height:13px;border:2px solid rgba(255,255,255,.2);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;display:inline-block}
+
+/* Responsive */
+@media(max-width:768px){
+  .sidebar{position:fixed;top:0;left:0;bottom:0;transform:translateX(-100%);z-index:50}
+  .sidebar.open{transform:translateX(0)}
+  .sidebar-overlay.visible{display:block}
+  .hamburger{display:block}
+  .topbar-user{display:none}
+  .content{padding:1.1rem}
+  .form-row.cols2{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+<div class="app">
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <div class="name">SINTIA</div>
+      <div class="sub">Informes de Transmisión</div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section">Módulo</div>
+      <div class="nav-item active" data-tab="generar">
+        <span class="nav-icon">📊</span> Generar informe
+      </div>
+    </nav>
+    <div class="sidebar-footer">
+      <span class="db-pill {% if db_exists %}ok{% else %}missing{% endif %}">
+        {% if db_exists %}BD ✓ {{ db_size }} GB{% else %}BD no cargada{% endif %}
+      </span>
+      <a href="/" class="back-link">← Volver a CosmoTools</a>
+      <a href="/logout" class="logout">Salir</a>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-left">
+        <button class="hamburger" id="hamburger">☰</button>
+        <div class="topbar-title">SINTIA — Informes de Transmisión</div>
+      </div>
+      <div class="topbar-user">{{ username }}</div>
+    </div>
+
+    <div class="content">
+      <div class="panel active" id="tab-generar">
+        {% if not db_exists %}
+        <div class="alert alert-warn">⚠ La BD no está cargada. <a href="/admin" style="color:var(--accent)">Ir a Administración →</a></div>
+        {% endif %}
+        <div class="card">
+          <div class="card-title">Parámetros del informe</div>
+          <div class="form-row cols2">
+            <div>
+              <label>País emisor</label>
+              <select id="pais">
+                <option value="BO">Bolivia (BO)</option>
+                <option value="PY">Paraguay (PY)</option>
+                <option value="BR">Brasil (BR)</option>
+                <option value="CL">Chile (CL)</option>
+                <option value="UY">Uruguay (UY)</option>
+              </select>
+            </div>
+            <div>
+              <label>Año</label>
+              <input type="number" id="anio" value="{{ now.year }}" min="2020" max="2030">
+            </div>
+          </div>
+          <div class="form-row cols2">
+            <div>
+              <label>Mes desde</label>
+              <select id="mes_d">
+                {% for k,v in meses.items() %}<option value="{{ k }}" {% if k=='01' %}selected{% endif %}>{{ k }} — {{ v }}</option>{% endfor %}
+              </select>
+            </div>
+            <div>
+              <label>Mes hasta</label>
+              <select id="mes_h">
+                {% for k,v in meses.items() %}<option value="{{ k }}" {% if k==mes_ult %}selected{% endif %}>{{ k }} — {{ v }}</option>{% endfor %}
+              </select>
+            </div>
+          </div>
+          <div class="toggle-row">
+            <label class="toggle">
+              <input type="checkbox" id="usar_ia" {% if api_key %}checked{% endif %} {% if not api_key %}disabled{% endif %}>
+              <span class="slider"></span>
+            </label>
+            <span class="toggle-label">Narrativa con IA{% if not api_key %} <span style="color:var(--warn);font-size:.72rem;">(API key no configurada)</span>{% endif %}</span>
+          </div>
+          <button class="btn btn-primary btn-full" id="btn-generar" {% if not db_exists %}disabled{% endif %}>Generar informe</button>
+        </div>
+        <div class="log-box" id="log-box"></div>
+        <div class="download-area" id="download-area"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const sidebar = document.getElementById('sidebar');
+const overlay = document.getElementById('sidebar-overlay');
+document.getElementById('hamburger').addEventListener('click', () => { sidebar.classList.toggle('open'); overlay.classList.toggle('visible'); });
+overlay.addEventListener('click', () => { sidebar.classList.remove('open'); overlay.classList.remove('visible'); });
+
+document.getElementById('btn-generar').addEventListener('click', () => {
+  const pais=document.getElementById('pais').value, anio=document.getElementById('anio').value;
+  const mes_d=document.getElementById('mes_d').value, mes_h=document.getElementById('mes_h').value;
+  const usar_ia=document.getElementById('usar_ia').checked;
+  const logBox=document.getElementById('log-box'), dlArea=document.getElementById('download-area');
+  logBox.classList.add('visible'); logBox.innerHTML='';
+  dlArea.classList.remove('visible'); dlArea.innerHTML='';
+  const btn=document.getElementById('btn-generar');
+  btn.disabled=true; btn.innerHTML='<span class="spinner"></span> Generando...';
+  addLog(logBox,'Iniciando generación del informe...');
+  fetch('/api/generar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pais,anio,mes_d,mes_h,usar_ia})})
+    .then(r=>r.json()).then(data=>{
+      if(!data.ok){addLog(logBox,'✗ '+data.error,'err');resetBtn(btn);return}
+      pollJob(data.job_id,logBox,dlArea,btn);
+    });
+});
+function pollJob(jobId,logBox,dlArea,btn){
+  let lastLen=0;
+  const iv=setInterval(()=>{
+    fetch('/api/job/'+jobId).then(r=>r.json()).then(data=>{
+      const logs=data.log||[]; logs.slice(lastLen).forEach(l=>addLog(logBox,l)); lastLen=logs.length;
+      if(data.status==='done'){
+        clearInterval(iv); resetBtn(btn);
+        (data.files||[]).forEach((f,i)=>{
+          const a=document.createElement('a'); a.href=`/api/download/${jobId}/${i}`;
+          a.className='download-btn'; a.textContent=(f.endsWith('.docx')?'📄 Descargar Word':'📊 Descargar Excel');
+          dlArea.appendChild(a);
+        });
+        dlArea.classList.add('visible');
+      } else if(data.status==='error'){clearInterval(iv);resetBtn(btn)}
+    });
+  },1200);
+}
+function addLog(box,msg,cls){
+  const div=document.createElement('div');
+  div.className='log-line'+(cls?' '+cls:msg.includes('✓')?' ok':msg.includes('✗')||msg.includes('Error')?' err':'');
+  div.textContent=msg; box.appendChild(div); box.scrollTop=box.scrollHeight;
+}
+function resetBtn(btn){btn.disabled=false;btn.innerHTML='Generar informe'}
+</script>
+</body>
+</html>
