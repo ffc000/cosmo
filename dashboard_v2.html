@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CosmoTools</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --navy:#0b1520;--panel:#111d2e;--panel2:#0d1828;
+  --border:rgba(41,121,200,.18);--accent:#2979c8;--accent2:#1aab6d;
+  --warn:#e6a817;--text:#c8d8ea;--muted:#5a7a9a;--dim:#3a5a7a;
+  --mono:'IBM Plex Mono',monospace;--sans:'IBM Plex Sans',sans-serif;
+}
+html,body{height:100%;margin:0}
+body{font-family:var(--sans);background:var(--navy);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
+
+/* ── Header ── */
+.header{
+  background:rgba(8,15,26,.95);border-bottom:1px solid var(--border);
+  padding:.9rem 2rem;display:flex;align-items:center;justify-content:space-between;
+  position:sticky;top:0;z-index:10;backdrop-filter:blur(8px);
+}
+.brand{display:flex;align-items:center;gap:.6rem;text-decoration:none}
+.brand-text{font-family:var(--mono);font-size:1rem;font-weight:600;color:#fff}
+.brand-text span{color:var(--accent)}
+.brand-dot{width:6px;height:6px;border-radius:50%;background:var(--accent2);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.8)}}
+.header-right{display:flex;align-items:center;gap:1.5rem}
+.header-user{font-family:var(--mono);font-size:.72rem;color:var(--muted);display:flex;align-items:center;gap:.4rem}
+.header-user::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--accent2);display:inline-block}
+.header-logout{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-decoration:none;padding:.3rem .6rem;border:1px solid var(--border);border-radius:3px;transition:all .2s}
+.header-logout:hover{color:var(--text);border-color:rgba(41,121,200,.4)}
+
+/* ── Layout ── */
+.main{flex:1;padding:2rem;max-width:1200px;margin:0 auto;width:100%}
+
+/* ── Status bar ── */
+.status-bar{
+  background:var(--panel2);border:1px solid var(--border);border-radius:6px;
+  padding:.9rem 1.5rem;display:flex;align-items:center;gap:2rem;
+  margin-bottom:2.5rem;flex-wrap:wrap;
+}
+.status-indicator{display:flex;align-items:center;gap:.5rem}
+.status-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.status-dot.ok{background:var(--accent2);box-shadow:0 0 6px var(--accent2)}
+.status-dot.warn{background:var(--warn);box-shadow:0 0 6px var(--warn)}
+.status-label{font-family:var(--mono);font-size:.72rem}
+.status-label.ok{color:var(--accent2)}
+.status-label.warn{color:var(--warn)}
+.status-divider{width:1px;height:20px;background:var(--border)}
+.status-stat{font-family:var(--mono);font-size:.7rem;color:var(--muted)}
+.status-stat span{color:var(--text);font-weight:600}
+.status-time{font-family:var(--mono);font-size:.65rem;color:var(--dim);margin-left:auto}
+
+/* ── Section label ── */
+.section-label{
+  font-family:var(--mono);font-size:.62rem;color:var(--muted);
+  letter-spacing:.2em;text-transform:uppercase;margin-bottom:1.1rem;
+  display:flex;align-items:center;gap:.75rem;
+}
+.section-label::after{content:'';flex:1;height:1px;background:var(--border)}
+
+/* ── Module cards ── */
+.modules-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:1.1rem;margin-bottom:2.5rem}
+.module-card{
+  background:var(--panel);border:1px solid var(--border);border-radius:8px;
+  padding:1.75rem;cursor:pointer;text-decoration:none;color:inherit;
+  transition:all .2s;display:block;position:relative;overflow:hidden;
+}
+.module-card::after{
+  content:'';position:absolute;bottom:0;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,var(--accent),transparent);
+  opacity:0;transition:opacity .2s;
+}
+.module-card:hover{border-color:rgba(41,121,200,.45);background:#131f30;transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.3)}
+.module-card:hover::after{opacity:1}
+.module-card.vua::after{background:linear-gradient(90deg,var(--accent2),transparent)}
+.module-card.vua:hover{border-color:rgba(26,171,109,.4)}
+.module-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:1rem}
+.module-icon-wrap{width:44px;height:44px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:1.4rem;background:rgba(41,121,200,.12);border:1px solid rgba(41,121,200,.2)}
+.module-card.vua .module-icon-wrap{background:rgba(26,171,109,.12);border-color:rgba(26,171,109,.2)}
+.module-arrow{color:var(--dim);font-size:.9rem;margin-top:.2rem;transition:all .2s}
+.module-card:hover .module-arrow{color:var(--accent);transform:translateX(3px)}
+.module-card.vua:hover .module-arrow{color:var(--accent2)}
+.module-name{font-family:var(--mono);font-size:.9rem;font-weight:600;color:#fff;margin-bottom:.4rem}
+.module-desc{font-size:.8rem;color:var(--muted);line-height:1.55;margin-bottom:1rem}
+.module-tags{display:flex;flex-wrap:wrap;gap:.35rem}
+.module-tag{font-family:var(--mono);font-size:.6rem;padding:.18rem .5rem;border-radius:2px;border:1px solid rgba(41,121,200,.3);color:var(--dim)}
+.module-card.vua .module-tag{border-color:rgba(26,171,109,.3)}
+
+/* ── Admin cards ── */
+.admin-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:.8rem;margin-bottom:2.5rem}
+.admin-card{
+  background:var(--panel2);border:1px solid var(--border);border-radius:6px;
+  padding:1rem 1.2rem;cursor:pointer;text-decoration:none;color:inherit;
+  transition:all .15s;display:flex;align-items:center;gap:.85rem;
+}
+.admin-card:hover{border-color:rgba(41,121,200,.35);background:var(--panel)}
+.admin-icon{font-size:1.1rem;flex-shrink:0;width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:rgba(41,121,200,.08);border-radius:4px}
+.admin-name{font-size:.82rem;font-weight:600;color:var(--text);margin-bottom:.1rem}
+.admin-desc{font-size:.7rem;color:var(--muted)}
+.admin-badge{background:var(--warn);color:#000;font-family:var(--mono);font-size:.58rem;font-weight:700;padding:.1rem .35rem;border-radius:10px;margin-left:.4rem}
+
+/* ── Stats grid ── */
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:.75rem;margin-bottom:2.5rem}
+.stat-card{background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:.9rem 1.1rem}
+.stat-card-label{font-family:var(--mono);font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:.35rem}
+.stat-card-value{font-family:var(--mono);font-size:1.1rem;font-weight:600;color:var(--text)}
+.stat-card-sub{font-size:.68rem;color:var(--dim);margin-top:.15rem}
+
+/* ── Actividad reciente ── */
+.activity-list{background:var(--panel2);border:1px solid var(--border);border-radius:6px;overflow:hidden}
+.activity-item{display:flex;align-items:center;gap:1rem;padding:.75rem 1.25rem;border-bottom:1px solid rgba(41,121,200,.06);font-size:.78rem}
+.activity-item:last-child{border-bottom:none}
+.activity-item:hover{background:rgba(41,121,200,.04)}
+.activity-icon{font-size:.9rem;width:28px;text-align:center;flex-shrink:0}
+.activity-desc{flex:1;color:var(--text)}
+.activity-desc span{color:var(--muted);font-size:.72rem;margin-left:.4rem}
+.activity-time{font-family:var(--mono);font-size:.65rem;color:var(--dim);white-space:nowrap}
+.activity-empty{padding:1.5rem;text-align:center;color:var(--muted);font-size:.8rem}
+
+/* ── Responsive ── */
+@media(max-width:600px){
+  .header{padding:.75rem 1rem}
+  .main{padding:1.1rem}
+  .modules-grid{grid-template-columns:1fr}
+  .admin-grid{grid-template-columns:1fr 1fr}
+  .stats-grid{grid-template-columns:1fr 1fr}
+  .status-divider{display:none}
+  .status-time{display:none}
+  .header-user{display:none}
+}
+@media(max-width:380px){
+  .admin-grid{grid-template-columns:1fr}
+  .stats-grid{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <a href="/" class="brand">
+    <div class="brand-dot"></div>
+    <div class="brand-text">Cosmo<span>Tools</span></div>
+  </a>
+  <div class="header-right">
+    <div class="header-user">{{ username }}</div>
+    <a href="/logout" class="header-logout">Salir →</a>
+  </div>
+</div>
+
+<div class="main">
+
+  <!-- Status bar -->
+  <div class="status-bar">
+    {% if db_exists %}
+    <div class="status-indicator">
+      <div class="status-dot ok"></div>
+      <span class="status-label ok">BD operativa — {{ db_size }} GB</span>
+    </div>
+    <div class="status-divider"></div>
+    <div class="status-stat" id="stat-dat">DAT: <span>—</span></div>
+    <div class="status-divider"></div>
+    <div class="status-stat" id="stat-rech">Rechazos: <span>—</span></div>
+    {% else %}
+    <div class="status-indicator">
+      <div class="status-dot warn"></div>
+      <span class="status-label warn">Base de datos no cargada</span>
+    </div>
+    {% if role == 'admin' %}
+    <a href="/admin#bd" style="font-family:var(--mono);font-size:.7rem;color:var(--accent);text-decoration:none;margin-left:.5rem">Cargar BD →</a>
+    {% endif %}
+    {% endif %}
+    <div class="status-time" id="status-time"></div>
+  </div>
+
+  <!-- Módulos -->
+  <div class="section-label">Módulos</div>
+  <div class="modules-grid">
+
+    <a href="/sintia" class="module-card">
+      <div class="module-header">
+        <div class="module-icon-wrap">📊</div>
+        <div class="module-arrow">→</div>
+      </div>
+      <div class="module-name">SINTIA</div>
+      <div class="module-desc">Generación de informes de transmisión anticipada MIC-DTA. Análisis estadístico por país, período, estado operativo e indicadores de rechazo.</div>
+      <div class="module-tags">
+        <span class="module-tag">Bolivia</span>
+        <span class="module-tag">Paraguay</span>
+        <span class="module-tag">Brasil</span>
+        <span class="module-tag">Chile</span>
+        <span class="module-tag">Uruguay</span>
+      </div>
+    </a>
+
+    <a href="/vua" class="module-card vua">
+      <div class="module-header">
+        <div class="module-icon-wrap">✈️</div>
+        <div class="module-arrow">→</div>
+      </div>
+      <div class="module-name">VUA — Carga Aérea</div>
+      <div class="module-desc">Ventanilla Única Aeroportuaria. Gestión de minutas, consultas normativas, redacción de correos, validación BPMN y checklist XFWB.</div>
+      <div class="module-tags">
+        <span class="module-tag">RG 3596/2014</span>
+        <span class="module-tag">RG 4517/2019</span>
+        <span class="module-tag">RG 5756/2025</span>
+      </div>
+    </a>
+
+  </div>
+
+  {% if db_exists %}
+  <!-- Stats rápidas -->
+  <div class="section-label">Estadísticas</div>
+  <div class="stats-grid" id="stats-grid">
+    <div class="stat-card">
+      <div class="stat-card-label">Total registros DAT</div>
+      <div class="stat-card-value" id="s-dat">—</div>
+      <div class="stat-card-sub" id="s-dat-sub">cargando...</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-card-label">Total rechazos</div>
+      <div class="stat-card-value" id="s-rech">—</div>
+      <div class="stat-card-sub">acumulado histórico</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-card-label">Informes generados</div>
+      <div class="stat-card-value" id="s-informes">—</div>
+      <div class="stat-card-sub">en el historial</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-card-label">Minutas VUA</div>
+      <div class="stat-card-value" id="s-minutas">—</div>
+      <div class="stat-card-sub">actas generadas</div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Administración -->
+  <div class="section-label">Administración</div>
+  <div class="admin-grid">
+
+    <a href="/admin#actualizar" class="admin-card" onclick="sessionStorage.setItem('adminTab','actualizar')">
+      <div class="admin-icon">🔄</div>
+      <div>
+        <div class="admin-name">Actualización semanal</div>
+        <div class="admin-desc">dat1.txt y rech1.txt</div>
+      </div>
+    </a>
+
+    <a href="/admin#historial" class="admin-card" onclick="sessionStorage.setItem('adminTab','historial')">
+      <div class="admin-icon">📁</div>
+      <div>
+        <div class="admin-name">
+          Historial
+          {% if pendientes %}<span class="admin-badge">{{ pendientes|length }}</span>{% endif %}
+        </div>
+        <div class="admin-desc">Informes y minutas</div>
+      </div>
+    </a>
+
+    {% if role == 'admin' %}
+    <a href="/admin#bd" class="admin-card" onclick="sessionStorage.setItem('adminTab','bd')">
+      <div class="admin-icon">🗄️</div>
+      <div>
+        <div class="admin-name">Base de datos</div>
+        <div class="admin-desc">SQL o pad.db</div>
+      </div>
+    </a>
+
+    <a href="/admin#usuarios" class="admin-card" onclick="sessionStorage.setItem('adminTab','usuarios')">
+      <div class="admin-icon">👤</div>
+      <div>
+        <div class="admin-name">Usuarios</div>
+        <div class="admin-desc">Gestión de accesos</div>
+      </div>
+    </a>
+
+    <a href="/admin#prompts" class="admin-card" onclick="sessionStorage.setItem('adminTab','prompts')">
+      <div class="admin-icon">🧠</div>
+      <div>
+        <div class="admin-name">Prompts IA</div>
+        <div class="admin-desc">Editor de narrativas</div>
+      </div>
+    </a>
+    {% endif %}
+
+  </div>
+
+  <!-- Actividad reciente -->
+  <div class="section-label">Actividad reciente</div>
+  <div class="activity-list" id="activity-list">
+    <div class="activity-empty">Cargando...</div>
+  </div>
+
+</div>
+
+<script>
+// Hora actual
+function updateTime(){
+  const now = new Date();
+  const s = now.toLocaleString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+  const el = document.getElementById('status-time');
+  if(el) el.textContent = s;
+}
+updateTime(); setInterval(updateTime, 30000);
+
+// Stats de BD
+{% if db_exists %}
+fetch('/api/db-status').then(r=>r.json()).then(data=>{
+  if(!data.exists) return;
+  const dat = data.tables || {};
+  const datKey = Object.keys(dat).find(k=>k.startsWith('DAT_')) || '';
+  const datCount = datKey ? dat[datKey] : 0;
+  const rechCount = dat['RECHAZOS'] || 0;
+
+  // Status bar
+  const sd = document.getElementById('stat-dat');
+  const sr = document.getElementById('stat-rech');
+  if(sd) sd.innerHTML = `DAT: <span>${datCount.toLocaleString('es-AR')}</span>`;
+  if(sr) sr.innerHTML = `Rechazos: <span>${rechCount.toLocaleString('es-AR')}</span>`;
+
+  // Stats cards
+  const sDat = document.getElementById('s-dat');
+  const sRech = document.getElementById('s-rech');
+  const sDatSub = document.getElementById('s-dat-sub');
+  if(sDat) sDat.textContent = datCount.toLocaleString('es-AR');
+  if(sRech) sRech.textContent = rechCount.toLocaleString('es-AR');
+  if(sDatSub && datKey) sDatSub.textContent = datKey;
+});
+{% endif %}
+
+// Stats historial
+fetch('/api/historial/completo').then(r=>r.json()).then(data=>{
+  const rows = data.rows || [];
+  const informes = rows.filter(r=>r.tipo==='sintia').length;
+  const minutas = rows.filter(r=>r.tipo==='minuta').length;
+
+  const sInf = document.getElementById('s-informes');
+  const sMin = document.getElementById('s-minutas');
+  if(sInf) sInf.textContent = informes;
+  if(sMin) sMin.textContent = minutas;
+
+  // Actividad reciente
+  const el = document.getElementById('activity-list');
+  if(!el) return;
+  const recent = rows.slice(0,8);
+  if(!recent.length){
+    el.innerHTML = '<div class="activity-empty">No hay actividad reciente.</div>';
+    return;
+  }
+  el.innerHTML = recent.map(r=>{
+    const icon = r.tipo==='minuta' ? '📋' : '📊';
+    const tipo = r.tipo==='minuta' ? 'Minuta VUA' : 'Informe SINTIA';
+    const fecha = (r.fecha||'').slice(0,16);
+    return `<div class="activity-item">
+      <div class="activity-icon">${icon}</div>
+      <div class="activity-desc">${tipo} — ${r.descripcion||''}
+        <span>${r.usuario||''}</span>
+      </div>
+      <div class="activity-time">${fecha}</div>
+    </div>`;
+  }).join('');
+});
+</script>
+</body>
+</html>
