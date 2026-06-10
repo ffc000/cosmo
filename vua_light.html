@@ -1059,7 +1059,7 @@ function loadConfigSections(){
       <div class="card" style="margin-bottom:1rem">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem">
           <div class="card-title" style="margin:0">${s.titulo}</div>
-          <button class="btn btn-outline btn-sm" onclick="abrirEditor('${s.clave}','${s.titulo.replace(/'/g,'\\'')}')">✏️ Editar</button>
+          <button class="btn btn-outline btn-sm" onclick="abrirEditor(this)" data-clave="${s.clave}" data-titulo="${s.titulo}">✏️ Editar</button>
         </div>
         <div style="font-size:.83rem;color:var(--text-sub);line-height:1.65;white-space:pre-line">${s.contenido}</div>
         <div style="font-family:var(--mono);font-size:.6rem;color:var(--dim);margin-top:.5rem">Última modificación: ${(s.modificado||'').slice(0,16)}</div>
@@ -1076,10 +1076,12 @@ function loadConfigSections(){
   });
 }
 
-function abrirEditor(clave, titulo){
+function abrirEditor(btnOrClave, titulo){
+  const clave = typeof btnOrClave === 'string' ? btnOrClave : btnOrClave.dataset.clave;
+  const tit = typeof btnOrClave === 'string' ? titulo : btnOrClave.dataset.titulo;
   const s = configData.find(x=>x.clave===clave); if(!s) return;
   document.getElementById('modal-editor-clave').value = clave;
-  document.getElementById('modal-editor-title').textContent = `✏️ ${titulo}`;
+  document.getElementById('modal-editor-title').textContent = '✏️ ' + tit;
   document.getElementById('modal-editor-content').value = s.contenido;
   document.getElementById('ia-sugerencia').textContent = '';
   document.getElementById('ia-sugerencia').classList.remove('visible');
@@ -1132,7 +1134,7 @@ function loadEquipo(){
               ${p.email?`<div class="persona-org">${p.email}</div>`:''}
             </div>
             <div style="display:flex;flex-direction:column;gap:.2rem">
-              <button class="btn btn-outline btn-sm" style="padding:.2rem .4rem;font-size:.65rem" onclick="editarPersona(${p.id},'${p.nombre.replace(/'/g,'\\'')}','${p.cargo.replace(/'/g,'\\'')}','${p.organismo}','${p.email||''}')">✏️</button>
+              <button class="btn btn-outline btn-sm" style="padding:.2rem .4rem;font-size:.65rem" onclick="editarPersonaById(${p.id})">✏️</button>
               <button class="btn btn-danger btn-sm" style="padding:.2rem .4rem;font-size:.65rem" onclick="eliminarPersona(${p.id})">✕</button>
             </div>
           </div>`).join('')}
@@ -1148,6 +1150,10 @@ function abrirModalPersona(){
   document.getElementById('modal-persona-title').textContent = '➕ Agregar persona';
   ['nombre','cargo','organismo','email'].forEach(f=>document.getElementById('mp-'+f).value='');
   document.getElementById('modal-persona').classList.add('visible');
+}
+function editarPersonaById(id){
+  const p = equipoData.find(x=>x.id===id); if(!p) return;
+  editarPersona(id, p.nombre, p.cargo, p.organismo, p.email||'');
 }
 function editarPersona(id,nombre,cargo,organismo,email){
   editandoPersonaId = id;
@@ -1198,7 +1204,7 @@ function renderGlosario(filtro){
         <div class="glosario-term">${r.termino}</div>
         <div class="glosario-def">${r.definicion}</div>
         <div style="display:flex;flex-direction:column;gap:.2rem;flex-shrink:0">
-          <button class="btn btn-outline btn-sm" style="padding:.2rem .4rem;font-size:.6rem" onclick="editarTermino(${r.id},'${r.termino.replace(/'/g,'\\'')}','${r.definicion.replace(/'/g,'\\'+'\'')}','${r.categoria}')">✏️</button>
+          <button class="btn btn-outline btn-sm" style="padding:.2rem .4rem;font-size:.6rem" onclick="editarTerminoById(${r.id})">✏️</button>
           <button class="btn btn-danger btn-sm" style="padding:.2rem .4rem;font-size:.6rem" onclick="eliminarTermino(${r.id})">✕</button>
         </div>
       </div>`;
@@ -1214,6 +1220,10 @@ function abrirModalGlosario(){
   document.getElementById('mg-definicion').value='';
   document.getElementById('mg-categoria').value='general';
   document.getElementById('modal-glosario-edit').classList.add('visible');
+}
+function editarTerminoById(id){
+  const r = glosarioData.find(x=>x.id===id); if(!r) return;
+  editarTermino(id, r.termino, r.definicion, r.categoria);
 }
 function editarTermino(id,termino,definicion,categoria){
   editandoTerminoId=id;
@@ -1240,8 +1250,7 @@ function eliminarTermino(id){
 let borradorIA = null;
 function generarBorradorIA(){
   const asunto=document.getElementById('min-asunto').value.trim();
-  const temas=document.getElementById('min-temas').value.split('
-').filter(l=>l.trim());
+  const temas=document.getElementById('min-temas').value.split('\n').filter(l=>l.trim());
   if(!asunto||!temas.length){alert('Completá al menos el asunto y los temas tratados.');return}
   const btn=document.getElementById('btn-borrador-ia');
   btn.disabled=true;btn.innerHTML='<span class="spinner" style="border-top-color:var(--accent)"></span> Generando...';
@@ -1263,12 +1272,9 @@ function generarBorradorIA(){
 }
 function aplicarBorrador(){
   if(!borradorIA) return;
-  if(borradorIA.temas_tratados) document.getElementById('min-temas').value=borradorIA.temas_tratados.join('
-');
-  if(borradorIA.acuerdos) document.getElementById('min-acuerdos').value=borradorIA.acuerdos.join('
-');
-  if(borradorIA.proximos_pasos) document.getElementById('min-proximos').value=borradorIA.proximos_pasos.join('
-');
+  if(borradorIA.temas_tratados) document.getElementById('min-temas').value=borradorIA.temas_tratados.join('\n');
+  if(borradorIA.acuerdos) document.getElementById('min-acuerdos').value=borradorIA.acuerdos.join('\n');
+  if(borradorIA.proximos_pasos) document.getElementById('min-proximos').value=borradorIA.proximos_pasos.join('\n');
   document.getElementById('minuta-preview').classList.remove('visible');
 }
 
