@@ -460,7 +460,8 @@ Transmisi\u00f3n: {datos['ult_trans']} transmitidos ({datos['ult_pct_trans']}), 
   \u2014 Lastre: trans {datos['ult_pct_trans_last']} (es decir, {datos['ult_last_trans_n']} operaciones), no trans {datos['ult_pct_no_trans_last']}, tard\u00edo {datos['ult_pct_tardio_last']}
 Rechazos del mes: {datos['ult_rechazos']} total ({datos['ult_rech_duplicados']} son duplicados)
 Rechazos operativos (sin duplicados): {datos['ult_rech_operativos']}
-Top categor\u00edas: {datos['ult_rech_top_cats']}
+Top categor\u00edas (SOLO estas, no inventes otras ni cambies los n\u00fameros): {datos['ult_rech_top_cats']}
+Total rechazos verificado: {datos['ult_rech_total_check']} (us\u00e1 EXACTAMENTE este n\u00famero)
 
 \u2550\u2550\u2550 MES ANTERIOR: {datos['mes_ant_nombre']} \u2550\u2550\u2550
 Volumen: {datos['ant_total']} operaciones
@@ -566,6 +567,19 @@ def _generar_word(pais, anio, mes_d, mes_h, version,
     if "barras" in graficos: insertar_grafico(doc,graficos["barras"])
 
     # 2.3 Transmitidos
+    doc.add_page_break()
+    doc.add_heading("2.2.  Evolución de transmisión anticipada por mes",level=2)
+    doc.add_paragraph()
+    rows_ev_trans = []
+    for r in ev_total:
+        mes = r["MES"]
+        tot = n(r.get("CARGADO",0)) + n(r.get("LASTRE",0))
+        trs = next((n(x.get("CARGADOS",0))+n(x.get("LASTRE",0)) for x in ev_trans if x.get("MES")==mes), 0)
+        ntrs = next((n(x.get("CARGADOS",0))+n(x.get("LASTRE",0)) for x in ev_no_trans if x.get("MES")==mes), 0)
+        tds = next((n(x.get("CARGADOS",0))+n(x.get("LASTRE",0)) for x in ev_tardio if x.get("MES")==mes), 0)
+        rows_ev_trans.append([mes_label(mes), pct(trs,tot), pct(ntrs,tot), pct(tds,tot), fmt(tot)])
+    agregar_tabla_word(doc,["MES","% TRANS","% NO TRANS","% TARDÍO","TOTAL"],rows_ev_trans,col_widths=[2.8,2.5,2.5,2.5,2.2])
+    doc.add_paragraph()
     doc.add_heading("2.3.  Evaluaci\u00f3n del tiempo de transmisi\u00f3n \u2013 MICs Transmitidos",level=2)
     doc.add_paragraph(f"Del total ({fmt(gTot)}), {fmt(gT)} ({pct(gT,gTot)}) fueron transmitidos correctamente.")
     agregar_tabla_word(doc,["MES","CARGADOS","LASTRE","TOTAL"],
@@ -575,8 +589,15 @@ def _generar_word(pais, anio, mes_d, mes_h, version,
     # 2.4 Tardíos
     doc.add_heading("2.4.  Evaluaci\u00f3n del tiempo de transmisi\u00f3n \u2013 MICs tard\u00edos",level=2)
     doc.add_paragraph(f"Del total ({fmt(gTot)}), {fmt(gTd)} ({pct(gTd,gTot)}) fueron transmitidos tard\u00edamente.")
-    agregar_tabla_word(doc,["MES","CARGADOS","LASTRE","TOTAL"],
-        [[mes_label_largo(r["MES"]),fmt(n(r.get("CARGADOS",0))),fmt(n(r.get("LASTRE",0))),fmt(n(r.get("CARGADOS",0))+n(r.get("LASTRE",0)))] for r in ev_tardio],
+    tardio_por_mes = {r["MES"]: r for r in ev_tardio}
+    rows_tardio = []
+    for r in ev_total:
+        mes = r["MES"]
+        td = tardio_por_mes.get(mes, {})
+        carg = n(td.get("CARGADOS", 0))
+        last = n(td.get("LASTRE", 0))
+        rows_tardio.append([mes_label_largo(mes), fmt(carg), fmt(last), fmt(carg + last)])
+    agregar_tabla_word(doc,["MES","CARGADOS","LASTRE","TOTAL"],rows_tardio,
         col_widths=[3.5,2.5,2.5,2.5])
 
     # 2.5 No transmitidos
@@ -590,13 +611,19 @@ def _generar_word(pais, anio, mes_d, mes_h, version,
     # 2.6 Rechazos
     doc.add_heading("2.6.  An\u00e1lisis de MICs Rechazados",level=2)
     if narrativa_ia and len(narrativa_ia)>=3:
-        doc.add_paragraph(narrativa_ia[2])
+        texto_26 = narrativa_ia[2] if narrativa_ia and len(narrativa_ia) > 2 and narrativa_ia[2] and len(narrativa_ia[2]) > 20 else None
+        if texto_26:
+            doc.add_paragraph(texto_26)
+        else:
+            doc.add_paragraph(f"Se registraron {fmt(total_rechazos)} rechazos en el período ({pct(total_rechazos,gTot)} de las operaciones totales).")
     else:
         doc.add_paragraph(f"Se registraron {fmt(total_rechazos)} rechazos ({pct(total_rechazos,gTot)} de las operaciones).")
     if rechazos_mes:
         doc.add_paragraph("Rechazos por mes:").runs[0].bold=True
+        rech_por_mes = {r["periodo"]: n(r.get("MIC_RECHAZOS",0)) for r in rechazos_mes}
+        periodos_todos = sorted(set([x["MES"] for x in ev_total] + list(rech_por_mes.keys())))
         agregar_tabla_word(doc,["MES","MIC RECHAZOS"],
-            [[mes_label_largo(r["periodo"]),fmt(r.get("MIC_RECHAZOS",0))] for r in rechazos_mes],col_widths=[4,3])
+            [[mes_label_largo(p), fmt(rech_por_mes.get(p,0))] for p in periodos_todos],col_widths=[4,3])
     if "rech_mes" in graficos: insertar_grafico(doc,graficos["rech_mes"],width_cm=12)
     if rechazos_cat:
         cats_sin_total=[r for r in rechazos_cat if r["Categoria"]!="TOTAL"]
@@ -849,10 +876,11 @@ def generar_informe(ruta_db, pais, anio, mes_d, mes_h, usar_ia, api_key, carpeta
         expo_ult=next((r for r in impoexpo_ult if r.get("TIPO_REGISTRO","").upper()=="E"),{})
         ult_carg_tot=n(impo_ult.get("cargado",0))+n(expo_ult.get("cargado",0))
         ult_last_tot=n(impo_ult.get("lastre",0))+n(expo_ult.get("lastre",0))
-        carg_tr=n(impo_ult.get("trans",0))+n(expo_ult.get("trans",0))
         ev_trans_ult_ia=next((r for r in ev_trans if r.get("MES")==per_ult),{})
+        carg_trans_n_ia=n(ev_trans_ult_ia.get("CARGADOS",0))
         last_trans_n_ia=n(ev_trans_ult_ia.get("LASTRE",0))
-        last_tr=ult_tr-carg_tr
+        carg_tr=carg_trans_n_ia
+        last_tr=last_trans_n_ia
         ult_rech_total=sum(n(r.get("Rechazos",0)) for r in rechazos_ult_cat)
         ult_rech_dup=next((n(r.get("Rechazos",0)) for r in rechazos_ult_cat if r.get("Categoria")=="NRO DE MIC EXISTENTE"),0)
         ult_rech_op=ult_rech_total-ult_rech_dup
@@ -883,6 +911,7 @@ def generar_informe(ruta_db, pais, anio, mes_d, mes_h, usar_ia, api_key, carpeta
             "ult_pct_tardio_last":pct(n(impo_ult.get("tardio",0))+n(expo_ult.get("tardio",0)),ult_last_tot) if ult_last_tot else "N/D",
             "ult_rechazos":fmt(ult_rech_total),"ult_rech_duplicados":fmt(ult_rech_dup),
             "ult_rech_operativos":fmt(ult_rech_op),"ult_rech_top_cats":ult_rech_top,
+            "ult_rech_total_check":fmt(ult_rech_total),
             "ant_total":fmt(ant_t),"ant_trans":fmt(ant_tr),"ant_pct_trans":pct(ant_tr,ant_t),
             "ant_no_trans":fmt(ant_nt),"ant_pct_no_trans":pct(ant_nt,ant_t),
             "ant_tardio":fmt(ant_td),"ant_pct_tardio":pct(ant_td,ant_t),
