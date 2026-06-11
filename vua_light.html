@@ -637,9 +637,7 @@ select option{background:var(--surface)}
       <div class="panel" id="tab-historial-vua">
         <div class="card">
           <div style="display:flex;gap:.4rem;margin-bottom:1rem;flex-wrap:wrap">
-            <button class="btn btn-outline btn-sm" id="fil-todos" onclick="filtrarHist('todos')">Todos</button>
-            <button class="btn btn-outline btn-sm" id="fil-sintia" onclick="filtrarHist('sintia')">📊 SINTIA</button>
-            <button class="btn btn-outline btn-sm" id="fil-minuta" onclick="filtrarHist('minuta')">📋 Minutas</button>
+            <button class="btn btn-outline btn-sm" id="fil-todos" onclick="filtrarHist('todos')">Todas las minutas</button>
           </div>
           <div id="hist-vua-content"><div style="color:var(--muted);font-size:.82rem">Cargando...</div></div>
         </div>
@@ -844,7 +842,7 @@ function guardarEje(){
 
 // Historial
 let histData=[],filtroActivo='todos';
-function loadHistorial(){fetch('/api/historial/completo').then(r=>r.json()).then(data=>{histData=data.rows||[];renderHistorial()})}
+function loadHistorial(){fetch('/api/historial/completo').then(r=>r.json()).then(data=>{histData=(data.rows||[]).filter(r=>r.tipo==='minuta');renderHistorial()})}
 function filtrarHist(tipo){filtroActivo=tipo;renderHistorial()}
 function renderHistorial(){
   const el=document.getElementById('hist-vua-content');
@@ -852,7 +850,7 @@ function renderHistorial(){
   if(!rows.length){el.innerHTML='<div style="color:var(--muted);font-size:.82rem">No hay registros.</div>';return}
   let html='<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Fecha</th><th>Tipo</th><th>Descripción</th><th>Archivos</th><th></th></tr></thead><tbody>';
   rows.forEach(r=>{
-    const tipo=r.tipo==='minuta'?'<span class="tag tag-minuta">📋 Minuta</span>':'<span class="tag tag-sintia">📊 SINTIA</span>';
+    const tipo='<span class="tag tag-minuta">📋 Minuta VUA</span>';
     const dl=r.tipo==='minuta'?`<a href="/api/vua/minutas/${r.id}/download" class="download-btn" style="padding:.25rem .6rem;font-size:.65rem">📥</a>`:`${r.archivo_word?`<a href="/api/historial/${r.id}/download/word" class="download-btn" style="padding:.25rem .6rem;font-size:.65rem">📄</a>`:''} ${r.archivo_excel?`<a href="/api/historial/${r.id}/download/excel" class="download-btn" style="padding:.25rem .6rem;font-size:.65rem">📊</a>`:''}`;
     html+=`<tr><td style="font-family:var(--mono);font-size:.68rem;white-space:nowrap">${(r.fecha||'').slice(0,16)}</td><td>${tipo}</td><td style="font-size:.78rem">${r.descripcion||''}</td><td style="display:flex;gap:.3rem;flex-wrap:wrap">${dl}</td><td><button class="btn btn-danger btn-sm" onclick="eliminarHist('${r.id}','${r.tipo}')">🗑</button></td></tr>`;
   });
