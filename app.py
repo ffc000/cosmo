@@ -17,6 +17,7 @@ app.permanent_session_lifetime = timedelta(hours=4)
 # ── Config ─────────────────────────────────────────────────────────────────────
 DB_PATH       = os.environ.get("DB_PATH",     "/data/pad.db")
 API_KEY       = os.environ.get("ANTHROPIC_API_KEY", "")
+def get_api_key(): return os.environ.get("ANTHROPIC_API_KEY", "")
 APP_USER      = os.environ.get("APP_USER",    "cosmo")
 APP_PASS      = os.environ.get("APP_PASS",    "")
 APP_USER2     = os.environ.get("APP_USER2",   "")
@@ -818,14 +819,6 @@ def vua_cronologia_update(item_id):
 def vua_cronologia_delete(item_id):
     con=sqlite3.connect(HIST_DB)
     con.execute("DELETE FROM vua_cronologia WHERE id=?",(item_id,))
-    con.commit(); con.close(); return jsonify({"ok":True})
-
-@app.route("/api/vua/ejes/<eje_id>", methods=["PUT"])
-@login_required
-def vua_ejes_update(eje_id):
-    data=request.json or {}
-    con=sqlite3.connect(HIST_DB)
-    con.execute("UPDATE vua_ejes SET nombre=?,estado=? WHERE id=?",(data.get("nombre"),data.get("estado"),eje_id))
     con.commit(); con.close(); return jsonify({"ok":True})
 
 @app.route("/api/vua/minutas", methods=["GET"])
