@@ -1,0 +1,19 @@
+[0;1;32m●[0m sintia.service - SINTIA Web App
+     Loaded: loaded (]8;;file://ubuntu-s-1vcpu-1gb-nyc1/etc/systemd/system/sintia.service/etc/systemd/system/sintia.service]8;;; [0;1;32menabled[0m; preset: [0;1;32menabled[0m)
+     Active: [0;1;32mactive (running)[0m since Thu 2026-06-04 13:44:50 UTC; 15s ago
+   Main PID: 15852 (gunicorn)
+      Tasks: 4 (limit: 1110)
+     Memory: 46.8M (peak: 47.0M)
+        CPU: 520ms
+     CGroup: /system.slice/sintia.service
+             ├─[0;38;5;245m15852 /opt/sintia/venv/bin/python3 /opt/sintia/venv/bin/gunicorn app:app --bind 127.0.0.1:5000 --workers 2 --timeout 600[0m
+             ├─[0;38;5;245m15853 /opt/sintia/venv/bin/python3 /opt/sintia/venv/bin/gunicorn app:app --bind 127.0.0.1:5000 --workers 2 --timeout 600[0m
+             └─[0;38;5;245m15854 /opt/sintia/venv/bin/python3 /opt/sintia/venv/bin/gunicorn app:app --bind 127.0.0.1:5000 --workers 2 --timeout 600[0m
+
+Jun 04 13:44:50 ubuntu-s-1vcpu-1gb-nyc1 systemd[1]: Started sintia.service - SINTIA Web App.
+Jun 04 13:44:50 ubuntu-s-1vcpu-1gb-nyc1 gunicorn[15852]: [2026-06-04 13:44:50 +0000] [15852] [INFO] Starting gunicorn 26.0.0
+Jun 04 13:44:50 ubuntu-s-1vcpu-1gb-nyc1 gunicorn[15852]: [2026-06-04 13:44:50 +0000] [15852] [INFO] Listening at: http://127.0.0.1:5000 (15852)
+Jun 04 13:44:50 ubuntu-s-1vcpu-1gb-nyc1 gunicorn[15852]: [2026-06-04 13:44:50 +0000] [15852] [INFO] Using worker: sync
+Jun 04 13:44:50 ubuntu-s-1vcpu-1gb-nyc1 gunicorn[15853]: [2026-06-04 13:44:50 +0000] [15853] [INFO] Booting worker with pid: 15853
+Jun 04 13:44:50 ubuntu-s-1vcpu-1gb-nyc1 gunicorn[15854]: [2026-06-04 13:44:50 +0000] [15854] [INFO] Booting worker with pid: 15854
+Jun 04 13:44:51 ubuntu-s-1vcpu-1gb-nyc1 gunicorn[15852]: [2026-06-04 13:44:51 +0000] [15852] [INFO] Control socket listening at /root/.gunicorn/gunicorn.ctl

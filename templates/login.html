@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CosmoTools — Acceso</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--accent:#2979c8;--mono:'IBM Plex Mono',monospace;--sans:'IBM Plex Sans',sans-serif}
+body{font-family:var(--sans);min-height:100vh;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}
+.bg{position:fixed;inset:0;background:url('https://i.ibb.co/XG3pXGf/cosmo.png') center 30%/cover no-repeat;opacity:.55;z-index:0}
+.overlay{position:fixed;inset:0;background:linear-gradient(135deg,rgba(5,15,30,.75) 0%,rgba(10,25,45,.5) 100%);z-index:1}
+.card{position:relative;z-index:2;background:rgba(8,18,30,.15);border:1px solid rgba(41,121,200,.5);border-radius:8px;padding:2rem 2.5rem;width:560px;box-shadow:0 0 0 1px rgba(41,121,200,.1),0 25px 60px rgba(0,0,0,.5),0 0 40px rgba(41,121,200,.08);backdrop-filter:blur(12px)}
+.header{margin-bottom:1.5rem}
+h1{font-size:1.4rem;font-weight:600;color:#fff;margin-bottom:.2rem;letter-spacing:-.01em}
+.sub{font-size:.8rem;color:#5a8aaa}
+.divider{height:1px;background:linear-gradient(90deg,transparent,rgba(41,121,200,.3),transparent);margin-bottom:1.5rem}
+.form-row{display:flex;gap:.75rem;align-items:flex-end}
+.field{flex:1}
+label{display:block;font-size:.68rem;font-weight:600;color:#5a8aaa;letter-spacing:.12em;text-transform:uppercase;margin-bottom:.35rem}
+input{width:100%;background:rgba(5,12,22,.6);border:1px solid rgba(41,121,200,.25);border-radius:4px;color:#e8f0f9;font-family:var(--mono);font-size:.85rem;padding:.65rem .9rem;outline:none;transition:all .2s}
+input:focus{border-color:rgba(41,121,200,.7);background:rgba(5,12,22,.8);box-shadow:0 0 0 3px rgba(41,121,200,.1)}
+button{background:linear-gradient(135deg,#2979c8,#1a5fa8);border:none;border-radius:4px;color:#fff;font-family:var(--sans);font-size:.88rem;font-weight:600;padding:.65rem 1.5rem;cursor:pointer;transition:all .2s;white-space:nowrap;box-shadow:0 4px 15px rgba(41,121,200,.3)}
+button:hover{background:linear-gradient(135deg,#3389d8,#2069b8);box-shadow:0 6px 20px rgba(41,121,200,.4);transform:translateY(-1px)}
+button:active{transform:translateY(0)}
+.error{background:rgba(192,57,43,.15);border:1px solid rgba(192,57,43,.4);border-radius:4px;color:#e07070;font-size:.8rem;padding:.6rem 1rem;margin-bottom:1rem}
+.footer{font-family:var(--mono);font-size:.6rem;color:#2a4a6a;text-align:center;margin-top:1.2rem;letter-spacing:.05em}
+</style>
+</head>
+<body>
+<div class="bg"></div>
+<div class="overlay"></div>
+<div class="card">
+  <div class="header">
+    <h1>CosmoTools</h1>
+    <p class="sub">Plataforma de Herramientas</p>
+  </div>
+  <div class="divider"></div>
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  <form method="POST">
+    <div class="form-row">
+      <div class="field">
+        <label>Usuario</label>
+        <input type="text" name="user" autofocus autocomplete="username">
+      </div>
+      <div class="field">
+        <label>Contraseña</label>
+        <input type="password" name="pass" autocomplete="current-password">
+      </div>
+      <button type="submit">Ingresar →</button>
+    </div>
+  </form>
+  <div class="footer">Sección Simplificación de Procesos Operativos</div>
+</div>
+</body>
+</html>
