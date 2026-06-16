@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CosmoTools — Administración</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#F0F4F8;--surface:#FFFFFF;--surface2:#F8FAFC;
+  --sidebar-bg:#1E2A3B;--sidebar-hover:rgba(255,255,255,.06);--sidebar-active:rgba(41,121,200,.15);
+  --border:#E5E7EB;--border-dark:rgba(255,255,255,.08);
+  --accent:#1A56DB;--accent-hover:#1447C0;--accent-light:#EBF5FF;
+  --accent2:#057A55;--accent2-light:#F0FFF4;
+  --warn:#D97706;--warn-light:#FFFBEB;
+  --danger:#DC2626;--danger-light:#FEF2F2;
+  --text:#111928;--text-sub:#374151;--muted:#6B7280;--dim:#9CA3AF;
+  --text-sidebar:#CBD5E1;--text-sidebar-muted:#64748B;
+  --mono:'IBM Plex Mono',monospace;--sans:'IBM Plex Sans',sans-serif;
+  --radius:8px;--radius-sm:4px;
+  --shadow-sm:0 1px 3px rgba(0,0,0,.07);
+  --shadow:0 4px 12px rgba(0,0,0,.08);
+  --sidebar-w:230px;
+}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
+.app{display:flex;flex:1;min-height:0}
+.sidebar{width:var(--sidebar-w);min-width:var(--sidebar-w);background:var(--sidebar-bg);display:flex;flex-direction:column;z-index:50;transition:transform .25s ease}
+.sidebar-brand{padding:1.4rem 1.4rem 1rem;border-bottom:1px solid var(--border-dark)}
+.sidebar-brand .name{font-family:var(--mono);font-size:.92rem;font-weight:600;color:#fff}
+.sidebar-brand .sub{font-size:.65rem;color:var(--text-sidebar-muted);margin-top:.2rem}
+.sidebar-nav{flex:1;padding:.6rem 0;overflow-y:auto}
+.nav-section{font-family:var(--mono);font-size:.58rem;color:var(--text-sidebar-muted);letter-spacing:.18em;text-transform:uppercase;padding:.8rem 1.4rem .3rem}
+.nav-item{display:flex;align-items:center;gap:.7rem;padding:.62rem 1.4rem;cursor:pointer;color:var(--text-sidebar-muted);font-size:.82rem;transition:all .15s;border-left:2px solid transparent;user-select:none}
+.nav-item:hover{color:var(--text-sidebar);background:var(--sidebar-hover)}
+.nav-item.active{color:#fff;background:var(--sidebar-active);border-left-color:var(--accent)}
+.nav-icon{font-size:.9rem;width:18px;text-align:center;flex-shrink:0}
+.nav-label{flex:1}
+.badge{background:var(--warn);color:#fff;font-family:var(--mono);font-size:.58rem;font-weight:700;padding:.1rem .35rem;border-radius:10px}
+.sidebar-footer{padding:.9rem 1.4rem;border-top:1px solid var(--border-dark)}
+.db-pill{font-family:var(--mono);font-size:.62rem;padding:.3rem .65rem;border-radius:20px;margin-bottom:.6rem;display:inline-block}
+.db-pill.ok{background:rgba(5,122,85,.2);color:#34D399;border:1px solid rgba(5,122,85,.3)}
+.db-pill.missing{background:rgba(217,119,6,.15);color:#FCD34D;border:1px solid rgba(217,119,6,.3)}
+.back-link{font-size:.72rem;color:var(--text-sidebar-muted);text-decoration:none;display:block;margin-bottom:.4rem;transition:color .15s}
+.back-link:hover{color:var(--text-sidebar)}
+.logout{font-size:.72rem;color:var(--text-sidebar-muted);text-decoration:none}
+.logout:hover{color:var(--text-sidebar)}
+.main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.topbar{background:var(--surface);border-bottom:1px solid var(--border);padding:.75rem 1.75rem;display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-shrink:0;box-shadow:var(--shadow-sm)}
+.topbar-left{display:flex;align-items:center;gap:.75rem}
+.hamburger{display:none;background:none;border:none;color:var(--muted);font-size:1.3rem;cursor:pointer;padding:.25rem;line-height:1;min-width:36px}
+.hamburger:hover{color:var(--text)}
+.topbar-title{font-family:var(--mono);font-size:.78rem;color:var(--accent);letter-spacing:.08em;font-weight:600}
+.topbar-user{font-family:var(--mono);font-size:.7rem;color:var(--muted)}
+.content{flex:1;padding:1.75rem;overflow-y:auto}
+.panel{display:none}.panel.active{display:block}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;margin-bottom:1.25rem;box-shadow:var(--shadow-sm)}
+.card-title{font-family:var(--mono);font-size:.65rem;color:var(--muted);letter-spacing:.14em;text-transform:uppercase;margin-bottom:.9rem;font-weight:600}
+label{display:block;font-size:.7rem;font-weight:600;color:var(--text-sub);letter-spacing:.05em;text-transform:uppercase;margin-bottom:.3rem}
+input[type=text],input[type=number],input[type=password],select,textarea{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:var(--mono);font-size:.85rem;padding:.55rem .8rem;outline:none;transition:border-color .2s,box-shadow .2s}
+input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(26,86,219,.1)}
+textarea{resize:vertical;font-family:var(--mono);font-size:.78rem;line-height:1.5}
+select option{background:var(--surface)}
+.form-row{display:grid;gap:.9rem;margin-bottom:.9rem}
+.form-row.cols2{grid-template-columns:1fr 1fr}
+.upload-zone{border:2px dashed var(--border);border-radius:var(--radius);padding:1.5rem;text-align:center;cursor:pointer;transition:all .2s;position:relative;background:var(--surface2)}
+.upload-zone:hover,.upload-zone.drag{border-color:var(--accent);background:var(--accent-light)}
+.upload-zone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer}
+.upload-icon{font-size:1.5rem;margin-bottom:.35rem}
+.upload-text{font-size:.82rem;color:var(--muted)}
+.upload-text strong{color:var(--text)}
+.upload-filename{font-family:var(--mono);font-size:.72rem;color:var(--accent);margin-top:.35rem}
+.btn{display:inline-flex;align-items:center;gap:.5rem;border:none;border-radius:var(--radius-sm);cursor:pointer;font-family:var(--sans);font-weight:600;font-size:.85rem;padding:.6rem 1.2rem;transition:all .15s}
+.btn-primary{background:var(--accent);color:#fff}.btn-primary:hover{background:var(--accent-hover)}
+.btn-primary:disabled{background:var(--dim);cursor:not-allowed}
+.btn-outline{background:var(--surface);color:var(--text-sub);border:1px solid var(--border)}.btn-outline:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-light)}
+.btn-danger{background:var(--danger-light);color:var(--danger);border:1px solid rgba(220,38,38,.2)}.btn-danger:hover{background:#FEE2E2}
+.btn-success{background:var(--accent2-light);color:var(--accent2);border:1px solid rgba(5,122,85,.2)}.btn-success:hover{background:#D1FAE5}
+.btn-full{width:100%;justify-content:center}
+.btn-sm{padding:.3rem .75rem;font-size:.75rem}
+.log-box{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);font-family:var(--mono);font-size:.72rem;color:var(--text-sub);padding:.9rem;height:160px;overflow-y:auto;margin-top:.9rem;display:none}
+.log-box.visible{display:block}
+.log-line{margin-bottom:.2rem}.log-line.ok{color:var(--accent2)}.log-line.err{color:var(--danger)}
+.download-btn{display:inline-flex;align-items:center;gap:.4rem;background:var(--accent2-light);border:1px solid rgba(5,122,85,.25);border-radius:var(--radius-sm);color:var(--accent2);font-family:var(--mono);font-size:.72rem;padding:.45rem .9rem;text-decoration:none;transition:all .15s;font-weight:600}
+.download-btn:hover{background:#D1FAE5}
+.alert{padding:.75rem 1rem;border-radius:var(--radius-sm);font-size:.82rem;margin-bottom:.9rem}
+.alert-info{background:var(--accent-light);border:1px solid rgba(26,86,219,.2);color:var(--accent)}
+.alert-warn{background:var(--warn-light);border:1px solid rgba(217,119,6,.2);color:var(--warn)}
+.alert-ok{background:var(--accent2-light);border:1px solid rgba(5,122,85,.2);color:var(--accent2)}
+.stat-row{display:flex;gap:.75rem;flex-wrap:wrap;margin-top:.6rem}
+.stat{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:.5rem .9rem}
+.stat-label{font-family:var(--mono);font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:.1em}
+.stat-value{font-family:var(--mono);font-size:.95rem;font-weight:600;color:var(--text);margin-top:.1rem}
+.progress-wrap{display:none;margin-top:.75rem}
+.progress-label{font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-bottom:.35rem}
+.progress-bar-bg{background:var(--bg);border:1px solid var(--border);border-radius:3px;height:6px;overflow:hidden}
+.progress-bar{height:100%;background:var(--accent);width:0%;transition:width .3s}
+.data-table{width:100%;border-collapse:collapse;font-size:.8rem}
+.data-table th{font-family:var(--mono);font-size:.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;padding:.5rem .75rem;text-align:left;border-bottom:2px solid var(--border);background:var(--surface2)}
+.data-table td{padding:.55rem .75rem;border-bottom:1px solid var(--border);vertical-align:middle}
+.data-table tr:hover td{background:var(--bg)}
+.tag{font-family:var(--mono);font-size:.62rem;padding:.2rem .5rem;border-radius:20px;display:inline-block;font-weight:600}
+.tag-admin{background:var(--accent-light);color:var(--accent);border:1px solid rgba(26,86,219,.2)}
+.tag-readonly{background:var(--bg);color:var(--muted);border:1px solid var(--border)}
+.tag-activo{background:var(--accent2-light);color:var(--accent2);border:1px solid rgba(5,122,85,.2)}
+.tag-inactivo{background:var(--danger-light);color:var(--danger);border:1px solid rgba(220,38,38,.2)}
+.tag-sintia{background:var(--accent-light);color:var(--accent);border:1px solid rgba(26,86,219,.2)}
+.tag-minuta{background:var(--accent2-light);color:var(--accent2);border:1px solid rgba(5,122,85,.2)}
+.tag-propia{background:var(--warn-light);color:var(--warn);border:1px solid rgba(217,119,6,.2)}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:200;display:none;align-items:center;justify-content:center;padding:1rem}
+.modal-overlay.visible{display:flex}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.75rem;width:100%;max-width:520px;max-height:90vh;overflow-y:auto;box-shadow:var(--shadow)}
+.modal h3{font-size:.95rem;font-weight:600;color:var(--text);margin-bottom:1.1rem}
+.modal-actions{display:flex;gap:.6rem;justify-content:flex-end;margin-top:1.25rem}
+.prompt-editor{width:100%;min-height:280px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:var(--mono);font-size:.75rem;padding:1rem;outline:none;resize:vertical;line-height:1.6}
+.prompt-editor:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(26,86,219,.1)}
+.prompt-card{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:.9rem 1.1rem;margin-bottom:.5rem;cursor:pointer;transition:all .15s;display:flex;align-items:center;justify-content:space-between;gap:1rem}
+.prompt-card:hover{border-color:rgba(26,86,219,.3);background:var(--accent-light)}
+.prompt-name{font-size:.85rem;font-weight:600;color:var(--text)}
+.prompt-desc{font-size:.72rem;color:var(--muted);margin-top:.15rem}
+.prompt-tag{font-family:var(--mono);font-size:.6rem;padding:.15rem .4rem;border-radius:20px;background:var(--accent-light);color:var(--accent);border:1px solid rgba(26,86,219,.2)}
+.sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:40}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{width:13px;height:13px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;display:inline-block}
+@media(max-width:768px){
+  .sidebar{position:fixed;top:0;left:0;bottom:0;transform:translateX(-100%)}
+  .sidebar.open{transform:translateX(0)}
+  .sidebar-overlay.visible{display:block}
+  .hamburger{display:block}
+  .topbar-user{display:none}
+  .content{padding:1.1rem}
+  .form-row.cols2{grid-template-columns:1fr}
+  .data-table{font-size:.73rem}
+  .data-table th,.data-table td{padding:.4rem .5rem}
+  .col-hide-mobile{display:none}
+}
+</style>
+</head>
+<body>
+
+<!-- Modal usuario -->
+<div class="modal-overlay" id="modal-usuario">
+  <div class="modal">
+    <h3 id="modal-usr-title">➕ Nuevo usuario</h3>
+    <input type="hidden" id="modal-usr-id">
+    <div class="form-row cols2">
+      <div><label>Usuario</label><input type="text" id="modal-usr-username" placeholder="nombre_usuario"></div>
+      <div><label>Contraseña</label><input type="password" id="modal-usr-password" placeholder="Mín. 8 caracteres"></div>
+    </div>
+    <div class="form-row cols2">
+      <div><label>Rol</label>
+        <select id="modal-usr-rol">
+          <option value="readonly">readonly — Solo lectura</option>
+          <option value="operator">operator — Operador</option>
+          <option value="admin">admin — Administrador</option>
+        </select>
+      </div>
+      <div><label>Estado</label>
+        <select id="modal-usr-activo"><option value="1">Activo</option><option value="0">Inactivo</option></select>
+      </div>
+    </div>
+    <div>
+      <label>Módulos habilitados</label>
+      <div style="display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.3rem">
+        <label style="display:flex;align-items:center;gap:.4rem;font-size:.82rem;text-transform:none;letter-spacing:0;color:var(--text-sub);cursor:pointer;font-weight:400"><input type="checkbox" value="sintia" id="mod-sintia"> 📊 SINTIA</label>
+        <label style="display:flex;align-items:center;gap:.4rem;font-size:.82rem;text-transform:none;letter-spacing:0;color:var(--text-sub);cursor:pointer;font-weight:400"><input type="checkbox" value="vua" id="mod-vua"> ✈️ VUA</label>
+        <label style="display:flex;align-items:center;gap:.4rem;font-size:.82rem;text-transform:none;letter-spacing:0;color:var(--text-sub);cursor:pointer;font-weight:400"><input type="checkbox" value="admin" id="mod-admin"> 🔧 Admin</label>
+      </div>
+    </div>
+    <div id="modal-usr-error" style="color:var(--danger);font-size:.78rem;margin-top:.6rem;display:none"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline btn-sm" onclick="cerrarModal('modal-usuario')">Cancelar</button>
+      <button class="btn btn-primary btn-sm" onclick="guardarUsuario()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal prompt -->
+<div class="modal-overlay" id="modal-prompt">
+  <div class="modal" style="max-width:780px">
+    <h3 id="modal-prompt-title">✏️ Editar prompt</h3>
+    <input type="hidden" id="modal-prompt-id">
+    <p id="modal-prompt-desc" style="font-size:.75rem;color:var(--muted);margin-bottom:.75rem"></p>
+    <div class="alert alert-warn" style="margin-bottom:.75rem;font-size:.75rem">
+      ⚠ Las variables entre llaves <code style="background:var(--bg);padding:.1rem .3rem;border-radius:3px;font-family:var(--mono)">{variable}</code> son reemplazadas automáticamente. No las elimines.
+    </div>
+    <textarea class="prompt-editor" id="modal-prompt-content" rows="18"></textarea>
+    <div id="modal-prompt-error" style="color:var(--danger);font-size:.78rem;margin-top:.6rem;display:none"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline btn-sm" onclick="cerrarModal('modal-prompt')">Cancelar</button>
+      <button class="btn btn-primary btn-sm" onclick="guardarPrompt()">💾 Guardar</button>
+    </div>
+  </div>
+</div>
+
+<div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+<div class="app">
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <div class="name">Administración</div>
+      <div class="sub">CosmoTools</div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section">Base de datos</div>
+      <div class="nav-item active" data-tab="actualizar"><span class="nav-icon">🔄</span><span class="nav-label">Actualización semanal</span></div>
+      <div class="nav-item" data-tab="historial"><span class="nav-icon">📁</span><span class="nav-label">Historial</span>{% if pendientes %}<span class="badge">{{ pendientes|length }}</span>{% endif %}</div>
+      <div class="nav-item" data-tab="bd"><span class="nav-icon">🗄️</span><span class="nav-label">Base de datos</span></div>
+      <div class="nav-section">Sistema</div>
+      <div class="nav-item" data-tab="usuarios"><span class="nav-icon">👤</span><span class="nav-label">Usuarios</span></div>
+      <div class="nav-item" data-tab="sesiones"><span class="nav-icon">🔌</span><span class="nav-label">Sesiones activas</span></div>
+      <div class="nav-item" data-tab="prompts"><span class="nav-icon">🧠</span><span class="nav-label">Prompts IA</span></div>
+    </nav>
+    <div class="sidebar-footer">
+      <span class="db-pill {% if db_exists %}ok{% else %}missing{% endif %}">{% if db_exists %}✓ BD {{ db_size }} GB{% else %}BD no cargada{% endif %}</span>
+      <a href="/" class="back-link">← Volver a CosmoTools</a>
+      <a href="/logout" class="logout">Salir</a>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-left">
+        <button class="hamburger" id="hamburger">&#9776;</button>
+        <div class="topbar-title" id="topbar-title">Actualización Semanal</div>
+      </div>
+      <div class="topbar-user">{{ username }}</div>
+    </div>
+    <div class="content">
+
+      <!-- ACTUALIZACIÓN -->
+      <div class="panel active" id="tab-actualizar">
+        {% if not db_exists %}<div class="alert alert-warn">⚠ La BD no está cargada.</div>{% endif %}
+        <div class="card">
+          <div class="card-title">DAT — Datos de operaciones</div>
+          <div class="alert alert-info">Subí <strong>datos.lst</strong> — reemplaza la tabla del año. Fechas ISO e índice automáticos.</div>
+          <div class="form-row cols2" style="margin-top:.6rem">
+            <div><label>Año</label><input type="number" id="upd-anio-dat" value="{{ now.year }}" min="2020" max="2030"></div>
+          </div>
+          <div class="upload-zone" id="zone-dat"><input type="file" id="file-dat" accept=".txt,.csv,.lst"><div class="upload-icon">📂</div><div class="upload-text"><strong>datos.lst</strong> — separador ;</div><div class="upload-filename" id="fname-dat"></div></div>
+          <button class="btn btn-primary btn-full" id="btn-dat" style="margin-top:.9rem" {% if not db_exists %}disabled{% endif %}>Subir y procesar DAT</button>
+          <div id="msg-dat" style="margin-top:.6rem;font-size:.8rem;"></div>
+          <div class="log-box" id="log-dat"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">RECHAZOS — Errores de transmisión</div>
+          <div class="alert alert-info">Subí <strong>rechazos.lst</strong> — agrega registros nuevos a la tabla existente.</div>
+          <div class="upload-zone" id="zone-rech"><input type="file" id="file-rech" accept=".txt,.csv,.lst"><div class="upload-icon">📂</div><div class="upload-text"><strong>rechazos.lst</strong> — separador @</div><div class="upload-filename" id="fname-rech"></div></div>
+          <button class="btn btn-primary btn-full" id="btn-rech" style="margin-top:.9rem" {% if not db_exists %}disabled{% endif %}>Subir y procesar RECHAZOS</button>
+          <div id="msg-rech" style="margin-top:.6rem;font-size:.8rem;"></div>
+          <div class="log-box" id="log-rech"></div>
+        </div>
+      </div>
+
+      <!-- HISTORIAL -->
+      <div class="panel" id="tab-historial">
+        {% if pendientes %}<div class="alert alert-warn">⚠ <strong>{{ pendientes|length }}</strong> informe(s) con más de 10 días sin revisar.</div>{% endif %}
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem;margin-bottom:.9rem">
+            <div class="card-title" style="margin:0">Historial unificado</div>
+            <div style="display:flex;gap:.4rem">
+              <button class="btn btn-outline btn-sm" id="fil-todos" onclick="filtrarHist('todos')">Todos</button>
+              <button class="btn btn-outline btn-sm" id="fil-sintia" onclick="filtrarHist('sintia')">📊 SINTIA</button>
+              <button class="btn btn-outline btn-sm" id="fil-minuta" onclick="filtrarHist('minuta')">📋 Minutas</button>
+            </div>
+          </div>
+          <div id="hist-content"><div style="color:var(--muted);font-size:.82rem">Cargando...</div></div>
+        </div>
+      </div>
+
+      <!-- BASE DE DATOS -->
+      <div class="panel" id="tab-bd">
+        <div class="card">
+          <div class="card-title">Estado de la base de datos</div>
+          <div id="db-info-content">
+            {% if db_exists %}<div class="alert alert-ok">✓ BD cargada — {{ db_size }} GB</div>
+            {% else %}<div class="alert alert-warn">La BD no está cargada.</div>{% endif %}
+          </div>
+          <button class="btn btn-outline btn-sm" id="btn-refresh-db" style="margin-top:.6rem">Actualizar estado</button>
+        </div>
+        <div class="card">
+          <div class="card-title">Carga inicial</div>
+          <div style="display:flex;gap:.75rem;margin-bottom:.75rem">
+            <button class="btn btn-outline btn-sm" id="tab-bd-sql-btn" onclick="switchBdTab('sql')" style="border-color:var(--accent);color:var(--accent);background:var(--accent-light)">📄 Importar SQL</button>
+            <button class="btn btn-outline btn-sm" id="tab-bd-db-btn" onclick="switchBdTab('db')">🗄️ Subir pad.db</button>
+          </div>
+          <div id="bd-panel-sql">
+            <div class="alert alert-info" style="margin-bottom:.6rem">Subí el <strong>.sql</strong> exportado desde SQLite.</div>
+            <div class="upload-zone" id="zone-sql"><input type="file" id="file-sql" accept=".sql"><div class="upload-icon">📄</div><div class="upload-text"><strong>archivo.sql</strong></div><div class="upload-filename" id="fname-sql"></div></div>
+            <div class="progress-wrap" id="progress-sql"><div class="progress-label" id="pct-sql">Subiendo... 0%</div><div class="progress-bar-bg"><div class="progress-bar" id="bar-sql"></div></div></div>
+            <button class="btn btn-primary btn-full" id="btn-upload-sql" style="margin-top:.9rem">Importar SQL</button>
+            <div id="msg-sql" style="margin-top:.6rem;font-size:.8rem;"></div>
+          </div>
+          <div id="bd-panel-db" style="display:none">
+            <div class="alert alert-warn" style="margin-bottom:.6rem">⚠ Reemplaza completamente la BD.</div>
+            <div class="upload-zone" id="zone-db"><input type="file" id="file-db" accept=".db"><div class="upload-icon">🗄️</div><div class="upload-text"><strong>pad.db</strong></div><div class="upload-filename" id="fname-db"></div></div>
+            <div class="progress-wrap" id="progress-db"><div class="progress-label" id="pct-db">Subiendo... 0%</div><div class="progress-bar-bg"><div class="progress-bar" id="bar-db"></div></div></div>
+            <button class="btn btn-primary btn-full" id="btn-upload-db" style="margin-top:.9rem">Subir base de datos</button>
+            <div id="msg-db" style="margin-top:.6rem;font-size:.8rem;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- USUARIOS -->
+      <div class="panel" id="tab-usuarios">
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.9rem">
+            <div class="card-title" style="margin:0">Gestión de usuarios</div>
+            <button class="btn btn-primary btn-sm" onclick="abrirModalUsuario()">➕ Nuevo usuario</button>
+          </div>
+          <div id="usuarios-content"><div style="color:var(--muted);font-size:.82rem">Cargando...</div></div>
+        </div>
+      </div>
+
+      <!-- SESIONES -->
+      <div class="panel" id="tab-sesiones">
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem;margin-bottom:.9rem">
+            <div class="card-title" style="margin:0">Sesiones activas</div>
+            <button class="btn btn-danger btn-sm" onclick="revocarTodas()">⚡ Cerrar todas (excepto la mía)</button>
+          </div>
+          <div id="sesiones-content"><div style="color:var(--muted);font-size:.82rem">Cargando...</div></div>
+        </div>
+      </div>
+
+      <!-- PROMPTS -->
+      <div class="panel" id="tab-prompts">
+        <div class="card">
+          <div class="card-title">Editor de prompts IA</div>
+          <div class="alert alert-info" style="margin-bottom:1rem">Los cambios se aplican en la próxima generación de informe.</div>
+          <div id="prompts-list"><div style="color:var(--muted);font-size:.82rem">Cargando...</div></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+const sidebar=document.getElementById('sidebar'),overlay=document.getElementById('sidebar-overlay');
+document.getElementById('hamburger').addEventListener('click',()=>{sidebar.classList.toggle('open');overlay.classList.toggle('visible')});
+overlay.addEventListener('click',()=>{sidebar.classList.remove('open');overlay.classList.remove('visible')});
+
+const TITLES={actualizar:'Actualización Semanal',historial:'Historial',bd:'Base de Datos',usuarios:'Gestión de Usuarios',sesiones:'Sesiones Activas',prompts:'Prompts IA'};
+document.querySelectorAll('.nav-item').forEach(item=>{
+  item.addEventListener('click',()=>{
+    document.querySelectorAll('.nav-item').forEach(i=>i.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+    item.classList.add('active');
+    const tab=document.getElementById('tab-'+item.dataset.tab);
+    if(tab){tab.classList.add('active');document.getElementById('topbar-title').textContent=TITLES[item.dataset.tab]||'';}
+    if(item.dataset.tab==='historial')loadHistorial();
+    if(item.dataset.tab==='bd')loadDbStatus();
+    if(item.dataset.tab==='usuarios')loadUsuarios();
+    if(item.dataset.tab==='sesiones')loadSesiones();
+    if(item.dataset.tab==='prompts')loadPrompts();
+    sidebar.classList.remove('open');overlay.classList.remove('visible');
+  });
+});
+
+const hash=sessionStorage.getItem('adminTab')||window.location.hash.replace('#','');
+sessionStorage.removeItem('adminTab');
+if(hash){const item=document.querySelector(`.nav-item[data-tab="${hash}"]`);if(item)item.click();}
+
+function setupZone(zId,iId,fId){
+  const z=document.getElementById(zId),inp=document.getElementById(iId),fn=document.getElementById(fId);if(!z)return;
+  inp.addEventListener('change',()=>{if(inp.files[0])fn.textContent=inp.files[0].name});
+  z.addEventListener('dragover',e=>{e.preventDefault();z.classList.add('drag')});
+  z.addEventListener('dragleave',()=>z.classList.remove('drag'));
+  z.addEventListener('drop',e=>{e.preventDefault();z.classList.remove('drag');const dt=new DataTransfer();dt.items.add(e.dataTransfer.files[0]);inp.files=dt.files;fn.textContent=e.dataTransfer.files[0].name});
+}
+['dat','rech','sql','db'].forEach(x=>setupZone(`zone-${x}`,`file-${x}`,`fname-${x}`));
+
+function uploadTXT(fId,tabla,mId,lId,bId,anio){
+  const file=document.getElementById(fId).files[0];if(!file){showMsg(mId,"Seleccioná un archivo primero.","warn");return}
+  const fd=new FormData();fd.append("file",file);fd.append("tabla",tabla);if(anio)fd.append("anio",anio);
+  const btn=document.getElementById(bId),logBox=document.getElementById(lId);
+  btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Subiendo... 0%';
+  logBox.classList.add("visible");logBox.innerHTML="";
+  const xhr=new XMLHttpRequest();
+  xhr.open("POST","/api/update-csv");
+  xhr.upload.addEventListener("progress",e=>{
+    if(e.lengthComputable){const p=Math.round(e.loaded/e.total*100);btn.innerHTML=`<span class="spinner"></span> Subiendo... ${p}%`;}
+  });
+  xhr.onload=()=>{
+    let data;try{data=JSON.parse(xhr.responseText);}catch{showMsg(mId,"✗ Error inesperado","err");btn.disabled=false;btn.innerHTML="Subir y procesar";return;}
+    if(!data.ok){showMsg(mId,"✗ "+data.error,"err");btn.disabled=false;btn.innerHTML="Subir y procesar";return;}
+    btn.innerHTML='<span class="spinner"></span> Procesando...';
+    let lastLen=0;
+    const iv=setInterval(()=>{
+      fetch("/api/job/"+data.job_id).then(r=>r.json()).then(d=>{
+        const logs=d.log||[];logs.slice(lastLen).forEach(l=>{const div=document.createElement("div");div.className="log-line"+(l.startsWith("✓")?" ok":l.startsWith("✗")?" err":"");div.textContent=l;logBox.appendChild(div);logBox.scrollTop=logBox.scrollHeight});lastLen=logs.length;
+        if(d.status==="done"){clearInterval(iv);btn.disabled=false;btn.innerHTML="Subir y procesar";const last=logs[logs.length-1]||"";showMsg(mId,last,last.startsWith("✓")?"ok":"err");loadDbStatus();}
+        else if(d.status==="error"){clearInterval(iv);btn.disabled=false;btn.innerHTML="Subir y procesar";showMsg(mId,"✗ Error","err");}
+      });
+    },1500);
+  };
+  xhr.onerror=()=>{showMsg(mId,"✗ Error de red","err");btn.disabled=false;btn.innerHTML="Subir y procesar";};
+  xhr.send(fd);
+}
+document.getElementById('btn-dat').addEventListener('click',()=>uploadTXT('file-dat','DAT','msg-dat','log-dat','btn-dat',document.getElementById('upd-anio-dat').value));
+document.getElementById('btn-rech').addEventListener('click',()=>uploadTXT('file-rech','RECHAZOS','msg-rech','log-rech','btn-rech',null));
+
+function uploadXHR(fId,url,pId,bId,wId,mId){
+  const file=document.getElementById(fId).files[0];if(!file){showMsg(mId,'Seleccioná un archivo.','warn');return}
+  const fd=new FormData();fd.append('file',file);const xhr=new XMLHttpRequest();xhr.open('POST',url);
+  document.getElementById(wId).style.display='block';
+  xhr.upload.addEventListener('progress',e=>{if(e.lengthComputable){const p=Math.round(e.loaded/e.total*100);document.getElementById(pId).textContent=`Subiendo... ${p}%`;document.getElementById(bId).style.width=p+'%'}});
+  xhr.addEventListener('load',()=>{const r=JSON.parse(xhr.responseText);if(r.ok)showMsg(mId,`✓ Completado (${r.size_gb} GB). Recargá la página.`,'ok');else showMsg(mId,'✗ '+r.error,'err')});
+  xhr.send(fd);
+}
+document.getElementById('btn-upload-sql').addEventListener('click',()=>uploadXHR('file-sql','/api/import-sql','pct-sql','bar-sql','progress-sql','msg-sql'));
+document.getElementById('btn-upload-db').addEventListener('click',()=>uploadXHR('file-db','/api/upload-db','pct-db','bar-db','progress-db','msg-db'));
+function switchBdTab(t){
+  document.getElementById('bd-panel-sql').style.display=t==='sql'?'block':'none';
+  document.getElementById('bd-panel-db').style.display=t==='db'?'block':'none';
+  document.getElementById('tab-bd-sql-btn').style.cssText=t==='sql'?'border-color:var(--accent);color:var(--accent);background:var(--accent-light)':'';
+  document.getElementById('tab-bd-db-btn').style.cssText=t==='db'?'border-color:var(--accent);color:var(--accent);background:var(--accent-light)':'';
+}
+
+function loadDbStatus(){
+  fetch('/api/db-status').then(r=>r.json()).then(data=>{
+    const el=document.getElementById('db-info-content');if(!el)return;
+    if(!data.exists){el.innerHTML='<div class="alert alert-warn">La BD no está cargada.</div>';return}
+    let html=`<div class="alert alert-ok">✓ BD cargada — ${data.size_gb} GB</div><div class="stat-row">`;
+    for(const[t,c]of Object.entries(data.tables||{}))html+=`<div class="stat"><div class="stat-label">${t}</div><div class="stat-value">${c.toLocaleString('es-AR')}</div></div>`;
+    el.innerHTML=html+'</div>';
+  });
+}
+document.getElementById('btn-refresh-db').addEventListener('click',loadDbStatus);
+
+let histData=[],filtroActivo='todos';
+function loadHistorial(){fetch('/api/historial/completo').then(r=>r.json()).then(data=>{histData=data.rows||[];renderHistorial()})}
+function filtrarHist(tipo){filtroActivo=tipo;renderHistorial()}
+function renderHistorial(){
+  const el=document.getElementById('hist-content');
+  const rows=filtroActivo==='todos'?histData:histData.filter(r=>r.tipo===filtroActivo);
+  if(!rows.length){el.innerHTML='<div style="color:var(--muted);font-size:.82rem">No hay registros.</div>';return}
+  let html='<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Fecha</th><th>Tipo</th><th>Descripción</th><th class="col-hide-mobile">Usuario</th><th>Archivos</th><th></th></tr></thead><tbody>';
+  rows.forEach(r=>{
+    const tipo=r.tipo==='minuta'?'<span class="tag tag-minuta">📋 Minuta</span>':'<span class="tag tag-sintia">📊 SINTIA</span>';
+    const dl=r.tipo==='minuta'?`<a href="/api/vua/minutas/${r.id}/download" class="download-btn" style="padding:.25rem .6rem;font-size:.65rem">📥</a>`:`${r.archivo_word?`<a href="/api/historial/${r.id}/download/word" class="download-btn" style="padding:.25rem .6rem;font-size:.65rem">📄</a>`:''} ${r.archivo_excel?`<a href="/api/historial/${r.id}/download/excel" class="download-btn" style="padding:.25rem .6rem;font-size:.65rem">📊</a>`:''}`;
+    html+=`<tr><td style="font-family:var(--mono);font-size:.68rem;white-space:nowrap">${(r.fecha||'').slice(0,16)}</td><td>${tipo}</td><td style="font-size:.78rem">${r.descripcion||''}</td><td class="col-hide-mobile" style="font-size:.72rem;color:var(--muted)">${r.usuario||''}</td><td style="display:flex;gap:.3rem;flex-wrap:wrap">${dl}</td><td><button class="btn btn-danger btn-sm" onclick="eliminarHist('${r.id}','${r.tipo}')">🗑</button></td></tr>`;
+  });
+  el.innerHTML=html+'</tbody></table></div>';
+}
+function eliminarHist(id,tipo){
+  if(!confirm('¿Eliminar?'))return;
+  const url=tipo==='minuta'?`/api/vua/minutas/${id}`:`/api/historial/${id}/revisar`;
+  const opts=tipo==='minuta'?{method:'DELETE'}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accion:'eliminar'})};
+  fetch(url,opts).then(()=>loadHistorial());
+}
+
+function loadUsuarios(){
+  fetch('/api/admin/usuarios').then(r=>r.json()).then(data=>{
+    const el=document.getElementById('usuarios-content');
+    if(!data.ok||!data.rows.length){el.innerHTML='<div style="color:var(--muted);font-size:.82rem">No hay usuarios.</div>';return}
+    let html='<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Usuario</th><th>Rol</th><th>Módulos</th><th class="col-hide-mobile">Último acceso</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>';
+    data.rows.forEach(u=>{
+      const rol=u.rol==='admin'?'<span class="tag tag-admin">admin</span>':u.rol==='operator'?'<span class="tag tag-sintia">operator</span>':'<span class="tag tag-readonly">readonly</span>';
+      const estado=u.activo?'<span class="tag tag-activo">activo</span>':'<span class="tag tag-inactivo">inactivo</span>';
+      const mods=(u.modulos||'').split(',').map(m=>`<span class="tag tag-readonly" style="font-size:.58rem">${m}</span>`).join(' ');
+      html+=`<tr><td style="font-family:var(--mono);font-size:.8rem;font-weight:600">${u.username}</td><td>${rol}</td><td>${mods}</td><td class="col-hide-mobile" style="font-family:var(--mono);font-size:.68rem;color:var(--muted)">${(u.ultimo_acceso||'—').slice(0,16)}</td><td>${estado}</td><td style="display:flex;gap:.3rem"><button class="btn btn-outline btn-sm" onclick="editarUsuario(${u.id},'${u.username}','${u.rol}','${u.modulos}',${u.activo})">✏️</button>${u.activo?`<button class="btn btn-danger btn-sm" onclick="desactivarUsuario(${u.id},'${u.username}')">🚫</button>`:''}</td></tr>`;
+    });
+    el.innerHTML=html+'</tbody></table></div>';
+  });
+}
+let editandoUserId=null;
+function abrirModalUsuario(){
+  editandoUserId=null;
+  document.getElementById('modal-usr-title').textContent='➕ Nuevo usuario';
+  document.getElementById('modal-usr-username').value='';document.getElementById('modal-usr-username').disabled=false;
+  document.getElementById('modal-usr-password').value='';document.getElementById('modal-usr-password').placeholder='Mín. 8 caracteres';
+  document.getElementById('modal-usr-rol').value='readonly';document.getElementById('modal-usr-activo').value='1';
+  ['sintia','vua','admin'].forEach(m=>document.getElementById('mod-'+m).checked=m!=='admin');
+  document.getElementById('modal-usr-error').style.display='none';
+  document.getElementById('modal-usuario').classList.add('visible');
+}
+function editarUsuario(id,username,rol,modulos,activo){
+  editandoUserId=id;
+  document.getElementById('modal-usr-title').textContent='✏️ Editar usuario';
+  document.getElementById('modal-usr-username').value=username;document.getElementById('modal-usr-username').disabled=true;
+  document.getElementById('modal-usr-password').value='';document.getElementById('modal-usr-password').placeholder='Dejá vacío para no cambiar';
+  document.getElementById('modal-usr-rol').value=rol;document.getElementById('modal-usr-activo').value=activo?'1':'0';
+  const mods=(modulos||'').split(',');['sintia','vua','admin'].forEach(m=>document.getElementById('mod-'+m).checked=mods.includes(m));
+  document.getElementById('modal-usr-error').style.display='none';
+  document.getElementById('modal-usuario').classList.add('visible');
+}
+function guardarUsuario(){
+  const modulos=['sintia','vua','admin'].filter(m=>document.getElementById('mod-'+m).checked).join(',');
+  const errEl=document.getElementById('modal-usr-error');
+  if(editandoUserId){
+    const data={rol:document.getElementById('modal-usr-rol').value,modulos,activo:parseInt(document.getElementById('modal-usr-activo').value)};
+    const pw=document.getElementById('modal-usr-password').value;if(pw)data.password=pw;
+    fetch(`/api/admin/usuarios/${editandoUserId}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})
+      .then(r=>r.json()).then(d=>{if(d.ok){cerrarModal('modal-usuario');loadUsuarios()}else{errEl.textContent=d.error;errEl.style.display='block'}});
+  }else{
+    const data={username:document.getElementById('modal-usr-username').value,password:document.getElementById('modal-usr-password').value,rol:document.getElementById('modal-usr-rol').value,modulos};
+    fetch('/api/admin/usuarios',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})
+      .then(r=>r.json()).then(d=>{if(d.ok){cerrarModal('modal-usuario');loadUsuarios()}else{errEl.textContent=d.error;errEl.style.display='block'}});
+  }
+}
+function desactivarUsuario(id,username){
+  if(!confirm(`¿Desactivar al usuario "${username}"?`))return;
+  fetch(`/api/admin/usuarios/${id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({activo:0})}).then(()=>loadUsuarios());
+}
+
+function loadSesiones(){
+  fetch('/api/admin/sesiones').then(r=>r.json()).then(data=>{
+    const el=document.getElementById('sesiones-content');
+    if(!data.ok||!data.rows.length){el.innerHTML='<div style="color:var(--muted);font-size:.82rem">No hay sesiones activas.</div>';return}
+    let html='<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Usuario</th><th>Token</th><th class="col-hide-mobile">IP</th><th class="col-hide-mobile">Último acceso</th><th></th></tr></thead><tbody>';
+    data.rows.forEach(s=>{
+      const badge=s.es_propia?'<span class="tag tag-propia" style="margin-left:.4rem">tú</span>':'';
+      const tokenPrefix=s.token.replace('...','');
+      html+=`<tr><td style="font-weight:600">${s.username}${badge}</td><td style="font-family:var(--mono);font-size:.7rem;color:var(--muted)">${s.token}</td><td class="col-hide-mobile" style="font-family:var(--mono);font-size:.7rem;color:var(--muted)">${s.ip||'—'}</td><td class="col-hide-mobile" style="font-family:var(--mono);font-size:.7rem;color:var(--muted)">${(s.ultimo_acceso||'').slice(0,16)}</td><td>${s.es_propia?'':'<button class="btn btn-danger btn-sm" onclick="revocarSesion(\''+tokenPrefix+'\')">⚡ Cerrar</button>'}</td></tr>`;
+    });
+    el.innerHTML=html+'</tbody></table></div>';
+  });
+}
+function revocarSesion(tp){if(!confirm('¿Cerrar esta sesión?'))return;fetch(`/api/admin/sesiones/${tp}/revocar`,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.ok)loadSesiones();else alert(d.error)})}
+function revocarTodas(){if(!confirm('¿Cerrar todas las sesiones (excepto la tuya)?'))return;fetch('/api/admin/sesiones/revocar-todas',{method:'POST'}).then(r=>r.json()).then(d=>{if(d.ok){alert(`✓ ${d.revocadas} sesión(es) cerrada(s)`);loadSesiones()}})}
+
+function loadPrompts(){
+  fetch('/api/admin/prompts').then(r=>r.json()).then(data=>{
+    const el=document.getElementById('prompts-list');
+    if(!data.ok||!data.rows.length){el.innerHTML='<div style="color:var(--muted);font-size:.82rem">No hay prompts.</div>';return}
+    el.innerHTML=data.rows.map(p=>`
+      <div class="prompt-card" onclick="editarPrompt('${p.id}','${p.nombre.replace(/'/g,'')}','${(p.descripcion||'').replace(/'/g,'')}')">
+        <div><div class="prompt-name">${p.nombre}</div><div class="prompt-desc">${p.descripcion||''}</div><div style="font-family:var(--mono);font-size:.6rem;color:var(--dim);margin-top:.2rem">Modificado: ${(p.modificado||'').slice(0,16)}</div></div>
+        <span class="prompt-tag">${p.modulo}</span>
+      </div>`).join('');
+  });
+}
+function editarPrompt(id,nombre,desc){
+  fetch(`/api/admin/prompts/${id}`).then(r=>r.json()).then(data=>{
+    if(!data.ok)return;
+    document.getElementById('modal-prompt-id').value=id;
+    document.getElementById('modal-prompt-title').textContent=`✏️ ${nombre}`;
+    document.getElementById('modal-prompt-desc').textContent=desc;
+    document.getElementById('modal-prompt-content').value=data.prompt.contenido;
+    document.getElementById('modal-prompt-error').style.display='none';
+    document.getElementById('modal-prompt').classList.add('visible');
+  });
+}
+function guardarPrompt(){
+  const id=document.getElementById('modal-prompt-id').value,contenido=document.getElementById('modal-prompt-content').value.trim();
+  const errEl=document.getElementById('modal-prompt-error');
+  if(!contenido){errEl.textContent='El contenido no puede estar vacío';errEl.style.display='block';return}
+  fetch(`/api/admin/prompts/${id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({contenido})})
+    .then(r=>r.json()).then(d=>{if(d.ok){cerrarModal('modal-prompt');loadPrompts();alert('✓ Prompt guardado.')}else{errEl.textContent=d.error;errEl.style.display='block'}});
+}
+
+function cerrarModal(id){document.getElementById(id).classList.remove('visible')}
+document.querySelectorAll('.modal-overlay').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)m.classList.remove('visible')}));
+function showMsg(id,msg,type){const el=document.getElementById(id);if(!el)return;const c={ok:'var(--accent2)',warn:'var(--warn)',err:'var(--danger)',info:'var(--muted)'};el.style.color=c[type]||'var(--text)';el.textContent=msg}
+</script>
+</body>
+</html>
