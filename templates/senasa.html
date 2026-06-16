@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CosmoTools — SENASA</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#F0F4F8;--surface:#FFFFFF;--surface2:#F8FAFC;
+  --sidebar-bg:#1E2A3B;--sidebar-hover:rgba(255,255,255,.06);--sidebar-active:rgba(41,121,200,.15);
+  --border:#E5E7EB;--border-dark:rgba(255,255,255,.08);
+  --accent:#1A56DB;--accent-hover:#1447C0;--accent-light:#EBF5FF;
+  --accent2:#057A55;--accent2-light:#F0FFF4;
+  --warn:#D97706;--warn-light:#FFFBEB;
+  --danger:#DC2626;--danger-light:#FEF2F2;
+  --text:#111928;--text-sub:#374151;--muted:#6B7280;--dim:#9CA3AF;
+  --text-sidebar:#CBD5E1;--text-sidebar-muted:#64748B;
+  --mono:'IBM Plex Mono',monospace;--sans:'IBM Plex Sans',sans-serif;
+  --radius:8px;--radius-sm:4px;
+  --shadow-sm:0 1px 3px rgba(0,0,0,.07);--shadow:0 4px 12px rgba(0,0,0,.08);
+  --sidebar-w:230px;
+}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
+.app{display:flex;flex:1;min-height:0}
+.sidebar{width:var(--sidebar-w);min-width:var(--sidebar-w);background:var(--sidebar-bg);display:flex;flex-direction:column;z-index:50;transition:transform .25s ease}
+.sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:40}
+.sidebar-brand{padding:1.4rem 1.4rem 1rem;border-bottom:1px solid var(--border-dark)}
+.sidebar-brand .name{font-family:var(--mono);font-size:.92rem;font-weight:600;color:#fff}
+.sidebar-brand .sub{font-size:.65rem;color:var(--text-sidebar-muted);margin-top:.2rem}
+.sidebar-nav{flex:1;padding:.6rem 0;overflow-y:auto}
+.nav-section{font-family:var(--mono);font-size:.58rem;color:var(--text-sidebar-muted);letter-spacing:.18em;text-transform:uppercase;padding:.8rem 1.4rem .3rem}
+.nav-item{display:flex;align-items:center;gap:.7rem;padding:.62rem 1.4rem;cursor:pointer;color:var(--text-sidebar-muted);font-size:.82rem;transition:all .15s;border-left:2px solid transparent;user-select:none}
+.nav-item:hover{color:var(--text-sidebar);background:var(--sidebar-hover)}
+.nav-item.active{color:#fff;background:var(--sidebar-active);border-left-color:var(--accent)}
+.nav-icon{font-size:.9rem;width:18px;text-align:center;flex-shrink:0}
+.sidebar-footer{padding:.9rem 1.4rem;border-top:1px solid var(--border-dark)}
+.back-link{font-size:.72rem;color:var(--text-sidebar-muted);text-decoration:none;display:block;margin-bottom:.4rem;transition:color .15s}
+.back-link:hover{color:var(--text-sidebar)}
+.logout{font-size:.72rem;color:var(--text-sidebar-muted);text-decoration:none}
+.logout:hover{color:var(--text-sidebar)}
+.main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.topbar{background:var(--surface);border-bottom:1px solid var(--border);padding:.75rem 1.75rem;display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-shrink:0;box-shadow:var(--shadow-sm)}
+.topbar-left{display:flex;align-items:center;gap:.75rem}
+.hamburger{display:none;background:none;border:none;color:var(--muted);font-size:1.3rem;cursor:pointer;padding:.25rem;line-height:1;min-width:36px}
+.hamburger:hover{color:var(--text)}
+.topbar-title{font-family:var(--mono);font-size:.78rem;color:var(--accent);letter-spacing:.08em;font-weight:600}
+.topbar-user{font-family:var(--mono);font-size:.7rem;color:var(--muted)}
+.content{flex:1;padding:1.75rem;overflow-y:auto}
+.panel{display:none}.panel.active{display:block}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;margin-bottom:1.25rem;box-shadow:var(--shadow-sm)}
+.card-title{font-family:var(--mono);font-size:.65rem;color:var(--muted);letter-spacing:.14em;text-transform:uppercase;margin-bottom:.9rem;font-weight:600}
+label{display:block;font-size:.7rem;font-weight:600;color:var(--text-sub);letter-spacing:.05em;text-transform:uppercase;margin-bottom:.3rem}
+input[type=text],input[type=date],select,textarea{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:var(--mono);font-size:.85rem;padding:.55rem .8rem;outline:none;transition:border-color .2s}
+input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(26,86,219,.1)}
+textarea{resize:vertical;min-height:80px;font-family:var(--sans);font-size:.85rem}
+.form-row{display:grid;gap:.9rem;margin-bottom:.9rem}
+.form-row.cols2{grid-template-columns:1fr 1fr}
+.form-row.cols3{grid-template-columns:1fr 1fr 1fr}
+.btn{display:inline-flex;align-items:center;gap:.5rem;border:none;border-radius:var(--radius-sm);cursor:pointer;font-family:var(--sans);font-weight:600;font-size:.85rem;padding:.6rem 1.2rem;transition:all .15s}
+.btn-primary{background:var(--accent);color:#fff}.btn-primary:hover{background:var(--accent-hover)}
+.btn-primary:disabled{background:var(--dim);cursor:not-allowed}
+.btn-outline{background:var(--surface);color:var(--text-sub);border:1px solid var(--border)}.btn-outline:hover{border-color:var(--accent);color:var(--accent)}
+.btn-danger{background:var(--danger-light);color:var(--danger);border:1px solid rgba(220,38,38,.2)}
+.btn-sm{padding:.3rem .75rem;font-size:.75rem}
+.btn-full{width:100%;justify-content:center}
+.alert{padding:.75rem 1rem;border-radius:var(--radius-sm);font-size:.82rem;margin-bottom:.9rem}
+.alert-info{background:var(--accent-light);border:1px solid rgba(26,86,219,.2);color:var(--accent)}
+.alert-ok{background:var(--accent2-light);border:1px solid rgba(5,122,85,.2);color:var(--accent2)}
+.alert-warn{background:var(--warn-light);border:1px solid rgba(217,119,6,.2);color:var(--warn)}
+.data-table{width:100%;border-collapse:collapse;font-size:.8rem}
+.data-table th{font-family:var(--mono);font-size:.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;padding:.5rem .75rem;text-align:left;border-bottom:2px solid var(--border);background:var(--surface2)}
+.data-table td{padding:.55rem .75rem;border-bottom:1px solid var(--border);vertical-align:top;color:var(--text-sub)}
+.data-table tr:hover td{background:var(--bg)}
+.tag{font-family:var(--mono);font-size:.62rem;padding:.2rem .5rem;border-radius:20px;display:inline-block;font-weight:600}
+.tag-completado{background:var(--accent2-light);color:var(--accent2);border:1px solid rgba(5,122,85,.2)}
+.tag-pendiente{background:var(--warn-light);color:var(--warn);border:1px solid rgba(217,119,6,.2)}
+.tag-encurso{background:var(--accent-light);color:var(--accent);border:1px solid rgba(26,86,219,.2)}
+.eje-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:1rem 1.25rem;margin-bottom:.6rem;cursor:pointer;transition:all .15s;display:flex;align-items:flex-start;justify-content:space-between;gap:1rem}
+.eje-card:hover{border-color:rgba(26,86,219,.3);background:var(--accent-light)}
+.eje-num{font-family:var(--mono);font-size:.65rem;color:var(--muted);margin-bottom:.25rem}
+.eje-nombre{font-size:.85rem;font-weight:500;color:var(--text);line-height:1.4}
+.eje-desc{font-size:.75rem;color:var(--muted);margin-top:.25rem;line-height:1.45}
+.eje-estado{font-size:.72rem;margin-top:.3rem}
+.acuerdo-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:.9rem 1.1rem;margin-bottom:.5rem;display:flex;align-items:flex-start;gap:.9rem}
+.acuerdo-card.pendiente{border-left:3px solid var(--warn)}
+.acuerdo-card.completado{border-left:3px solid var(--accent2)}
+.acuerdo-body{flex:1}
+.acuerdo-desc{font-size:.82rem;color:var(--text);line-height:1.5}
+.acuerdo-meta{font-size:.72rem;color:var(--muted);margin-top:.3rem;display:flex;gap:.9rem;flex-wrap:wrap}
+.participante-row{display:flex;gap:.5rem;align-items:center;margin-bottom:.4rem}
+.participante-row input{flex:1}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:200;display:none;align-items:center;justify-content:center;padding:1rem}
+.modal-overlay.visible{display:flex}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.75rem;width:100%;max-width:560px;max-height:90vh;overflow-y:auto;box-shadow:var(--shadow)}
+.modal h3{font-size:.95rem;font-weight:600;color:var(--text);margin-bottom:1.1rem}
+.modal-actions{display:flex;gap:.6rem;justify-content:flex-end;margin-top:1.25rem}
+.ia-sugerencia{background:var(--accent-light);border:1px solid rgba(26,86,219,.2);border-radius:var(--radius-sm);padding:.9rem;margin-top:.75rem;font-size:.82rem;line-height:1.65;display:none;white-space:pre-wrap}
+.ia-sugerencia.visible{display:block}
+.lista-items{list-style:none;padding:0}
+.lista-items li{display:flex;gap:.5rem;align-items:flex-start;margin-bottom:.4rem}
+.lista-items li input{flex:1}
+.download-btn{display:inline-flex;align-items:center;gap:.4rem;background:var(--accent2-light);border:1px solid rgba(5,122,85,.25);border-radius:var(--radius-sm);color:var(--accent2);font-family:var(--mono);font-size:.72rem;padding:.45rem .9rem;text-decoration:none;transition:all .15s;font-weight:600;cursor:pointer}
+.download-btn:hover{background:#D1FAE5}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{width:13px;height:13px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;display:inline-block}
+@media(max-width:768px){
+  .sidebar{position:fixed;top:0;left:0;bottom:0;transform:translateX(-100%)}
+  .sidebar.open{transform:translateX(0)}
+  .sidebar-overlay.visible{display:block}
+  .hamburger{display:block}
+  .topbar-user{display:none}
+  .content{padding:1.1rem}
+  .form-row.cols2,.form-row.cols3{grid-template-columns:1fr}
+  .data-table{font-size:.73rem}
+  .data-table th,.data-table td{padding:.4rem .5rem}
+}
+</style>
+</head>
+<body>
+<div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+<div class="app">
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <div class="name">SENASA</div>
+      <div class="sub">Integración PAD / Embalajes</div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section">Módulos</div>
+      <div class="nav-item" onclick="location.href='/sintia'"><span class="nav-icon">📊</span><span class="nav-label">SINTIA</span></div>
+      <div class="nav-item" onclick="location.href='/vua'"><span class="nav-icon">✈️</span><span class="nav-label">VUA</span></div>
+      <div class="nav-item active" onclick="location.href='/senasa'"><span class="nav-icon">🌿</span><span class="nav-label">SENASA</span></div>
+      <div class="nav-section">Proyecto</div>
+      <div class="nav-item active" data-tab="cronologia"><span class="nav-icon">📅</span><span class="nav-label">Cronología</span></div>
+      <div class="nav-item" data-tab="ejes"><span class="nav-icon">🎯</span><span class="nav-label">Ejes de trabajo</span></div>
+      <div class="nav-item" data-tab="minutas"><span class="nav-icon">📝</span><span class="nav-label">Minutas</span></div>
+      <div class="nav-item" data-tab="acuerdos"><span class="nav-icon">✅</span><span class="nav-label">Compromisos</span></div>
+      <div class="nav-item" data-tab="informe"><span class="nav-icon">📥</span><span class="nav-label">Descargar informe</span></div>
+    </nav>
+    <div class="sidebar-footer">
+      <a href="/" class="back-link">← Volver a CosmoTools</a>
+      <a href="/logout" class="logout">Salir</a>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-left">
+        <button class="hamburger" id="hamburger">&#9776;</button>
+        <div class="topbar-title">SENASA · Integración PAD / Embalajes de Madera</div>
+      </div>
+      <div class="topbar-user">{{ username }}</div>
+    </div>
+
+    <div class="content">
+
+      <!-- ═══════════ PANEL: CRONOLOGÍA ═══════════ -->
+      <div id="panel-cronologia" class="panel active">
+        <div class="card">
+          <div class="card-title">Cronología de reuniones</div>
+          <div style="display:flex;justify-content:flex-end;margin-bottom:.9rem">
+            <button class="btn btn-outline btn-sm" onclick="abrirModalCrono()">+ Agregar</button>
+          </div>
+          <table class="data-table" id="tabla-crono">
+            <thead><tr><th>Fecha</th><th>Actividad</th><th>Participantes</th><th>Estado</th><th></th></tr></thead>
+            <tbody id="body-crono"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ═══════════ PANEL: EJES ═══════════ -->
+      <div id="panel-ejes" class="panel">
+        <div class="card">
+          <div class="card-title">Ejes de trabajo</div>
+          <div id="lista-ejes"></div>
+        </div>
+      </div>
+
+      <!-- ═══════════ PANEL: MINUTAS ═══════════ -->
+      <div id="panel-minutas" class="panel">
+        <div class="card">
+          <div class="card-title">Nueva minuta</div>
+          <div class="alert alert-info" style="margin-bottom:1rem">
+            Podés pegar notas de la reunión y usar IA para estructurarlas, o completar el formulario directamente.
+          </div>
+          <!-- Sección IA -->
+          <div style="margin-bottom:1.25rem">
+            <label>Notas de la reunión (para estructurar con IA)</label>
+            <textarea id="notas-ia" rows="5" placeholder="Pegá acá tus notas y la IA va a estructurar la minuta..."></textarea>
+            <button class="btn btn-outline btn-sm" style="margin-top:.5rem" onclick="estructurarConIA()">
+              ✨ Estructurar con IA
+            </button>
+            <div id="ia-resultado" class="ia-sugerencia"></div>
+          </div>
+          <hr style="border:none;border-top:1px solid var(--border);margin-bottom:1.25rem">
+          <!-- Formulario manual -->
+          <div class="form-row cols2">
+            <div><label>Fecha</label><input type="text" id="m-fecha" placeholder="dd/mm/aaaa"></div>
+            <div><label>Lugar</label><input type="text" id="m-lugar" placeholder="Meet / presencial..."></div>
+          </div>
+          <div class="form-row">
+            <div><label>Asunto</label><input type="text" id="m-asunto" placeholder="Ej: Reunión técnica PAD-SIG Embalajes"></div>
+          </div>
+          <!-- Participantes -->
+          <div style="margin-bottom:.9rem">
+            <label>Participantes</label>
+            <div id="participantes-list">
+              <div class="participante-row">
+                <input type="text" placeholder="Nombre" class="p-nombre">
+                <input type="text" placeholder="Cargo" class="p-cargo">
+                <input type="text" placeholder="Organismo" class="p-org">
+                <button class="btn btn-danger btn-sm" onclick="quitarParticipante(this)">✕</button>
+              </div>
+            </div>
+            <button class="btn btn-outline btn-sm" style="margin-top:.4rem" onclick="agregarParticipante()">+ Participante</button>
+          </div>
+          <!-- Secciones de la minuta -->
+          <div style="margin-bottom:.9rem">
+            <label>Temas tratados</label>
+            <ul class="lista-items" id="lista-temas"><li><input type="text" placeholder="Tema..."><button class="btn btn-danger btn-sm" onclick="quitarItem(this)">✕</button></li></ul>
+            <button class="btn btn-outline btn-sm" onclick="agregarItem('lista-temas')">+ Tema</button>
+          </div>
+          <div style="margin-bottom:.9rem">
+            <label>Principales conclusiones</label>
+            <ul class="lista-items" id="lista-conclusiones"><li><input type="text" placeholder="Conclusión..."><button class="btn btn-danger btn-sm" onclick="quitarItem(this)">✕</button></li></ul>
+            <button class="btn btn-outline btn-sm" onclick="agregarItem('lista-conclusiones')">+ Conclusión</button>
+          </div>
+          <div style="margin-bottom:.9rem">
+            <label>Compromisos asumidos</label>
+            <ul class="lista-items" id="lista-compromisos"><li><input type="text" placeholder="ORGANISMO — compromiso..."><button class="btn btn-danger btn-sm" onclick="quitarItem(this)">✕</button></li></ul>
+            <button class="btn btn-outline btn-sm" onclick="agregarItem('lista-compromisos')">+ Compromiso</button>
+          </div>
+          <div style="margin-bottom:1.25rem">
+            <label>Próximos pasos</label>
+            <ul class="lista-items" id="lista-proximos"><li><input type="text" placeholder="Próximo paso..."><button class="btn btn-danger btn-sm" onclick="quitarItem(this)">✕</button></li></ul>
+            <button class="btn btn-outline btn-sm" onclick="agregarItem('lista-proximos')">+ Paso</button>
+          </div>
+          <button class="btn btn-primary" onclick="generarMinuta()" id="btn-generar">
+            📄 Generar minuta Word
+          </button>
+          <div id="minuta-resultado" style="margin-top:1rem;display:none"></div>
+        </div>
+
+        <!-- Historial de minutas -->
+        <div class="card">
+          <div class="card-title">Minutas generadas</div>
+          <table class="data-table">
+            <thead><tr><th>Fecha</th><th>Asunto</th><th>Lugar</th><th>Generada por</th><th></th></tr></thead>
+            <tbody id="body-minutas"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ═══════════ PANEL: ACUERDOS ═══════════ -->
+      <div id="panel-acuerdos" class="panel">
+        <div class="card">
+          <div class="card-title">Compromisos y acuerdos pendientes</div>
+          <div style="display:flex;justify-content:flex-end;margin-bottom:.9rem">
+            <button class="btn btn-outline btn-sm" onclick="abrirModalAcuerdo()">+ Agregar</button>
+          </div>
+          <div id="lista-acuerdos"></div>
+        </div>
+      </div>
+
+      <!-- ═══════════ PANEL: INFORME ═══════════ -->
+      <div id="panel-informe" class="panel">
+        <div class="card">
+          <div class="card-title">Informe de avance — Integración PAD / SENASA</div>
+          <p style="font-size:.82rem;color:var(--muted);margin-bottom:1.25rem">
+            Genera un documento Word con portada, ejes de trabajo, cronología de reuniones, compromisos pendientes e historial de minutas.
+          </p>
+          <button class="download-btn" id="btn-informe" onclick="generarInformeSenasa()">📄 Generar Informe Word</button>
+          <div id="informe-status" style="display:none;margin-top:1rem;font-size:.82rem;color:var(--muted)">
+            <span id="informe-status-txt">⏳ Generando informe...</span>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /content -->
+  </div><!-- /main -->
+</div><!-- /app -->
+
+<!-- MODAL CRONOLOGÍA -->
+<div class="modal-overlay" id="modal-crono">
+  <div class="modal">
+    <h3 id="modal-crono-titulo">Nueva entrada en cronología</h3>
+    <input type="hidden" id="crono-edit-id">
+    <div class="form-row cols2">
+      <div><label>Fecha</label><input type="text" id="crono-fecha" placeholder="dd/mm/aaaa o 'A definir'"></div>
+      <div><label>Estado</label>
+        <select id="crono-estado">
+          <option value="Completado">Completado</option>
+          <option value="Pendiente">Pendiente</option>
+          <option value="En curso">En curso</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div><label>Actividad</label><textarea id="crono-actividad" rows="3"></textarea></div>
+    </div>
+    <div class="form-row">
+      <div><label>Participantes</label><input type="text" id="crono-participantes"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="cerrarModal('modal-crono')">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarCrono()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL EJE -->
+<div class="modal-overlay" id="modal-eje">
+  <div class="modal">
+    <h3>Editar eje de trabajo</h3>
+    <input type="hidden" id="eje-edit-id">
+    <div class="form-row">
+      <div><label>Nombre</label><input type="text" id="eje-nombre"></div>
+    </div>
+    <div class="form-row">
+      <div><label>Descripción</label><textarea id="eje-descripcion" rows="3"></textarea></div>
+    </div>
+    <div class="form-row">
+      <div><label>Estado</label><input type="text" id="eje-estado"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="cerrarModal('modal-eje')">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarEje()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL ACUERDO -->
+<div class="modal-overlay" id="modal-acuerdo">
+  <div class="modal">
+    <h3 id="modal-acuerdo-titulo">Nuevo compromiso</h3>
+    <input type="hidden" id="acuerdo-edit-id">
+    <div class="form-row">
+      <div><label>Descripción</label><textarea id="acuerdo-desc" rows="3"></textarea></div>
+    </div>
+    <div class="form-row cols2">
+      <div><label>Responsable</label><input type="text" id="acuerdo-resp" placeholder="DI REPA / SENASA..."></div>
+      <div><label>Fecha compromiso</label><input type="text" id="acuerdo-fecha" placeholder="dd/mm/aaaa"></div>
+    </div>
+    <div class="form-row">
+      <div><label>Estado</label>
+        <select id="acuerdo-estado">
+          <option value="Pendiente">Pendiente</option>
+          <option value="En curso">En curso</option>
+          <option value="Completado">Completado</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="cerrarModal('modal-acuerdo')">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarAcuerdo()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Navegación ────────────────────────────────────────────────────────────────
+const sidebar = document.getElementById('sidebar');
+const overlay = document.getElementById('sidebar-overlay');
+document.getElementById('hamburger').addEventListener('click', () => {
+  sidebar.classList.toggle('open'); overlay.classList.toggle('visible');
+});
+overlay.addEventListener('click', () => {
+  sidebar.classList.remove('open'); overlay.classList.remove('visible');
+});
+
+function showTab(name) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item[data-tab]').forEach(i => i.classList.remove('active'));
+  const panel = document.getElementById('panel-' + name);
+  if (panel) panel.classList.add('active');
+  const navItem = document.querySelector(`.nav-item[data-tab="${name}"]`);
+  if (navItem) navItem.classList.add('active');
+  if (name === 'cronologia') cargarCronologia();
+  if (name === 'ejes') cargarEjes();
+  if (name === 'minutas') cargarMinutas();
+  if (name === 'acuerdos') cargarAcuerdos();
+}
+
+// ── Informe ───────────────────────────────────────────────────────────────────
+async function generarInformeSenasa() {
+  const btn = document.getElementById('btn-informe');
+  const statusDiv = document.getElementById('informe-status');
+  const statusTxt = document.getElementById('informe-status-txt');
+  btn.disabled = true; btn.textContent = '⏳ Generando...';
+  statusDiv.style.display = 'block';
+  statusTxt.textContent = '⏳ Generando informe, por favor esperá...';
+  try {
+    const r = await fetch('/api/senasa/informe');
+    const ct = r.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      if (r.url.includes('/login') || r.status === 302 || r.status === 401) { window.location.href = '/login'; return; }
+      throw new Error(`El servidor devolvió ${r.status}`);
+    }
+    const data = await r.json();
+    if (!data.ok) throw new Error(data.error || 'Error al iniciar generación');
+    const jobId = data.job_id;
+    await new Promise((resolve, reject) => {
+      const interval = setInterval(async () => {
+        try {
+          const sr = await fetch(`/api/job/${jobId}`);
+          const sd = await sr.json();
+          if (sd.status === 'done') { clearInterval(interval); resolve(); }
+          else if (sd.status === 'error') { clearInterval(interval); reject(new Error((sd.log || ['Error']).join(' | '))); }
+          else { const log = sd.log || []; if (log.length) statusTxt.textContent = '⏳ ' + log[log.length-1]; }
+        } catch(e) { clearInterval(interval); reject(e); }
+      }, 2000);
+    });
+    statusTxt.textContent = '✓ Descargando...';
+    const a = document.createElement('a');
+    a.href = `/api/senasa/informe/download/${jobId}`;
+    a.download = `Informe_SENASA_${new Date().toISOString().slice(0,10)}.docx`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    statusTxt.textContent = '✓ Informe generado correctamente';
+    setTimeout(() => { statusDiv.style.display = 'none'; }, 3000);
+  } catch(e) {
+    statusTxt.textContent = '✗ Error: ' + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = '📄 Generar Informe Word';
+  }
+}
+
+document.querySelectorAll('.nav-item[data-tab]').forEach(item => {
+  item.addEventListener('click', () => showTab(item.dataset.tab));
+});
+
+function cerrarModal(id) { document.getElementById(id).classList.remove('visible'); }
+function abrirModal(id)  { document.getElementById(id).classList.add('visible'); }
+
+// ── Cronología ────────────────────────────────────────────────────────────────
+async function cargarCronologia() {
+  const r = await fetch('/api/senasa/cronologia');
+  const d = await r.json();
+  const body = document.getElementById('body-crono');
+  body.innerHTML = '';
+  (d.rows || []).forEach(row => {
+    const tag = row.estado === 'Completado' ? 'tag-completado' : row.estado === 'En curso' ? 'tag-encurso' : 'tag-pendiente';
+    body.innerHTML += `<tr>
+      <td style="white-space:nowrap;font-family:var(--mono);font-size:.75rem">${row.fecha}</td>
+      <td>${row.actividad}</td>
+      <td style="font-size:.75rem;color:var(--muted)">${row.participantes}</td>
+      <td><span class="tag ${tag}">${row.estado}</span></td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-outline btn-sm" onclick="editarCrono(${row.id},'${esc(row.fecha)}','${esc(row.actividad)}','${esc(row.participantes)}','${row.estado}')">✏️</button>
+        <button class="btn btn-danger btn-sm" onclick="eliminarCrono(${row.id})">🗑</button>
+      </td>
+    </tr>`;
+  });
+}
+
+function esc(s) { return (s||'').replace(/'/g,"\\'").replace(/\n/g,' '); }
+
+function abrirModalCrono() {
+  document.getElementById('crono-edit-id').value = '';
+  document.getElementById('crono-fecha').value = '';
+  document.getElementById('crono-actividad').value = '';
+  document.getElementById('crono-participantes').value = '';
+  document.getElementById('crono-estado').value = 'Pendiente';
+  document.getElementById('modal-crono-titulo').textContent = 'Nueva entrada en cronología';
+  abrirModal('modal-crono');
+}
+
+function editarCrono(id, fecha, actividad, participantes, estado) {
+  document.getElementById('crono-edit-id').value = id;
+  document.getElementById('crono-fecha').value = fecha;
+  document.getElementById('crono-actividad').value = actividad;
+  document.getElementById('crono-participantes').value = participantes;
+  document.getElementById('crono-estado').value = estado;
+  document.getElementById('modal-crono-titulo').textContent = 'Editar entrada';
+  abrirModal('modal-crono');
+}
+
+async function guardarCrono() {
+  const id = document.getElementById('crono-edit-id').value;
+  const data = {
+    fecha: document.getElementById('crono-fecha').value,
+    actividad: document.getElementById('crono-actividad').value,
+    participantes: document.getElementById('crono-participantes').value,
+    estado: document.getElementById('crono-estado').value,
+  };
+  const url = id ? `/api/senasa/cronologia/${id}` : '/api/senasa/cronologia';
+  const method = id ? 'PUT' : 'POST';
+  await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+  cerrarModal('modal-crono');
+  cargarCronologia();
+}
+
+async function eliminarCrono(id) {
+  if (!confirm('¿Eliminar esta entrada?')) return;
+  await fetch(`/api/senasa/cronologia/${id}`, { method: 'DELETE' });
+  cargarCronologia();
+}
+
+// ── Ejes ──────────────────────────────────────────────────────────────────────
+async function cargarEjes() {
+  const r = await fetch('/api/senasa/ejes');
+  const d = await r.json();
+  const cont = document.getElementById('lista-ejes');
+  cont.innerHTML = '';
+  (d.rows || []).forEach(eje => {
+    const tag = eje.estado.includes('Pendiente') ? 'tag-pendiente' : eje.estado.includes('diseño') || eje.estado.includes('análisis') ? 'tag-encurso' : 'tag-completado';
+    cont.innerHTML += `<div class="eje-card" onclick="editarEje('${eje.id}','${esc(eje.nombre)}','${esc(eje.descripcion)}','${esc(eje.estado)}')">
+      <div style="flex:1">
+        <div class="eje-num">EJE ${eje.id}</div>
+        <div class="eje-nombre">${eje.nombre}</div>
+        <div class="eje-desc">${eje.descripcion || ''}</div>
+      </div>
+      <span class="tag ${tag}" style="white-space:nowrap;flex-shrink:0">${eje.estado}</span>
+    </div>`;
+  });
+}
+
+function editarEje(id, nombre, descripcion, estado) {
+  document.getElementById('eje-edit-id').value = id;
+  document.getElementById('eje-nombre').value = nombre;
+  document.getElementById('eje-descripcion').value = descripcion;
+  document.getElementById('eje-estado').value = estado;
+  abrirModal('modal-eje');
+}
+
+async function guardarEje() {
+  const id = document.getElementById('eje-edit-id').value;
+  const data = {
+    nombre: document.getElementById('eje-nombre').value,
+    descripcion: document.getElementById('eje-descripcion').value,
+    estado: document.getElementById('eje-estado').value,
+  };
+  await fetch(`/api/senasa/ejes/${id}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+  cerrarModal('modal-eje');
+  cargarEjes();
+}
+
+// ── Minutas ───────────────────────────────────────────────────────────────────
+function agregarParticipante() {
+  const div = document.createElement('div');
+  div.className = 'participante-row';
+  div.innerHTML = `<input type="text" placeholder="Nombre" class="p-nombre"><input type="text" placeholder="Cargo" class="p-cargo"><input type="text" placeholder="Organismo" class="p-org"><button class="btn btn-danger btn-sm" onclick="quitarParticipante(this)">✕</button>`;
+  document.getElementById('participantes-list').appendChild(div);
+}
+function quitarParticipante(btn) { btn.closest('.participante-row').remove(); }
+
+function agregarItem(listaId) {
+  const li = document.createElement('li');
+  li.innerHTML = `<input type="text" placeholder="..."><button class="btn btn-danger btn-sm" onclick="quitarItem(this)">✕</button>`;
+  document.getElementById(listaId).appendChild(li);
+}
+function quitarItem(btn) { btn.closest('li').remove(); }
+
+function getItems(listaId) {
+  return Array.from(document.querySelectorAll(`#${listaId} input`)).map(i => i.value).filter(v => v.trim());
+}
+
+async function estructurarConIA() {
+  const notas = document.getElementById('notas-ia').value.trim();
+  if (!notas) { alert('Ingresá notas primero.'); return; }
+  const div = document.getElementById('ia-resultado');
+  div.textContent = 'Procesando con IA...';
+  div.classList.add('visible');
+  try {
+    const r = await fetch('/api/senasa/minuta_ia', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ notas })
+    });
+    const d = await r.json();
+    if (!d.ok) { div.textContent = 'Error: ' + d.error; return; }
+    const res = d.resultado;
+    // Poblar formulario
+    if (res.asunto) document.getElementById('m-asunto').value = res.asunto;
+    if (res.temas) poblarLista('lista-temas', res.temas);
+    if (res.conclusiones) poblarLista('lista-conclusiones', res.conclusiones);
+    if (res.compromisos) poblarLista('lista-compromisos', res.compromisos);
+    if (res.proximos) poblarLista('lista-proximos', res.proximos);
+    div.textContent = '✓ Formulario completado con IA. Revisá y ajustá antes de generar.';
+  } catch(e) { div.textContent = 'Error: ' + e.message; }
+}
+
+function poblarLista(listaId, items) {
+  const ul = document.getElementById(listaId);
+  ul.innerHTML = '';
+  items.forEach(item => {
+    const li = document.createElement('li');
+    li.innerHTML = `<input type="text" value="${(item||'').replace(/"/g,'&quot;')}"><button class="btn btn-danger btn-sm" onclick="quitarItem(this)">✕</button>`;
+    ul.appendChild(li);
+  });
+}
+
+async function generarMinuta() {
+  const btn = document.getElementById('btn-generar');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Generando...';
+  const participantes = Array.from(document.querySelectorAll('.participante-row')).map(row => ({
+    nombre: row.querySelector('.p-nombre').value,
+    cargo:  row.querySelector('.p-cargo').value,
+    organismo: row.querySelector('.p-org').value,
+  })).filter(p => p.nombre.trim());
+  const data = {
+    fecha: document.getElementById('m-fecha').value,
+    lugar: document.getElementById('m-lugar').value,
+    asunto: document.getElementById('m-asunto').value,
+    participantes,
+    temas: getItems('lista-temas'),
+    conclusiones: getItems('lista-conclusiones'),
+    compromisos: getItems('lista-compromisos'),
+    proximos: getItems('lista-proximos'),
+  };
+  try {
+    const r = await fetch('/api/senasa/minuta', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(data)
+    });
+    const d = await r.json();
+    const div = document.getElementById('minuta-resultado');
+    div.style.display = 'block';
+    if (d.ok) {
+      div.innerHTML = `<div class="alert alert-ok">Minuta generada: <strong>${d.fname}</strong>
+        <a href="${d.download_url}" class="download-btn" style="margin-left:.75rem">⬇ Descargar</a>
+      </div>`;
+      // Sugerir agregar a cronología
+      if (d.cronologia_sugerida) {
+        const s = d.cronologia_sugerida;
+        div.innerHTML += `<div class="alert alert-info" style="margin-top:.5rem">
+          ¿Agregar esta reunión a la cronología?
+          <button class="btn btn-outline btn-sm" style="margin-left:.5rem"
+            onclick="agregarACronologia('${esc(s.fecha)}','${esc(s.actividad)}','${esc(s.participantes)}','${s.estado}')">
+            + Agregar
+          </button>
+        </div>`;
+      }
+      cargarMinutas();
+    } else {
+      div.innerHTML = `<div class="alert" style="background:var(--danger-light);color:var(--danger)">Error: ${d.error}</div>`;
+    }
+  } catch(e) {
+    document.getElementById('minuta-resultado').innerHTML = `<div class="alert" style="background:var(--danger-light);color:var(--danger)">${e.message}</div>`;
+    document.getElementById('minuta-resultado').style.display = 'block';
+  }
+  btn.disabled = false;
+  btn.innerHTML = '📄 Generar minuta Word';
+}
+
+async function agregarACronologia(fecha, actividad, participantes, estado) {
+  await fetch('/api/senasa/cronologia', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ fecha, actividad, participantes, estado })
+  });
+  alert('Agregado a cronología.');
+}
+
+async function cargarMinutas() {
+  const r = await fetch('/api/senasa/minutas');
+  const d = await r.json();
+  const body = document.getElementById('body-minutas');
+  body.innerHTML = '';
+  (d.rows || []).forEach(m => {
+    body.innerHTML += `<tr>
+      <td style="font-family:var(--mono);font-size:.75rem">${m.fecha}</td>
+      <td>${m.asunto}</td>
+      <td>${m.lugar}</td>
+      <td style="font-size:.75rem;color:var(--muted)">${m.creado_por}</td>
+      <td>
+        <a href="/api/senasa/minutas/${m.id}/download" class="download-btn">⬇ Word</a>
+      </td>
+    </tr>`;
+  });
+}
+
+// ── Acuerdos ──────────────────────────────────────────────────────────────────
+async function cargarAcuerdos() {
+  const r = await fetch('/api/senasa/acuerdos');
+  const d = await r.json();
+  const cont = document.getElementById('lista-acuerdos');
+  cont.innerHTML = '';
+  if (!d.rows || !d.rows.length) {
+    cont.innerHTML = '<p style="color:var(--muted);font-size:.82rem">No hay compromisos registrados.</p>';
+    return;
+  }
+  d.rows.forEach(a => {
+    const cls = a.estado === 'Completado' ? 'completado' : 'pendiente';
+    const tag = a.estado === 'Completado' ? 'tag-completado' : a.estado === 'En curso' ? 'tag-encurso' : 'tag-pendiente';
+    cont.innerHTML += `<div class="acuerdo-card ${cls}">
+      <div class="acuerdo-body">
+        <div class="acuerdo-desc">${a.descripcion}</div>
+        <div class="acuerdo-meta">
+          ${a.responsable ? `<span>👤 ${a.responsable}</span>` : ''}
+          ${a.fecha_compromiso ? `<span>📅 ${a.fecha_compromiso}</span>` : ''}
+          <span class="tag ${tag}">${a.estado}</span>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:.3rem;flex-shrink:0">
+        <button class="btn btn-outline btn-sm" onclick="editarAcuerdo(${a.id},'${esc(a.descripcion)}','${esc(a.responsable)}','${esc(a.fecha_compromiso||'')}','${a.estado}')">✏️</button>
+        <button class="btn btn-danger btn-sm" onclick="eliminarAcuerdo(${a.id})">🗑</button>
+      </div>
+    </div>`;
+  });
+}
+
+function abrirModalAcuerdo() {
+  document.getElementById('acuerdo-edit-id').value = '';
+  document.getElementById('acuerdo-desc').value = '';
+  document.getElementById('acuerdo-resp').value = '';
+  document.getElementById('acuerdo-fecha').value = '';
+  document.getElementById('acuerdo-estado').value = 'Pendiente';
+  document.getElementById('modal-acuerdo-titulo').textContent = 'Nuevo compromiso';
+  abrirModal('modal-acuerdo');
+}
+
+function editarAcuerdo(id, desc, resp, fecha, estado) {
+  document.getElementById('acuerdo-edit-id').value = id;
+  document.getElementById('acuerdo-desc').value = desc;
+  document.getElementById('acuerdo-resp').value = resp;
+  document.getElementById('acuerdo-fecha').value = fecha;
+  document.getElementById('acuerdo-estado').value = estado;
+  document.getElementById('modal-acuerdo-titulo').textContent = 'Editar compromiso';
+  abrirModal('modal-acuerdo');
+}
+
+async function guardarAcuerdo() {
+  const id = document.getElementById('acuerdo-edit-id').value;
+  const data = {
+    descripcion: document.getElementById('acuerdo-desc').value,
+    responsable: document.getElementById('acuerdo-resp').value,
+    fecha_compromiso: document.getElementById('acuerdo-fecha').value,
+    estado: document.getElementById('acuerdo-estado').value,
+  };
+  const url = id ? `/api/senasa/acuerdos/${id}` : '/api/senasa/acuerdos';
+  const method = id ? 'PUT' : 'POST';
+  await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+  cerrarModal('modal-acuerdo');
+  cargarAcuerdos();
+}
+
+async function eliminarAcuerdo(id) {
+  if (!confirm('¿Eliminar este compromiso?')) return;
+  await fetch(`/api/senasa/acuerdos/${id}`, { method: 'DELETE' });
+  cargarAcuerdos();
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  showTab('cronologia');
+});
+</script>
+</body>
+</html>
