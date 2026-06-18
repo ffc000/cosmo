@@ -92,6 +92,35 @@ def init_historial():
             ("4.5","Estándar de transmisión XML — Guía Madre (XFWB)","Postura definida — observaciones comunicadas a VUCEA",5),
         ]
         con.executemany("INSERT INTO vua_ejes VALUES (?,?,?,?)", ejes)
+    # ── Tabla compartida de integrantes (VUA, SENASA, SINTIA) ──────────────────
+    con.execute("""CREATE TABLE IF NOT EXISTS integrantes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nombre TEXT NOT NULL,
+        cargo TEXT DEFAULT '',
+        organismo TEXT DEFAULT '',
+        email TEXT DEFAULT '',
+        activo INTEGER DEFAULT 1,
+        orden INTEGER DEFAULT 0,
+        creado TEXT DEFAULT (datetime('now'))
+    )""")
+    # Migrar ROLES_PREDEFINIDOS a la tabla si está vacía
+    cur2 = con.cursor()
+    cur2.execute("SELECT COUNT(*) FROM integrantes")
+    if cur2.fetchone()[0] == 0:
+        roles_seed = [
+            ("Diego Bugallo",      "Jefe Dpto. Facilitación y Simplificación de Comercio", "DI REPA",  "", 1),
+            ("Martín Macías",      "Jefe Div. Modernización de Procesos Aduaneros",        "DI REPA",  "", 2),
+            ("Federico Cáceres",   "Sec. Simplificación de Procesos Operativos",           "DI REPA",  "", 3),
+            ("Hernán Cascón",      "Supervisor de Informática Aduanera",                   "DI SADU",  "", 4),
+            ("Maximiliano Luengo", "Consejero técnico",                                    "DI ADEZ",  "", 5),
+            ("Pablo Gómez Valdez", "Consejero técnico",                                    "DI ADEZ",  "", 6),
+            ("Fabiola Cochello",   "Directora",                                            "VUCEA",    "", 7),
+            ("Vanesa Franco",      "Jefa de Procesos",                                     "VUCEA",    "", 8),
+        ]
+        con.executemany(
+            "INSERT INTO integrantes (nombre, cargo, organismo, email, orden) VALUES (?,?,?,?,?)",
+            roles_seed)
+
     # Tablas VUA adicionales (pueden no existir en instalaciones anteriores)
     con.execute("""CREATE TABLE IF NOT EXISTS vua_config (
         clave TEXT PRIMARY KEY, titulo TEXT, contenido TEXT DEFAULT '',
@@ -137,50 +166,6 @@ def init_historial():
         con.executemany(
             "INSERT OR IGNORE INTO vua_config (clave, titulo, contenido) VALUES (?,?,?)",
             config_seed)
-    # ── Tablas SENASA ──────────────────────────────────────────────────────────
-    con.execute("""CREATE TABLE IF NOT EXISTS senasa_cronologia (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        fecha TEXT, actividad TEXT, participantes TEXT,
-        estado TEXT DEFAULT 'Pendiente', orden INTEGER DEFAULT 0,
-        creado TEXT, modificado TEXT
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS senasa_minutas (
-        id TEXT PRIMARY KEY, fecha TEXT, asunto TEXT, lugar TEXT,
-        participantes TEXT, temas TEXT, conclusiones TEXT,
-        compromisos TEXT, proximos TEXT,
-        archivo TEXT, creado_por TEXT, creado TEXT
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS senasa_ejes (
-        id TEXT PRIMARY KEY, nombre TEXT, descripcion TEXT,
-        estado TEXT, orden INTEGER DEFAULT 0
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS senasa_acuerdos (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        descripcion TEXT, responsable TEXT, fecha_compromiso TEXT,
-        estado TEXT DEFAULT 'Pendiente', minuta_id TEXT,
-        creado TEXT, modificado TEXT
-    )""")
-    cur.execute("SELECT COUNT(*) FROM senasa_cronologia")
-    if cur.fetchone()[0] == 0:
-        senasa_crono = [
-            ("02/05/2026", "Primera reunión ARCA-SENASA: presentación de problemática y temario. Ejes: embalajes de madera y caso Uspallata.", "DI REPA, SENASA (Christian Robert)", "Completado", 1),
-            ("22/05/2026", "Segunda reunión técnica: presentación de SIG-Embalajes, análisis de flujos y escenarios de control coordinado.", "DI REPA, DI SADU, SENASA Sistemas (Arellano, Arévalo), SENASA Embalajes (Laborde, Barba, Robert)", "Completado", 2),
-            ("28/05/2026", "Reunión interna ARCA: puesta en conocimiento de DI SADU y DI PNPA. Propuesta técnica de tabla NORG y WS ORGANISMOS_PAD.", "DI REPA, DI SADU, DI PNPA", "Completado", 3),
-            ("A definir", "Reunión técnica con equipos de desarrollo de ambos organismos: diseño de integración PAD-SIG Embalajes.", "DI REPA, DI SADU, DI PNPA, SENASA Sistemas", "Pendiente", 4),
-            ("A definir", "Confirmar con SENASA si integración aplica a todas las vías o solo terrestre.", "DI REPA, SENASA", "Pendiente", 5),
-        ]
-        con.executemany("INSERT INTO senasa_cronologia (fecha,actividad,participantes,estado,orden,creado,modificado) VALUES (?,?,?,?,?,datetime('now'),datetime('now'))", senasa_crono)
-    cur.execute("SELECT COUNT(*) FROM senasa_ejes")
-    if cur.fetchone()[0] == 0:
-        senasa_ejes = [
-            ("1", "Control de salida de importación (MCTRSZPM1)", "Desarrollo del control de salida en PAD para operaciones de importación a consumo. Habilitante para toda la integración en impo.", "Pendiente — prioridad de desarrollo", 1),
-            ("2", "Tabla NORG y WS ORGANISMOS_PAD", "Creación de tabla NORG (Novedades Organismos) y web service bidireccional genérico por organismo para intercambio de señalamientos de control.", "En diseño", 2),
-            ("3", "Validaciones en control de salida de tránsitos sumarios", "Incorporar validaciones en el control de salida de tránsitos sumarios existente en PAD, sin requerir nueva versión.", "En diseño", 3),
-            ("4", "Obligatoriedad del campo MIC en SIG-Embalajes", "SENASA evalúa hacer obligatorio el campo MIC en la DDJJ de embalajes, habilitando a Aduana disponibilizar más información.", "Pendiente — a confirmar por SENASA", 4),
-            ("5", "Flujograma y trazabilidad en PAD", "Visualización del flujograma de control por operación, ordenado por timestamps de cada organismo. Consultas y estadísticas de tiempos.", "Pendiente", 5),
-            ("6", "Alcance de la integración (vías de transporte)", "Confirmar con SENASA si la integración aplica a todas las vías (terrestre, aérea, marítima) o solo terrestre en una primera etapa.", "Pendiente — consulta a SENASA", 6),
-        ]
-        con.executemany("INSERT INTO senasa_ejes VALUES (?,?,?,?,?)", senasa_ejes)
     con.commit(); con.close()
 
 init_historial()
@@ -648,6 +633,17 @@ def download_historial(hist_id, tipo):
     except: return "Error",500
 
 # ── VUA ────────────────────────────────────────────────────────────────────────
+# ROLES_PREDEFINIDOS — mantenido por compatibilidad, los datos ahora viven en tabla 'integrantes'
+def get_roles_predefinidos():
+    """Lee los integrantes activos de la BD y devuelve {nombre: cargo (organismo)}."""
+    try:
+        con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
+        rows = con.execute("SELECT nombre, cargo, organismo FROM integrantes WHERE activo=1").fetchall()
+        con.close()
+        return {r["nombre"]: f"{r['cargo']} ({r['organismo']})" if r["organismo"] else r["cargo"] for r in rows}
+    except Exception:
+        return {}
+
 ROLES_PREDEFINIDOS = {
     "Diego Bugallo": "Jefe Dpto. Facilitación y Simplificación de Comercio (DI REPA)",
     "Martín Macías": "Jefe Div. Modernización de Procesos Aduaneros (DI REPA)",
@@ -1487,6 +1483,69 @@ def vua_minuta_importar():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
 
+
+# ── Integrantes compartidos (VUA, SENASA, SINTIA) ────────────────────────────
+@app.route("/api/integrantes", methods=["GET"])
+@login_required
+def integrantes_list():
+    """Lista todos los integrantes activos, opcionalmente filtrados por organismo."""
+    organismo = request.args.get("organismo", "")
+    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
+    q = "SELECT * FROM integrantes WHERE activo=1"
+    params = []
+    if organismo:
+        q += " AND organismo=?"; params.append(organismo)
+    q += " ORDER BY orden, organismo, nombre"
+    rows = [dict(r) for r in con.execute(q, params).fetchall()]
+    con.close()
+    return jsonify({"ok": True, "rows": rows})
+
+@app.route("/api/integrantes", methods=["POST"])
+@login_required
+def integrantes_create():
+    data = request.json or {}
+    con = sqlite3.connect(HIST_DB); cur = con.cursor()
+    cur.execute("SELECT MAX(orden) FROM integrantes")
+    max_orden = cur.fetchone()[0] or 0
+    cur.execute(
+        "INSERT INTO integrantes (nombre, cargo, organismo, email, activo, orden) VALUES (?,?,?,?,1,?)",
+        (data.get("nombre",""), data.get("cargo",""),
+         data.get("organismo",""), data.get("email",""), max_orden+1))
+    new_id = cur.lastrowid; con.commit(); con.close()
+    return jsonify({"ok": True, "id": new_id})
+
+@app.route("/api/integrantes/<int:iid>", methods=["PUT"])
+@login_required
+def integrantes_update(iid):
+    data = request.json or {}
+    con = sqlite3.connect(HIST_DB)
+    con.execute(
+        "UPDATE integrantes SET nombre=?, cargo=?, organismo=?, email=?, activo=? WHERE id=?",
+        (data.get("nombre",""), data.get("cargo",""),
+         data.get("organismo",""), data.get("email",""),
+         int(data.get("activo", 1)), iid))
+    con.commit(); con.close()
+    return jsonify({"ok": True})
+
+@app.route("/api/integrantes/<int:iid>", methods=["DELETE"])
+@login_required
+def integrantes_delete(iid):
+    con = sqlite3.connect(HIST_DB)
+    con.execute("UPDATE integrantes SET activo=0 WHERE id=?", (iid,))
+    con.commit(); con.close()
+    return jsonify({"ok": True})
+
+@app.route("/api/integrantes/organismos", methods=["GET"])
+@login_required
+def integrantes_organismos():
+    """Lista los organismos únicos para el filtro del selector."""
+    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
+    rows = [r[0] for r in con.execute(
+        "SELECT DISTINCT organismo FROM integrantes WHERE activo=1 AND organismo!='' ORDER BY organismo"
+    ).fetchall()]
+    con.close()
+    return jsonify({"ok": True, "organismos": rows})
+
 # ── VUA Resumen ejecutivo generado por IA (Mejora 7) ─────────────────────────
 @app.route("/api/vua/config/resumen_ejecutivo/generar", methods=["POST"])
 @login_required
@@ -1705,477 +1764,6 @@ def vua_riesgo_mitigacion_ia(rid):
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# MÓDULO SENASA — Integración PAD / Embalajes de Madera
-# ══════════════════════════════════════════════════════════════════════════════
-
-SYSTEM_SENASA_MINUTA = """Sos un asistente especializado en documentación institucional de ARCA (Aduanas) y SENASA.
-Dado un conjunto de notas de reunión, generás una minuta ejecutiva estructurada con los siguientes campos en JSON:
-{
-  "asunto": "título de la reunión",
-  "temas": ["lista de temas tratados"],
-  "conclusiones": ["lista de conclusiones principales"],
-  "compromisos": ["lista de compromisos en formato: ORGANISMO/RESPONSABLE — descripción del compromiso"],
-  "proximos": ["lista de próximos pasos"]
-}
-Contexto del proyecto: integración entre PAD (sistema de control aduanero en frontera) y SIG-Embalajes (sistema de SENASA para control fitosanitario de embalajes de madera).
-Actores clave: DI REPA, DI SADU, DI PNPA (ARCA); Dirección Sanidad Vegetal y DTI (SENASA).
-Conceptos técnicos relevantes: tabla NORG, WS ORGANISMOS_PAD, MIC/DTA, tránsito sumario, control de salida (AAE), MCTRSZPM1, MANI TRAS.
-Respondé SOLO con el JSON, sin texto adicional ni backticks."""
-
-@app.route("/senasa")
-@login_required
-def senasa_index():
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    cronologia = [dict(r) for r in con.execute("SELECT * FROM senasa_cronologia ORDER BY orden ASC, id ASC").fetchall()]
-    ejes       = [dict(r) for r in con.execute("SELECT * FROM senasa_ejes ORDER BY orden ASC").fetchall()]
-    minutas    = [dict(r) for r in con.execute("SELECT id,fecha,asunto,lugar,creado_por,creado FROM senasa_minutas ORDER BY creado DESC LIMIT 20").fetchall()]
-    acuerdos   = [dict(r) for r in con.execute("SELECT * FROM senasa_acuerdos ORDER BY estado ASC, creado DESC").fetchall()]
-    con.close()
-    return render_template("senasa.html",
-        cronologia=cronologia, ejes=ejes, minutas=minutas, acuerdos=acuerdos,
-        role=session.get("role","admin"), username=session.get("username",""))
-
-# ── Cronología SENASA ──────────────────────────────────────────────────────────
-
-@app.route("/api/senasa/cronologia", methods=["GET"])
-@login_required
-def senasa_cronologia_get():
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = [dict(r) for r in con.execute("SELECT * FROM senasa_cronologia ORDER BY orden ASC, id ASC").fetchall()]
-    con.close(); return jsonify({"ok": True, "rows": rows})
-
-@app.route("/api/senasa/cronologia", methods=["POST"])
-@login_required
-def senasa_cronologia_add():
-    data = request.json or {}
-    con = sqlite3.connect(HIST_DB); cur = con.cursor()
-    cur.execute("SELECT MAX(orden) FROM senasa_cronologia")
-    max_orden = cur.fetchone()[0] or 0
-    cur.execute(
-        "INSERT INTO senasa_cronologia (fecha,actividad,participantes,estado,orden,creado,modificado) VALUES (?,?,?,?,?,datetime('now'),datetime('now'))",
-        (data.get("fecha","A definir"), data.get("actividad",""), data.get("participantes",""), data.get("estado","Pendiente"), max_orden+1)
-    )
-    new_id = cur.lastrowid; con.commit(); con.close()
-    return jsonify({"ok": True, "id": new_id})
-
-@app.route("/api/senasa/cronologia/<int:item_id>", methods=["PUT"])
-@login_required
-def senasa_cronologia_update(item_id):
-    data = request.json or {}
-    con = sqlite3.connect(HIST_DB)
-    con.execute("UPDATE senasa_cronologia SET fecha=?,actividad=?,participantes=?,estado=?,modificado=datetime('now') WHERE id=?",
-        (data.get("fecha"), data.get("actividad"), data.get("participantes"), data.get("estado"), item_id))
-    con.commit(); con.close(); return jsonify({"ok": True})
-
-@app.route("/api/senasa/cronologia/<int:item_id>", methods=["DELETE"])
-@login_required
-@admin_required
-def senasa_cronologia_delete(item_id):
-    con = sqlite3.connect(HIST_DB)
-    con.execute("DELETE FROM senasa_cronologia WHERE id=?", (item_id,))
-    con.commit(); con.close(); return jsonify({"ok": True})
-
-# ── Ejes SENASA ────────────────────────────────────────────────────────────────
-
-@app.route("/api/senasa/ejes", methods=["GET"])
-@login_required
-def senasa_ejes_get():
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = [dict(r) for r in con.execute("SELECT * FROM senasa_ejes ORDER BY orden ASC").fetchall()]
-    con.close(); return jsonify({"ok": True, "rows": rows})
-
-@app.route("/api/senasa/ejes/<eje_id>", methods=["PUT"])
-@login_required
-def senasa_ejes_update(eje_id):
-    data = request.json or {}
-    con = sqlite3.connect(HIST_DB)
-    con.execute("UPDATE senasa_ejes SET nombre=?,descripcion=?,estado=? WHERE id=?",
-        (data.get("nombre"), data.get("descripcion"), data.get("estado"), eje_id))
-    con.commit(); con.close(); return jsonify({"ok": True})
-
-# ── Minutas SENASA ─────────────────────────────────────────────────────────────
-
-@app.route("/api/senasa/minuta", methods=["POST"])
-@login_required
-def senasa_minuta():
-    import json as _json
-    from docx import Document
-    from docx.shared import Pt, RGBColor, Cm
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.oxml.ns import qn
-    from docx.oxml import OxmlElement
-
-    data          = request.json or {}
-    asunto        = data.get("asunto", "")
-    fecha         = data.get("fecha", datetime.today().strftime("%d/%m/%Y"))
-    lugar         = data.get("lugar", "")
-    participantes = data.get("participantes", [])
-    temas         = data.get("temas", [])
-    conclusiones  = data.get("conclusiones", [])
-    compromisos   = data.get("compromisos", [])
-    proximos      = data.get("proximos", [])
-
-    def set_cell_color(cell, hex_color):
-        tc = cell._tc; tcPr = tc.get_or_add_tcPr(); shd = OxmlElement("w:shd")
-        shd.set(qn("w:val"), "clear"); shd.set(qn("w:color"), "auto")
-        shd.set(qn("w:fill"), hex_color); tcPr.append(shd)
-
-    doc = Document()
-    for section in doc.sections:
-        section.top_margin = Cm(2.5); section.bottom_margin = Cm(2.5)
-        section.left_margin = Cm(3);  section.right_margin  = Cm(2.5)
-
-    titulo = doc.add_paragraph(); titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = titulo.add_run("ACTA DE REUNIÓN"); run.bold = True; run.font.size = Pt(16)
-    run.font.color.rgb = RGBColor(0x24, 0x2D, 0x4F)
-    subtitulo = doc.add_paragraph(); subtitulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run2 = subtitulo.add_run("ARCA – DI REPA / SENASA"); run2.font.size = Pt(11)
-    run2.font.color.rgb = RGBColor(0x6B, 0x72, 0x80)
-    doc.add_paragraph()
-
-    for label, valor in [("Asunto:", asunto), ("Fecha:", fecha), ("Lugar:", lugar)]:
-        p = doc.add_paragraph(); r1 = p.add_run(f"{label} "); r1.bold = True; r1.font.size = Pt(11)
-        r2 = p.add_run(valor); r2.font.size = Pt(11)
-    doc.add_paragraph()
-
-    doc.add_paragraph().add_run("Organismos participantes").bold = True
-    for org in ["ARCA – Dirección de Reingeniería de Procesos Aduaneros (DI REPA)",
-                "ARCA – Depto. Homologación de Sistemas Aduaneros (DI SADU)",
-                "SENASA – Dirección de Sanidad Vegetal / Dirección de Tecnología de la Información"]:
-        p = doc.add_paragraph(style="List Bullet"); p.add_run(org).font.size = Pt(11)
-    doc.add_paragraph()
-
-    doc.add_paragraph().add_run("Participantes").bold = True
-    table = doc.add_table(rows=1, cols=3); table.style = "Table Grid"
-    hdr = table.rows[0]
-    for i, txt in enumerate(["Nombre", "Cargo", "Organismo"]):
-        hdr.cells[i].text = txt
-        hdr.cells[i].paragraphs[0].runs[0].bold = True
-        hdr.cells[i].paragraphs[0].runs[0].font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-        set_cell_color(hdr.cells[i], "242D4F")
-    for p in participantes:
-        row = table.add_row()
-        row.cells[0].text = p.get("nombre", "")
-        row.cells[1].text = p.get("cargo", "")
-        row.cells[2].text = p.get("organismo", "")
-
-    for titulo_sec, items in [
-        ("Temas tratados", temas),
-        ("Principales conclusiones", conclusiones),
-        ("Compromisos asumidos", compromisos),
-        ("Próximos pasos", proximos)
-    ]:
-        doc.add_paragraph()
-        doc.add_paragraph().add_run(titulo_sec).bold = True
-        for item in items:
-            p = doc.add_paragraph(style="List Bullet"); p.add_run(item).font.size = Pt(11)
-
-    minuta_id = str(uuid.uuid4())[:8]
-    fname = f"Acta_ARCA_SENASA_{fecha.replace('/','_')}_{minuta_id}.docx"
-    ruta  = os.path.join("/data/minutas", fname)
-    doc.save(ruta)
-
-    con = sqlite3.connect(HIST_DB)
-    con.execute(
-        "INSERT INTO senasa_minutas VALUES (?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
-        (minuta_id, fecha, asunto, lugar,
-         _json.dumps(participantes), _json.dumps(temas),
-         _json.dumps(conclusiones), _json.dumps(compromisos),
-         _json.dumps(proximos), ruta, session.get("username","?"))
-    )
-    for comp in compromisos:
-        responsable = ""; descripcion = comp
-        if " — " in comp:
-            partes = comp.split(" — ", 1)
-            responsable = partes[0].replace("**","").strip()
-            descripcion = partes[1].strip()
-        con.execute(
-            "INSERT INTO senasa_acuerdos (descripcion,responsable,estado,minuta_id,creado,modificado) VALUES (?,?,'Pendiente',?,datetime('now'),datetime('now'))",
-            (descripcion, responsable, minuta_id)
-        )
-    con.commit(); con.close()
-
-    crono_sugerida = {
-        "fecha": fecha,
-        "actividad": asunto if asunto else "Reunión de trabajo ARCA-SENASA",
-        "participantes": ", ".join(p.get("nombre","") for p in participantes if isinstance(p, dict)),
-        "estado": "Completado",
-    }
-    return jsonify({
-        "ok": True, "minuta_id": minuta_id,
-        "download_url": f"/api/senasa/minutas/{minuta_id}/download",
-        "fname": fname, "cronologia_sugerida": crono_sugerida,
-    })
-
-@app.route("/api/senasa/minutas", methods=["GET"])
-@login_required
-def senasa_minutas_list():
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = [dict(r) for r in con.execute(
-        "SELECT id,fecha,asunto,lugar,creado_por,creado FROM senasa_minutas ORDER BY creado DESC"
-    ).fetchall()]
-    con.close(); return jsonify({"ok": True, "rows": rows})
-
-@app.route("/api/senasa/minutas/<minuta_id>/download")
-@login_required
-def senasa_minuta_download(minuta_id):
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    row = con.execute("SELECT * FROM senasa_minutas WHERE id=?", (minuta_id,)).fetchone()
-    con.close()
-    if not row: return "No encontrada", 404
-    row = dict(row)
-    if row.get("archivo") and os.path.exists(row["archivo"]):
-        return send_file(row["archivo"], as_attachment=True, download_name=os.path.basename(row["archivo"]))
-    return "Archivo no encontrado", 404
-
-@app.route("/api/senasa/minutas/<minuta_id>", methods=["DELETE"])
-@login_required
-@admin_required
-def senasa_minuta_delete(minuta_id):
-    con = sqlite3.connect(HIST_DB)
-    row = con.execute("SELECT archivo FROM senasa_minutas WHERE id=?", (minuta_id,)).fetchone()
-    if row and row[0] and os.path.exists(row[0]):
-        try: os.remove(row[0])
-        except: pass
-    con.execute("DELETE FROM senasa_minutas WHERE id=?", (minuta_id,))
-    con.commit(); con.close(); return jsonify({"ok": True})
-
-# ── Acuerdos SENASA ────────────────────────────────────────────────────────────
-
-@app.route("/api/senasa/acuerdos", methods=["GET"])
-@login_required
-def senasa_acuerdos_get():
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = [dict(r) for r in con.execute(
-        "SELECT * FROM senasa_acuerdos ORDER BY estado ASC, creado DESC"
-    ).fetchall()]
-    con.close(); return jsonify({"ok": True, "rows": rows})
-
-@app.route("/api/senasa/acuerdos", methods=["POST"])
-@login_required
-def senasa_acuerdos_add():
-    data = request.json or {}
-    con = sqlite3.connect(HIST_DB); cur = con.cursor()
-    cur.execute(
-        "INSERT INTO senasa_acuerdos (descripcion,responsable,fecha_compromiso,estado,minuta_id,creado,modificado) VALUES (?,?,?,?,?,datetime('now'),datetime('now'))",
-        (data.get("descripcion",""), data.get("responsable",""),
-         data.get("fecha_compromiso",""), data.get("estado","Pendiente"),
-         data.get("minuta_id",""))
-    )
-    new_id = cur.lastrowid; con.commit(); con.close()
-    return jsonify({"ok": True, "id": new_id})
-
-@app.route("/api/senasa/acuerdos/<int:acuerdo_id>", methods=["PUT"])
-@login_required
-def senasa_acuerdos_update(acuerdo_id):
-    data = request.json or {}
-    con = sqlite3.connect(HIST_DB)
-    con.execute(
-        "UPDATE senasa_acuerdos SET descripcion=?,responsable=?,fecha_compromiso=?,estado=?,modificado=datetime('now') WHERE id=?",
-        (data.get("descripcion"), data.get("responsable"),
-         data.get("fecha_compromiso"), data.get("estado"), acuerdo_id)
-    )
-    con.commit(); con.close(); return jsonify({"ok": True})
-
-@app.route("/api/senasa/acuerdos/<int:acuerdo_id>", methods=["DELETE"])
-@login_required
-@admin_required
-def senasa_acuerdos_delete(acuerdo_id):
-    con = sqlite3.connect(HIST_DB)
-    con.execute("DELETE FROM senasa_acuerdos WHERE id=?", (acuerdo_id,))
-    con.commit(); con.close(); return jsonify({"ok": True})
-
-# ── Informe SENASA ────────────────────────────────────────────────────────────
-
-@app.route("/api/senasa/informe")
-@login_required
-def senasa_informe():
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    try:
-        def _q(sql, fallback=[]):
-            try: return [dict(r) for r in con.execute(sql).fetchall()]
-            except: return fallback
-        cronologia = _q("SELECT * FROM senasa_cronologia ORDER BY orden ASC, id ASC")
-        ejes       = _q("SELECT * FROM senasa_ejes ORDER BY orden ASC")
-        minutas    = _q("SELECT * FROM senasa_minutas ORDER BY creado DESC LIMIT 20")
-        acuerdos   = _q("SELECT * FROM senasa_acuerdos ORDER BY estado ASC, creado DESC")
-    except Exception as e:
-        con.close()
-        return jsonify({"ok": False, "error": f"Error leyendo BD: {e}"}), 500
-    finally:
-        con.close()
-
-    datos = {"cronologia": cronologia, "ejes": ejes, "minutas": minutas, "acuerdos": acuerdos}
-    job_id = str(uuid.uuid4())[:8]
-    job_status[job_id] = {"status": "running", "log": ["Generando informe SENASA..."], "files": []}
-
-    def _run_senasa_informe(job_id, datos):
-        import json as _j
-        from docx import Document
-        from docx.shared import Pt, RGBColor, Cm
-        from docx.enum.text import WD_ALIGN_PARAGRAPH
-        from docx.oxml.ns import qn
-        from docx.oxml import OxmlElement
-        log = job_status[job_id]["log"]
-        try:
-            def set_cell_color(cell, hex_color):
-                tc = cell._tc; tcPr = tc.get_or_add_tcPr(); shd = OxmlElement("w:shd")
-                shd.set(qn("w:val"), "clear"); shd.set(qn("w:color"), "auto")
-                shd.set(qn("w:fill"), hex_color); tcPr.append(shd)
-
-            doc = Document()
-            for section in doc.sections:
-                section.top_margin = Cm(2.5); section.bottom_margin = Cm(2.5)
-                section.left_margin = Cm(3);  section.right_margin  = Cm(2.5)
-
-            # Portada
-            doc.add_paragraph()
-            p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            r = p.add_run("INFORME DE AVANCE"); r.bold = True; r.font.size = Pt(20)
-            r.font.color.rgb = RGBColor(0x24, 0x2D, 0x4F)
-            p2 = doc.add_paragraph(); p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            r2 = p2.add_run("Integración PAD – SIG Embalajes de Madera")
-            r2.font.size = Pt(14); r2.font.color.rgb = RGBColor(0x6B, 0x72, 0x80)
-            p3 = doc.add_paragraph(); p3.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            r3 = p3.add_run("ARCA – DI REPA / SENASA"); r3.font.size = Pt(11)
-            p4 = doc.add_paragraph(); p4.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            r4 = p4.add_run(f"Generado: {datetime.today().strftime('%d/%m/%Y')}"); r4.font.size = Pt(10)
-            r4.font.color.rgb = RGBColor(0x9C, 0xA3, 0xAF)
-            doc.add_page_break()
-
-            # Ejes de trabajo
-            log.append("Generando sección ejes...")
-            doc.add_paragraph().add_run("1. Ejes de Trabajo").bold = True
-            table = doc.add_table(rows=1, cols=3); table.style = "Table Grid"
-            hdr = table.rows[0]
-            for i, txt in enumerate(["Eje", "Nombre", "Estado"]):
-                hdr.cells[i].text = txt
-                hdr.cells[i].paragraphs[0].runs[0].bold = True
-                hdr.cells[i].paragraphs[0].runs[0].font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-                set_cell_color(hdr.cells[i], "242D4F")
-            for eje in datos["ejes"]:
-                row = table.add_row()
-                row.cells[0].text = str(eje.get("id",""))
-                row.cells[1].text = eje.get("nombre","")
-                row.cells[2].text = eje.get("estado","")
-
-            # Cronología
-            log.append("Generando cronología...")
-            doc.add_paragraph()
-            doc.add_paragraph().add_run("2. Cronología de Reuniones").bold = True
-            table2 = doc.add_table(rows=1, cols=4); table2.style = "Table Grid"
-            hdr2 = table2.rows[0]
-            for i, txt in enumerate(["Fecha", "Actividad", "Participantes", "Estado"]):
-                hdr2.cells[i].text = txt
-                hdr2.cells[i].paragraphs[0].runs[0].bold = True
-                hdr2.cells[i].paragraphs[0].runs[0].font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-                set_cell_color(hdr2.cells[i], "242D4F")
-            for item in datos["cronologia"]:
-                row = table2.add_row()
-                row.cells[0].text = item.get("fecha","")
-                row.cells[1].text = item.get("actividad","")
-                row.cells[2].text = item.get("participantes","")
-                row.cells[3].text = item.get("estado","")
-
-            # Compromisos pendientes
-            log.append("Generando compromisos...")
-            pendientes = [a for a in datos["acuerdos"] if a.get("estado","") != "Completado"]
-            if pendientes:
-                doc.add_paragraph()
-                doc.add_paragraph().add_run("3. Compromisos Pendientes").bold = True
-                table3 = doc.add_table(rows=1, cols=3); table3.style = "Table Grid"
-                hdr3 = table3.rows[0]
-                for i, txt in enumerate(["Descripción", "Responsable", "Estado"]):
-                    hdr3.cells[i].text = txt
-                    hdr3.cells[i].paragraphs[0].runs[0].bold = True
-                    hdr3.cells[i].paragraphs[0].runs[0].font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-                    set_cell_color(hdr3.cells[i], "242D4F")
-                for ac in pendientes:
-                    row = table3.add_row()
-                    row.cells[0].text = ac.get("descripcion","")
-                    row.cells[1].text = ac.get("responsable","")
-                    row.cells[2].text = ac.get("estado","")
-
-            # Minutas recientes
-            log.append("Generando historial de minutas...")
-            if datos["minutas"]:
-                doc.add_paragraph()
-                doc.add_paragraph().add_run("4. Minutas Generadas").bold = True
-                table4 = doc.add_table(rows=1, cols=3); table4.style = "Table Grid"
-                hdr4 = table4.rows[0]
-                for i, txt in enumerate(["Fecha", "Asunto", "Lugar"]):
-                    hdr4.cells[i].text = txt
-                    hdr4.cells[i].paragraphs[0].runs[0].bold = True
-                    hdr4.cells[i].paragraphs[0].runs[0].font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-                    set_cell_color(hdr4.cells[i], "242D4F")
-                for m in datos["minutas"]:
-                    row = table4.add_row()
-                    row.cells[0].text = m.get("fecha","")
-                    row.cells[1].text = m.get("asunto","")
-                    row.cells[2].text = m.get("lugar","")
-
-            fname = f"Informe_SENASA_{datetime.today().strftime('%Y%m%d_%H%M')}_{job_id}.docx"
-            os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-            dest = os.path.join(OUTPUT_FOLDER, fname)
-            doc.save(dest)
-            job_status[job_id]["files"] = [dest]
-            log.append(f"✓ Informe generado: {fname}")
-            job_status[job_id]["status"] = "done"
-        except Exception as e:
-            log.append(f"✗ {e}")
-            job_status[job_id]["status"] = "error"
-
-    threading.Thread(target=_run_senasa_informe, args=(job_id, datos)).start()
-    return jsonify({"ok": True, "job_id": job_id})
-
-@app.route("/api/senasa/informe/download/<job_id>")
-@login_required
-def senasa_informe_download(job_id):
-    job = job_status.get(job_id)
-    if job:
-        if job["status"] != "done":
-            return jsonify({"ok": False, "status": job["status"], "log": job.get("log",[])}), 202
-        files = job.get("files", [])
-        if files and os.path.exists(files[0]):
-            return send_file(files[0], as_attachment=True,
-                download_name=os.path.basename(files[0]),
-                mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-    import glob
-    patron = os.path.join(OUTPUT_FOLDER, f"*{job_id}*.docx")
-    archivos = sorted(glob.glob(patron), key=os.path.getmtime, reverse=True)
-    if archivos:
-        return send_file(archivos[0], as_attachment=True,
-            download_name=os.path.basename(archivos[0]),
-            mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-    return jsonify({"ok": False, "error": "Archivo no encontrado. Regenerá el informe."}), 404
-
-# ── Minuta IA SENASA ───────────────────────────────────────────────────────────
-
-@app.route("/api/senasa/minuta_ia", methods=["POST"])
-@login_required
-def senasa_minuta_ia():
-    import json as _json
-    data  = request.json or {}
-    notas = data.get("notas", "").strip()
-    if not notas:
-        return jsonify({"ok": False, "error": "No se recibieron notas"})
-    try:
-        import anthropic, httpx
-        client = anthropic.Anthropic(api_key=get_api_key(), http_client=httpx.Client(follow_redirects=True))
-        msg = client.messages.create(
-            model="claude-haiku-4-5-20251001", max_tokens=1500,
-            system=SYSTEM_SENASA_MINUTA,
-            messages=[{"role": "user", "content": f"Notas de la reunión:\n\n{notas}"}]
-        )
-        texto = msg.content[0].text.strip()
-        resultado = _json.loads(texto)
-        return jsonify({"ok": True, "resultado": resultado})
-    except _json.JSONDecodeError:
-        return jsonify({"ok": True, "resultado": {"raw": texto}})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)})
 
 # ── Rutas Admin ───────────────────────────────────────────────────────────────
 @app.route("/sintia")
