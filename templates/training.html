@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CosmoTools — Training</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#F0F4F8;--surface:#FFFFFF;--surface2:#F8FAFC;
+  --sidebar-bg:#1E2A3B;--sidebar-hover:rgba(255,255,255,.06);--sidebar-active:rgba(41,121,200,.15);
+  --border:#E5E7EB;--border-dark:rgba(255,255,255,.08);
+  --accent:#1A56DB;--accent-hover:#1447C0;--accent-light:#EBF5FF;
+  --accent2:#057A55;--accent2-light:#F0FFF4;
+  --warn:#D97706;--warn-light:#FFFBEB;
+  --danger:#DC2626;--danger-light:#FEF2F2;
+  --text:#111928;--text-sub:#374151;--muted:#6B7280;--dim:#9CA3AF;
+  --text-sidebar:#CBD5E1;--text-sidebar-muted:#64748B;
+  --mono:'IBM Plex Mono',monospace;--sans:'IBM Plex Sans',sans-serif;
+  --radius:8px;--radius-sm:4px;
+  --shadow-sm:0 1px 3px rgba(0,0,0,.07);--shadow:0 4px 12px rgba(0,0,0,.08);
+  --sidebar-w:230px;
+  --fase1:#1A56DB;--fase2:#7C3AED;--fase3:#D97706;--fase4:#DC2626;
+}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
+.app{display:flex;flex:1;min-height:0}
+.sidebar{width:var(--sidebar-w);min-width:var(--sidebar-w);background:var(--sidebar-bg);display:flex;flex-direction:column;z-index:50;transition:transform .25s ease}
+.sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:40}
+.sidebar-brand{padding:1.4rem 1.4rem 1rem;border-bottom:1px solid var(--border-dark)}
+.sidebar-brand .name{font-family:var(--mono);font-size:.92rem;font-weight:600;color:#fff}
+.sidebar-brand .sub{font-size:.65rem;color:var(--text-sidebar-muted);margin-top:.2rem}
+.sidebar-nav{flex:1;padding:.6rem 0;overflow-y:auto}
+.nav-section{font-family:var(--mono);font-size:.58rem;color:var(--text-sidebar-muted);letter-spacing:.18em;text-transform:uppercase;padding:.8rem 1.4rem .3rem}
+.nav-item{display:flex;align-items:center;gap:.7rem;padding:.62rem 1.4rem;cursor:pointer;color:var(--text-sidebar-muted);font-size:.82rem;transition:all .15s;border-left:2px solid transparent;user-select:none}
+.nav-item:hover{color:var(--text-sidebar);background:var(--sidebar-hover)}
+.nav-item.active{color:#fff;background:var(--sidebar-active);border-left-color:var(--accent)}
+.nav-icon{font-size:.9rem;width:18px;text-align:center;flex-shrink:0}
+.sidebar-footer{padding:.9rem 1.4rem;border-top:1px solid var(--border-dark)}
+.back-link{font-size:.72rem;color:var(--text-sidebar-muted);text-decoration:none;display:block;margin-bottom:.4rem}
+.logout{font-size:.72rem;color:var(--text-sidebar-muted);text-decoration:none}
+.main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.topbar{background:var(--surface);border-bottom:1px solid var(--border);padding:.75rem 1.75rem;display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-shrink:0;box-shadow:var(--shadow-sm)}
+.topbar-left{display:flex;align-items:center;gap:.75rem}
+.hamburger{display:none;background:none;border:none;color:var(--muted);font-size:1.3rem;cursor:pointer;padding:.25rem;line-height:1;min-width:36px}
+.topbar-title{font-family:var(--mono);font-size:.78rem;color:var(--accent);letter-spacing:.08em;font-weight:600}
+.topbar-user{font-family:var(--mono);font-size:.7rem;color:var(--muted)}
+.content{flex:1;padding:1.75rem;overflow-y:auto}
+.panel{display:none}.panel.active{display:block}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;margin-bottom:1.25rem;box-shadow:var(--shadow-sm)}
+.card-title{font-family:var(--mono);font-size:.65rem;color:var(--muted);letter-spacing:.14em;text-transform:uppercase;margin-bottom:.9rem;font-weight:600}
+label{display:block;font-size:.7rem;font-weight:600;color:var(--text-sub);letter-spacing:.05em;text-transform:uppercase;margin-bottom:.3rem}
+input[type=text],input[type=date],input[type=number],select,textarea{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:var(--mono);font-size:.85rem;padding:.55rem .8rem;outline:none;transition:border-color .2s}
+input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(26,86,219,.1)}
+textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85rem}
+.form-row{display:grid;gap:.9rem;margin-bottom:.9rem}
+.form-row.cols2{grid-template-columns:1fr 1fr}
+.form-row.cols3{grid-template-columns:1fr 1fr 1fr}
+.btn{display:inline-flex;align-items:center;gap:.5rem;border:none;border-radius:var(--radius-sm);cursor:pointer;font-family:var(--sans);font-weight:600;font-size:.85rem;padding:.6rem 1.2rem;transition:all .15s}
+.btn-primary{background:var(--accent);color:#fff}.btn-primary:hover{background:var(--accent-hover)}
+.btn-primary:disabled{background:var(--dim);cursor:not-allowed}
+.btn-outline{background:var(--surface);color:var(--text-sub);border:1px solid var(--border)}.btn-outline:hover{border-color:var(--accent);color:var(--accent)}
+.btn-danger{background:var(--danger-light);color:var(--danger);border:1px solid rgba(220,38,38,.2)}
+.btn-sm{padding:.3rem .75rem;font-size:.75rem}
+.btn-full{width:100%;justify-content:center}
+.alert{padding:.75rem 1rem;border-radius:var(--radius-sm);font-size:.82rem;margin-bottom:.9rem}
+.alert-info{background:var(--accent-light);border:1px solid rgba(26,86,219,.2);color:var(--accent)}
+.alert-ok{background:var(--accent2-light);border:1px solid rgba(5,122,85,.2);color:var(--accent2)}
+.alert-warn{background:var(--warn-light);border:1px solid rgba(217,119,6,.2);color:var(--warn)}
+.alert-danger{background:var(--danger-light);border:1px solid rgba(220,38,38,.2);color:var(--danger)}
+/* Plan semanas */
+.semanas-nav{display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:1.25rem}
+.sem-btn{font-family:var(--mono);font-size:.72rem;padding:.3rem .7rem;border-radius:20px;border:1px solid var(--border);background:var(--surface);color:var(--muted);cursor:pointer;transition:all .15s}
+.sem-btn:hover{border-color:var(--accent);color:var(--accent)}
+.sem-btn.actual{background:var(--accent);color:#fff;border-color:var(--accent)}
+.sem-btn.descarga{border-color:var(--warn);color:var(--warn)}
+.sem-btn.descarga.actual{background:var(--warn);color:#fff}
+.fase-badge{font-family:var(--mono);font-size:.65rem;padding:.2rem .6rem;border-radius:20px;font-weight:600;display:inline-block;margin-bottom:.75rem}
+.fase-1{background:#EBF5FF;color:var(--fase1);border:1px solid rgba(26,86,219,.2)}
+.fase-2{background:#F5F3FF;color:var(--fase2);border:1px solid rgba(124,58,237,.2)}
+.fase-3{background:#FFFBEB;color:var(--fase3);border:1px solid rgba(217,119,6,.2)}
+.fase-4{background:#FEF2F2;color:var(--fase4);border:1px solid rgba(220,38,38,.2)}
+.dia-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:.6rem;margin-bottom:1rem}
+.dia-col{display:flex;flex-direction:column;gap:.4rem}
+.dia-header{font-family:var(--mono);font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;padding-bottom:.4rem;border-bottom:1px solid var(--border)}
+.sesion-card{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:.6rem .7rem;font-size:.75rem;color:var(--text-sub);line-height:1.45;cursor:pointer;transition:all .15s;position:relative}
+.sesion-card:hover{border-color:var(--accent);background:var(--accent-light)}
+.sesion-turno{font-family:var(--mono);font-size:.6rem;color:var(--muted);text-transform:uppercase;margin-bottom:.2rem}
+.sesion-card.race{border-color:var(--danger);background:var(--danger-light);font-weight:600;color:var(--danger)}
+.ia-box{background:var(--accent-light);border:1px solid rgba(26,86,219,.2);border-radius:var(--radius-sm);padding:1rem;font-size:.82rem;line-height:1.7;white-space:pre-wrap;display:none}
+.ia-box.visible{display:block}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:200;display:none;align-items:center;justify-content:center;padding:1rem}
+.modal-overlay.visible{display:flex}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.75rem;width:100%;max-width:560px;max-height:90vh;overflow-y:auto;box-shadow:var(--shadow)}
+.modal h3{font-size:.95rem;font-weight:600;color:var(--text);margin-bottom:1.1rem}
+.modal-actions{display:flex;gap:.6rem;justify-content:flex-end;margin-top:1.25rem}
+.data-table{width:100%;border-collapse:collapse;font-size:.8rem}
+.data-table th{font-family:var(--mono);font-size:.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;padding:.5rem .75rem;text-align:left;border-bottom:2px solid var(--border);background:var(--surface2)}
+.data-table td{padding:.55rem .75rem;border-bottom:1px solid var(--border);vertical-align:middle;color:var(--text-sub)}
+/* Claude chat */
+.claude-chat{display:flex;flex-direction:column;gap:.6rem}
+.claude-msg{padding:.75rem 1rem;border-radius:var(--radius-sm);font-size:.82rem;line-height:1.65;white-space:pre-wrap}
+.claude-user{background:var(--surface2);border:1px solid var(--border);align-self:flex-end;max-width:85%}
+.claude-resp{background:var(--accent-light);border:1px solid rgba(26,86,219,.2);color:var(--text)}
+.claude-input-row{display:flex;gap:.6rem;margin-top:.75rem}
+.claude-input-row input{flex:1}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{width:13px;height:13px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;display:inline-block}
+.spinner-dark{border:2px solid rgba(0,0,0,.1);border-top-color:var(--accent)}
+@media(max-width:1024px){.dia-grid{grid-template-columns:repeat(4,1fr)}}
+@media(max-width:768px){
+  .sidebar{position:fixed;top:0;left:0;bottom:0;transform:translateX(-100%)}
+  .sidebar.open{transform:translateX(0)}
+  .sidebar-overlay.visible{display:block}
+  .hamburger{display:block}
+  .topbar-user{display:none}
+  .content{padding:1.1rem}
+  .dia-grid{grid-template-columns:1fr 1fr}
+  .form-row.cols2,.form-row.cols3{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<div class="sidebar-overlay" id="sidebar-overlay"></div>
+<div class="app">
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <div class="name">Training</div>
+      <div class="sub">Plan Post-Hyrox 2026</div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section">CosmoTools</div>
+      <div class="nav-item" onclick="location.href='/sintia'"><span class="nav-icon">📊</span><span class="nav-label">SINTIA</span></div>
+      <div class="nav-item" onclick="location.href='/vua'"><span class="nav-icon">✈️</span><span class="nav-label">VUA</span></div>
+      <div class="nav-item" onclick="location.href='/senasa'"><span class="nav-icon">🌿</span><span class="nav-label">SENASA</span></div>
+      <div class="nav-item" onclick="location.href='/stock'"><span class="nav-icon">🏭</span><span class="nav-label">Stock Depósitos</span></div>
+      <div class="nav-section">Training</div>
+      <div class="nav-item" onclick="location.href='/garmin'"><span class="nav-icon">⌚</span><span class="nav-label">Garmin</span></div>
+      <div class="nav-item active"><span class="nav-icon">📅</span><span class="nav-label">Plan Entrenamiento</span></div>
+    </nav>
+    <div class="sidebar-footer">
+      <a class="back-link" href="/dashboard">← Dashboard</a>
+      <a class="logout" href="/logout">Cerrar sesión</a>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-left">
+        <button class="hamburger" id="hamburger">☰</button>
+        <div class="topbar-title">TRAINING / PLAN POST-HYROX 2026</div>
+      </div>
+      <div style="display:flex;gap:.6rem;align-items:center">
+        <button class="btn btn-outline btn-sm" onclick="showPanel('log')">📋 Registro</button>
+        <button class="btn btn-outline btn-sm" onclick="showPanel('claude')">🤖 Claude</button>
+        <span class="topbar-user">{{ username }}</span>
+      </div>
+    </div>
+
+    <div class="content">
+
+      <!-- Panel: Plan semanal -->
+      <div class="panel active" id="panel-plan">
+        <!-- Objetivos -->
+        <div style="display:flex;gap:.75rem;margin-bottom:1rem;flex-wrap:wrap">
+          <div class="alert alert-info" style="margin-bottom:0;flex:1">🏃 <strong>Objetivo 1:</strong> 21K Buenos Aires — 23/08/2026</div>
+          <div class="alert" style="margin-bottom:0;flex:1;background:var(--danger-light);border-color:rgba(220,38,38,.2);color:var(--danger)">💪 <strong>Objetivo 2:</strong> Hybrid Race Individual — 12/09/2026</div>
+        </div>
+
+        <!-- Nav semanas -->
+        <div class="semanas-nav" id="semanas-nav">
+          <span style="font-size:.75rem;color:var(--muted);align-self:center">Cargando...</span>
+        </div>
+
+        <!-- Semana actual -->
+        <div class="card" id="card-semana">
+          <div id="semana-header" style="margin-bottom:1rem"></div>
+          <div class="dia-grid" id="dia-grid">
+            <div style="color:var(--muted);font-size:.82rem;grid-column:1/-1;text-align:center;padding:1rem">Cargando...</div>
+          </div>
+          <div style="display:flex;gap:.6rem;margin-top:.5rem">
+            <button class="btn btn-outline btn-sm" onclick="agregarSesion()">+ Sesión</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Panel: Registro -->
+      <div class="panel" id="panel-log">
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.9rem">
+            <div class="card-title" style="margin-bottom:0">Registro de sesiones</div>
+            <div style="display:flex;gap:.5rem">
+              <button class="btn btn-outline btn-sm" onclick="showPanel('plan')">← Plan</button>
+              <button class="btn btn-primary btn-sm" onclick="abrirModalLog()">+ Registrar</button>
+            </div>
+          </div>
+          <table class="data-table">
+            <thead>
+              <tr><th>Fecha</th><th>Tipo</th><th>Descripción</th><th>Duración</th><th>Notas</th><th></th></tr>
+            </thead>
+            <tbody id="body-log"><tr><td colspan="6" style="color:var(--muted);text-align:center;padding:1.5rem">Sin registros.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Panel: Claude -->
+      <div class="panel" id="panel-claude">
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.9rem">
+            <div class="card-title" style="margin-bottom:0">Asistente de entrenamiento</div>
+            <button class="btn btn-outline btn-sm" onclick="showPanel('plan')">← Plan</button>
+          </div>
+          <div class="alert alert-info" style="font-size:.78rem">
+            Claude tiene contexto de tu plan completo (14 semanas, objetivos, fases) y la semana actual. Preguntá sobre ajustes, estrategia, dudas de entrenamiento.
+          </div>
+          <div class="claude-chat" id="claude-chat"></div>
+          <div class="claude-input-row">
+            <input type="text" id="claude-input" placeholder="Ej: ¿Cómo manejo la semana de descarga si tengo HX grupal?" onkeydown="if(event.key==='Enter')enviarClaude()">
+            <button class="btn btn-primary" onclick="enviarClaude()" id="btn-claude-send">Enviar</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Editar sesión del plan -->
+<div class="modal-overlay" id="modal-sesion">
+  <div class="modal">
+    <h3 id="modal-ses-titulo">Sesión</h3>
+    <input type="hidden" id="ses-id">
+    <div class="form-row">
+      <div>
+        <label>Descripción</label>
+        <textarea id="ses-desc" rows="3"></textarea>
+      </div>
+    </div>
+    <div class="form-row">
+      <div>
+        <label>Notas</label>
+        <textarea id="ses-notas" rows="2" placeholder="Notas adicionales, variaciones..."></textarea>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-danger btn-sm" onclick="eliminarSesion()">🗑 Eliminar</button>
+      <button class="btn btn-outline" onclick="cerrarModal('modal-sesion')">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarSesion()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Nueva sesión -->
+<div class="modal-overlay" id="modal-nueva-sesion">
+  <div class="modal">
+    <h3>Nueva sesión</h3>
+    <input type="hidden" id="nueva-ses-semana">
+    <div class="form-row cols2">
+      <div>
+        <label>Día</label>
+        <select id="nueva-ses-dia">
+          <option>lunes</option><option>martes</option><option>miércoles</option>
+          <option>jueves</option><option>viernes</option><option>sábado</option><option>domingo</option>
+        </select>
+      </div>
+      <div>
+        <label>Turno</label>
+        <select id="nueva-ses-turno">
+          <option>mañana</option><option>mediodía</option><option>noche</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div>
+        <label>Descripción</label>
+        <textarea id="nueva-ses-desc" rows="3"></textarea>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="cerrarModal('modal-nueva-sesion')">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarNuevaSesion()">Agregar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Registrar sesión -->
+<div class="modal-overlay" id="modal-log">
+  <div class="modal">
+    <h3>Registrar sesión</h3>
+    <div class="form-row cols2">
+      <div>
+        <label>Fecha</label>
+        <input type="date" id="log-fecha">
+      </div>
+      <div>
+        <label>Tipo</label>
+        <select id="log-tipo">
+          <option value="running">Running</option>
+          <option value="cycling">Ciclismo</option>
+          <option value="swimming">Natación</option>
+          <option value="strength">Fuerza</option>
+          <option value="hyrox">Hyrox</option>
+          <option value="movilidad">Movilidad</option>
+          <option value="other">Otro</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row cols2">
+      <div>
+        <label>Duración (min)</label>
+        <input type="number" id="log-duracion" placeholder="45">
+      </div>
+      <div>
+        <label>Completado</label>
+        <select id="log-completado">
+          <option value="1">Sí</option>
+          <option value="0">No (parcial/salteado)</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div>
+        <label>Descripción</label>
+        <textarea id="log-desc" rows="2" placeholder="Ej: Run Z2 45' — cadencia 175, FC media 142"></textarea>
+      </div>
+    </div>
+    <div class="form-row">
+      <div>
+        <label>Notas</label>
+        <textarea id="log-notas" rows="2" placeholder="Sensaciones, ajustes..."></textarea>
+      </div>
+    </div>
+    <div class="form-row">
+      <div>
+        <label>ID Garmin (opcional)</label>
+        <input type="text" id="log-garmin" placeholder="ID de actividad Garmin vinculada">
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="cerrarModal('modal-log')">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarLog()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Globals ───────────────────────────────────────────────────────────────────
+let _semanaActual = 1;
+let _semanaData   = null;
+
+// ── Sidebar ───────────────────────────────────────────────────────────────────
+document.getElementById('hamburger').onclick = () => {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sidebar-overlay').classList.toggle('visible');
+};
+document.getElementById('sidebar-overlay').onclick = () => {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebar-overlay').classList.remove('visible');
+};
+
+// ── Panels ────────────────────────────────────────────────────────────────────
+function showPanel(id) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('panel-' + id).classList.add('active');
+  if (id === 'log') cargarLog();
+}
+
+function abrirModal(id) { document.getElementById(id).classList.add('visible'); }
+function cerrarModal(id) { document.getElementById(id).classList.remove('visible'); }
+
+// ── Fase badge ────────────────────────────────────────────────────────────────
+function faseBadge(fase, descarga) {
+  const num = fase.includes('1') ? '1' : fase.includes('2') ? '2' : fase.includes('3') ? '3' : '4';
+  let txt = fase;
+  if (descarga) txt += ' — ⚡ DESCARGA';
+  return `<span class="fase-badge fase-${num}">${txt}</span>`;
+}
+
+// ── Semanas nav ───────────────────────────────────────────────────────────────
+async function cargarSemanas() {
+  const d = await (await fetch('/api/training/semanas')).json();
+  _semanaActual = d.actual || 1;
+  const nav = document.getElementById('semanas-nav');
+  nav.innerHTML = d.rows.map(s => {
+    const cls = [
+      'sem-btn',
+      s.semana_num === _semanaActual ? 'actual' : '',
+      s.es_descarga ? 'descarga' : ''
+    ].filter(Boolean).join(' ');
+    return `<button class="${cls}" onclick="irSemana(${s.semana_num})" title="${s.fase}">${s.semana_num}</button>`;
+  }).join('');
+  irSemana(_semanaActual);
+}
+
+async function irSemana(num) {
+  _semanaActual = num;
+  // Resaltar botón activo
+  document.querySelectorAll('.sem-btn').forEach((b, i) => {
+    b.classList.toggle('actual', i + 1 === num);
+  });
+  const d = await (await fetch(`/api/training/semana/${num}`)).json();
+  if (!d.ok) return;
+  _semanaData = d.semana;
+  renderSemana(d.semana);
+}
+
+function renderSemana(sem) {
+  const header = document.getElementById('semana-header');
+  header.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:.5rem">
+      <div>
+        ${faseBadge(sem.fase, sem.es_descarga)}
+        <div style="font-size:.82rem;color:var(--muted);margin-top:.2rem">${sem.objetivo||''}</div>
+      </div>
+      <div style="font-family:var(--mono);font-size:.8rem;color:var(--muted)">
+        Semana ${sem.semana_num} — desde ${sem.fecha_inicio}
+      </div>
+    </div>`;
+
+  const dias = ['lunes','martes','miércoles','jueves','viernes','sábado','domingo'];
+  const turnos = ['mañana','mediodía','noche'];
+  const sesiones = sem.sesiones || [];
+
+  const grid = document.getElementById('dia-grid');
+  grid.innerHTML = dias.map(dia => {
+    const sesDia = sesiones.filter(s => s.dia_semana === dia);
+    const cards  = turnos.map(turno => {
+      const s = sesDia.find(x => x.turno === turno);
+      if (!s) return '';
+      const isRace = s.descripcion.includes('21K') || s.descripcion.includes('HYBRID RACE');
+      return `<div class="sesion-card${isRace?' race':''}" onclick="editarSesion('${s.id}','${esc(s.descripcion)}','${esc(s.notas||'')}','${dia}','${turno}')">
+        <div class="sesion-turno">${turno}</div>
+        ${s.descripcion}
+      </div>`;
+    }).join('');
+    return `<div class="dia-col">
+      <div class="dia-header">${dia.substring(0,3)}</div>
+      ${cards || '<div style="font-size:.72rem;color:var(--dim);padding:.3rem 0">Libre</div>'}
+    </div>`;
+  }).join('');
+}
+
+function esc(s) { return (s||'').replace(/'/g,"\\'").replace(/\n/g,' '); }
+
+// ── Editar sesión ─────────────────────────────────────────────────────────────
+function editarSesion(id, desc, notas, dia, turno) {
+  document.getElementById('ses-id').value = id;
+  document.getElementById('ses-desc').value = desc;
+  document.getElementById('ses-notas').value = notas;
+  document.getElementById('modal-ses-titulo').textContent = `${dia} — ${turno}`;
+  abrirModal('modal-sesion');
+}
+
+async function guardarSesion() {
+  const id   = document.getElementById('ses-id').value;
+  const desc = document.getElementById('ses-desc').value;
+  const notas= document.getElementById('ses-notas').value;
+  await fetch(`/api/training/sesion/${id}`, {
+    method: 'PUT', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ descripcion: desc, notas })
+  });
+  cerrarModal('modal-sesion');
+  irSemana(_semanaActual);
+}
+
+async function eliminarSesion() {
+  if (!confirm('¿Eliminar esta sesión del plan?')) return;
+  const id = document.getElementById('ses-id').value;
+  await fetch(`/api/training/sesion/${id}`, { method: 'DELETE' });
+  cerrarModal('modal-sesion');
+  irSemana(_semanaActual);
+}
+
+// ── Nueva sesión ──────────────────────────────────────────────────────────────
+function agregarSesion() {
+  document.getElementById('nueva-ses-semana').value = _semanaActual;
+  document.getElementById('nueva-ses-desc').value = '';
+  abrirModal('modal-nueva-sesion');
+}
+
+async function guardarNuevaSesion() {
+  const data = {
+    semana_num:  parseInt(document.getElementById('nueva-ses-semana').value),
+    dia_semana:  document.getElementById('nueva-ses-dia').value,
+    turno:       document.getElementById('nueva-ses-turno').value,
+    descripcion: document.getElementById('nueva-ses-desc').value,
+  };
+  await fetch('/api/training/sesion', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(data)
+  });
+  cerrarModal('modal-nueva-sesion');
+  irSemana(_semanaActual);
+}
+
+// ── Registro log ──────────────────────────────────────────────────────────────
+function abrirModalLog() {
+  document.getElementById('log-fecha').value = new Date().toISOString().substring(0,10);
+  document.getElementById('log-desc').value = '';
+  document.getElementById('log-notas').value = '';
+  document.getElementById('log-garmin').value = '';
+  abrirModal('modal-log');
+}
+
+async function guardarLog() {
+  const data = {
+    fecha:       document.getElementById('log-fecha').value,
+    tipo:        document.getElementById('log-tipo').value,
+    descripcion: document.getElementById('log-desc').value,
+    duracion_min:parseInt(document.getElementById('log-duracion').value) || null,
+    notas:       document.getElementById('log-notas').value,
+    completado:  parseInt(document.getElementById('log-completado').value),
+    garmin_id:   document.getElementById('log-garmin').value || null,
+  };
+  await fetch('/api/training/log', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(data)
+  });
+  cerrarModal('modal-log');
+  cargarLog();
+}
+
+async function cargarLog() {
+  const d = await (await fetch('/api/training/log')).json();
+  const body = document.getElementById('body-log');
+  if (!d.rows || !d.rows.length) {
+    body.innerHTML = '<tr><td colspan="6" style="color:var(--muted);text-align:center;padding:1.5rem">Sin registros aún.</td></tr>';
+    return;
+  }
+  body.innerHTML = d.rows.map(l => `
+    <tr>
+      <td style="font-family:var(--mono);font-size:.75rem">${l.fecha}</td>
+      <td>${l.tipo}</td>
+      <td style="max-width:250px">${l.descripcion||'—'}</td>
+      <td style="font-family:var(--mono)">${l.duracion_min ? l.duracion_min+"'" : '—'}</td>
+      <td style="max-width:180px;font-size:.75rem;color:var(--muted)">${l.notas||'—'}</td>
+      <td><button class="btn btn-danger btn-sm" onclick="eliminarLog('${l.id}')">🗑</button></td>
+    </tr>
+  `).join('');
+}
+
+async function eliminarLog(id) {
+  if (!confirm('¿Eliminar este registro?')) return;
+  await fetch(`/api/training/log/${id}`, { method: 'DELETE' });
+  cargarLog();
+}
+
+// ── Claude chat ───────────────────────────────────────────────────────────────
+async function enviarClaude() {
+  const input = document.getElementById('claude-input');
+  const pregunta = input.value.trim();
+  if (!pregunta) return;
+  input.value = '';
+
+  const chat = document.getElementById('claude-chat');
+  chat.innerHTML += `<div class="claude-msg claude-user">${pregunta}</div>`;
+  chat.innerHTML += `<div class="claude-msg claude-resp" id="claude-loading"><span class="spinner spinner-dark"></span> Pensando...</div>`;
+  chat.scrollTop = chat.scrollHeight;
+
+  const btn = document.getElementById('btn-claude-send');
+  btn.disabled = true;
+
+  const d = await (await fetch('/api/training/claude', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ pregunta, semana_num: _semanaActual })
+  })).json();
+
+  document.getElementById('claude-loading').remove();
+  btn.disabled = false;
+
+  if (d.ok) {
+    chat.innerHTML += `<div class="claude-msg claude-resp">${d.respuesta}</div>`;
+  } else {
+    chat.innerHTML += `<div class="claude-msg" style="background:var(--danger-light);color:var(--danger)">Error: ${d.error}</div>`;
+  }
+  chat.scrollTop = chat.scrollHeight;
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  cargarSemanas();
+});
+</script>
+</body>
+</html>
