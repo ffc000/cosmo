@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CosmoTools — Garmin</title>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -148,10 +149,12 @@ textarea{resize:vertical;min-height:80px;font-family:var(--sans);font-size:.85re
         <button class="hamburger" id="hamburger">☰</button>
         <div class="topbar-title">GARMIN / ACTIVIDADES</div>
       </div>
-      <div style="display:flex;gap:.6rem;align-items:center">
-        <button class="btn btn-outline btn-sm" onclick="showPanel('progresion')">📈 Progresión</button>
-        <button class="btn btn-outline btn-sm" onclick="showPanel('config')">⚙️ Config</button>
-        <button class="btn btn-primary btn-sm" id="btn-sync-top" onclick="abrirSync()">🔄 Sincronizar</button>
+      <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-outline btn-sm" onclick="showPanel('carga')">📊 Carga</button>
+        <button class="btn btn-outline btn-sm" onclick="showPanel('comparar')">🔁 Comparar</button>
+        <button class="btn btn-outline btn-sm" onclick="showPanel('progresion')">🤖 Análisis</button>
+        <button class="btn btn-outline btn-sm" onclick="showPanel('config')">⚙️</button>
+        <button class="btn btn-primary btn-sm" id="btn-sync-top" onclick="abrirSync()">🔄 Sync</button>
         <span class="topbar-user">{{ username }}</span>
       </div>
     </div>
@@ -180,10 +183,13 @@ textarea{resize:vertical;min-height:80px;font-family:var(--sans);font-size:.85re
               <option value="other">Otros</option>
             </select>
             <select id="filtro-limit" onchange="cargarActividades()">
-              <option value="20">Últimas 20</option>
               <option value="50" selected>Últimas 50</option>
               <option value="100">Últimas 100</option>
+              <option value="500">Todas</option>
             </select>
+            <input type="date" id="filtro-desde" onchange="cargarActividades()" style="width:auto;font-size:.78rem;padding:.4rem .6rem" title="Desde">
+            <input type="date" id="filtro-hasta" onchange="cargarActividades()" style="width:auto;font-size:.78rem;padding:.4rem .6rem" title="Hasta">
+            <button class="btn btn-outline btn-sm" onclick="exportarCSV()" title="Exportar CSV">⬇ CSV</button>
           </div>
           <div id="tabla-actividades-wrap">
             <table class="data-table">
@@ -199,7 +205,73 @@ textarea{resize:vertical;min-height:80px;font-family:var(--sans);font-size:.85re
         </div>
       </div>
 
-      <!-- Panel: Progresión -->
+      <!-- Panel: Carga semanal -->
+      <div class="panel" id="panel-carga">
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.9rem">
+            <div class="card-title" style="margin-bottom:0">Carga semanal & Forma</div>
+            <button class="btn btn-outline btn-sm" onclick="showPanel('actividades')">← Volver</button>
+          </div>
+          <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:1rem">
+            <div class="stat-card">
+              <div class="stat-val" id="carga-atl">—</div>
+              <div class="stat-lbl">ATL — Fatiga (7d)</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-val" id="carga-ctl">—</div>
+              <div class="stat-lbl">CTL — Forma (42d)</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-val" id="carga-tsb">—</div>
+              <div class="stat-lbl">TSB — Frescura</div>
+            </div>
+          </div>
+          <div id="grafico-carga" style="width:100%;overflow-x:auto">
+            <canvas id="canvas-carga" height="180"></canvas>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.5rem">
+            ATL &gt; CTL = fatiga acumulada · TSB positivo = frescura · TSB negativo = bajo forma
+          </div>
+        </div>
+      </div>
+
+      <!-- Panel: Comparar sesiones -->
+      <div class="panel" id="panel-comparar">
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.9rem">
+            <div class="card-title" style="margin-bottom:0">Comparación de sesiones</div>
+            <button class="btn btn-outline btn-sm" onclick="showPanel('actividades')">← Volver</button>
+          </div>
+          <div class="form-row cols2" style="margin-bottom:.75rem">
+            <div>
+              <label>Tipo</label>
+              <select id="comp-tipo" onchange="cargarComparacion()">
+                <option value="running">Running</option>
+                <option value="cycling">Ciclismo</option>
+                <option value="swimming">Natación</option>
+                <option value="strength">Fuerza/HX</option>
+              </select>
+            </div>
+            <div>
+              <label>Métrica principal</label>
+              <select id="comp-metrica" onchange="renderComparacion()">
+                <option value="ritmo">Ritmo (min/km)</option>
+                <option value="fc_media">FC media</option>
+                <option value="distancia_km">Distancia (km)</option>
+                <option value="duracion_min">Duración (min)</option>
+                <option value="tss">TSS</option>
+                <option value="carga">Carga</option>
+              </select>
+            </div>
+          </div>
+          <div id="grafico-comparar" style="width:100%;overflow-x:auto">
+            <canvas id="canvas-comparar" height="200"></canvas>
+          </div>
+          <div id="tabla-comparar" style="margin-top:1rem;overflow-x:auto"></div>
+        </div>
+      </div>
+
+      <!-- Panel: Análisis IA -->
       <div class="panel" id="panel-progresion">
         <div class="card">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.9rem">
@@ -335,6 +407,9 @@ function showPanel(id) {
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   document.getElementById('panel-' + id).classList.add('active');
   if (id === 'progresion') cargarAnalisisPrev();
+  if (id === 'carga') cargarCargaSemanal();
+  if (id === 'comparar') cargarComparacion();
+  if (id === 'config') cargarConfig();
 }
 
 // ── Modales ──────────────────────────────────────────────────────────────────
@@ -390,7 +465,12 @@ async function cargarStats() {
 async function cargarActividades() {
   const tipo  = document.getElementById('filtro-tipo').value;
   const limit = document.getElementById('filtro-limit').value;
-  const d = await (await fetch(`/api/garmin/actividades?tipo=${tipo}&limit=${limit}`)).json();
+  const desde = document.getElementById('filtro-desde').value;
+  const hasta = document.getElementById('filtro-hasta').value;
+  let url = `/api/garmin/actividades?tipo=${tipo}&limit=${limit}`;
+  if (desde) url += `&desde=${desde}`;
+  if (hasta) url += `&hasta=${hasta}`;
+  const d = await (await fetch(url)).json();
   const body = document.getElementById('body-actividades');
   if (!d.ok || !d.rows.length) {
     body.innerHTML = '<tr><td colspan="7" style="color:var(--muted);text-align:center;padding:1.5rem">Sin actividades. Sincronizá primero.</td></tr>';
@@ -404,9 +484,15 @@ async function cargarActividades() {
       <td style="font-family:var(--mono)">${fmtDur(a.duracion_seg)}</td>
       <td style="font-family:var(--mono)">${fmtDist(a.distancia_m)}</td>
       <td style="font-family:var(--mono)">${a.fc_media||'—'}</td>
-      <td><span style="font-size:.7rem;color:${a.analisis?'var(--accent2)':'var(--dim)'}">${a.analisis?'✓ Analizado':'—'}</span></td>
+      <td><span style="font-size:.7rem;color:${a.analisis?'var(--accent2)':'var(--dim)'}">${a.analisis?'✓':'—'}</span></td>
     </tr>
   `).join('');
+}
+
+function exportarCSV() {
+  const tipo = document.getElementById('filtro-tipo').value;
+  const limit = document.getElementById('filtro-limit').value;
+  window.location.href = `/api/garmin/export_csv?tipo=${tipo}&limit=${limit}`;
 }
 
 // ── Detalle actividad ─────────────────────────────────────────────────────────
@@ -442,7 +528,7 @@ async function verActividad(id) {
     ${m.ubicacion ? `<span style="font-size:.75rem;color:var(--muted)">📍 ${m.ubicacion}</span>` : ''}
     ${m.tipo_original ? `<span style="font-size:.7rem;color:var(--dim)">(${m.tipo_original})</span>` : ''}
   </div>
-  ${m.aerobic_te_label ? `<div style="font-size:.78rem;color:var(--accent);margin-bottom:.75rem;font-weight:500">TE: ${m.aerobic_te_label}${m.anaerobic_te_msg ? ' · '+m.anaerobic_te_msg : ''}</div>` : ''}`;
+  ${m.aerobic_te_label ? `<div style="font-size:.78rem;color:var(--accent);margin-bottom:.75rem;font-weight:500">TE: ${limpiarLabel(m.aerobic_te_label)}${m.anaerobic_te_msg ? ' · '+limpiarLabel(m.anaerobic_te_msg) : ''}</div>` : ''}`;
 
   // Resumen
   html += seccion('Resumen', `<div class="metric-row">
@@ -595,6 +681,11 @@ async function verActividad(id) {
 
   document.getElementById('modal-act-body').innerHTML = html;
   abrirModal('modal-actividad');
+}
+
+function limpiarLabel(txt) {
+  if (!txt) return null;
+  return txt.replace(/_\d+$/, '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
 function fmtRitmoDecimal(val) {
@@ -780,6 +871,128 @@ async function guardarConfig() {
   } else {
     res.innerHTML = `<div class="alert alert-danger">Error: ${d.error}</div>`;
   }
+}
+
+// ── Carga semanal ─────────────────────────────────────────────────────────────
+let _chartCarga = null;
+let _chartComp  = null;
+let _compData   = [];
+
+async function cargarCargaSemanal() {
+  const d = await (await fetch('/api/garmin/carga_semanal')).json();
+  if (!d.ok) return;
+
+  document.getElementById('carga-atl').textContent = d.atl;
+  document.getElementById('carga-ctl').textContent = d.ctl;
+  const tsb = d.tsb;
+  const tsbEl = document.getElementById('carga-tsb');
+  tsbEl.textContent = tsb > 0 ? '+' + tsb : tsb;
+  tsbEl.style.color = tsb > 5 ? 'var(--accent2)' : tsb < -10 ? 'var(--danger)' : 'var(--text)';
+
+  const labels  = d.semanas.map(s => s.semana.substring(5));
+  const cargas  = d.semanas.map(s => s.carga);
+  const sesions = d.semanas.map(s => s.sesiones);
+
+  const ctx = document.getElementById('canvas-carga').getContext('2d');
+  if (_chartCarga) _chartCarga.destroy();
+  _chartCarga = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Carga semanal',
+          data: cargas,
+          backgroundColor: 'rgba(26,86,219,.65)',
+          borderColor: 'rgba(26,86,219,1)',
+          borderWidth: 1,
+          yAxisID: 'y',
+        },
+        {
+          label: 'Sesiones',
+          data: sesions,
+          type: 'line',
+          borderColor: 'rgba(217,119,6,1)',
+          backgroundColor: 'rgba(217,119,6,.1)',
+          pointRadius: 4,
+          tension: 0.3,
+          yAxisID: 'y2',
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      interaction: { mode: 'index' },
+      scales: {
+        y:  { position: 'left',  title: { display: true, text: 'Carga' } },
+        y2: { position: 'right', title: { display: true, text: 'Sesiones' }, grid: { drawOnChartArea: false } }
+      },
+      plugins: { legend: { position: 'bottom' } }
+    }
+  });
+}
+
+// ── Comparación ───────────────────────────────────────────────────────────────
+async function cargarComparacion() {
+  const tipo = document.getElementById('comp-tipo').value;
+  const d = await (await fetch(`/api/garmin/comparar?tipo=${tipo}&limit=10`)).json();
+  if (!d.ok) return;
+  _compData = d.rows;
+  renderComparacion();
+}
+
+function renderComparacion() {
+  if (!_compData.length) return;
+  const metrica = document.getElementById('comp-metrica').value;
+  const labels  = _compData.map(r => r.fecha);
+  const valores = _compData.map(r => r[metrica]);
+  const labels_map = {
+    ritmo: 'Ritmo (s/km)', fc_media: 'FC media (bpm)',
+    distancia_km: 'Distancia (km)', duracion_min: 'Duración (min)',
+    tss: 'TSS', carga: 'Carga'
+  };
+
+  const ctx = document.getElementById('canvas-comparar').getContext('2d');
+  if (_chartComp) _chartComp.destroy();
+  _chartComp = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: labels_map[metrica] || metrica,
+        data: valores,
+        borderColor: 'rgba(26,86,219,1)',
+        backgroundColor: 'rgba(26,86,219,.1)',
+        pointRadius: 5,
+        tension: 0.3,
+        fill: true,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { position: 'bottom' } },
+      scales: { y: { reverse: metrica === 'ritmo' } }  // ritmo: menor es mejor
+    }
+  });
+
+  // Tabla resumen
+  const tabla = document.getElementById('tabla-comparar');
+  tabla.innerHTML = `<table class="data-table">
+    <thead><tr>
+      <th>Fecha</th><th>Nombre</th><th>Dist km</th><th>Ritmo</th>
+      <th>FC media</th><th>Duración</th><th>TSS</th><th>Carga</th>
+    </tr></thead>
+    <tbody>${_compData.map(r => `<tr>
+      <td style="font-family:var(--mono);font-size:.75rem">${r.fecha}</td>
+      <td>${r.nombre||'—'}</td>
+      <td style="font-family:var(--mono)">${r.distancia_km||'—'}</td>
+      <td style="font-family:var(--mono)">${r.ritmo ? Math.floor(r.ritmo/60)+':'+(r.ritmo%60).toFixed(0).padStart(2,'0') : '—'}</td>
+      <td style="font-family:var(--mono)">${r.fc_media||'—'}</td>
+      <td style="font-family:var(--mono)">${r.duracion_min||'—'}'</td>
+      <td style="font-family:var(--mono)">${r.tss||'—'}</td>
+      <td style="font-family:var(--mono)">${r.carga||'—'}</td>
+    </tr>`).join('')}</tbody>
+  </table>`;
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────

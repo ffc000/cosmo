@@ -247,10 +247,12 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
       <button class="btn btn-outline" onclick="cerrarModal('modal-sesion')">Cancelar</button>
       <button class="btn btn-primary" onclick="guardarSesion()">Guardar</button>
     </div>
+    <div style="margin-top:1rem;border-top:1px solid var(--border);padding-top:.9rem">
+      <div style="font-family:var(--mono);font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:.5rem">⌚ Actividades Garmin del día</div>
+      <div id="modal-ses-garmin"></div>
+    </div>
   </div>
 </div>
-
-<!-- Modal: Nueva sesión -->
 <div class="modal-overlay" id="modal-nueva-sesion">
   <div class="modal">
     <h3>Nueva sesión</h3>
@@ -428,7 +430,7 @@ function renderSemana(sem) {
       const s = sesDia.find(x => x.turno === turno);
       if (!s) return '';
       const isRace = s.descripcion.includes('21K') || s.descripcion.includes('HYBRID RACE');
-      return `<div class="sesion-card${isRace?' race':''}" onclick="editarSesion('${s.id}','${esc(s.descripcion)}','${esc(s.notas||'')}','${dia}','${turno}')">
+      return `<div class="sesion-card${isRace?' race':''}" onclick="editarSesion('${s.id}','${esc(s.descripcion)}','${esc(s.notas||'')}','${dia}','${turno}','${sem.fecha_inicio}')">
         <div class="sesion-turno">${turno}</div>
         ${s.descripcion}
       </div>`;
@@ -443,12 +445,45 @@ function renderSemana(sem) {
 function esc(s) { return (s||'').replace(/'/g,"\\'").replace(/\n/g,' '); }
 
 // ── Editar sesión ─────────────────────────────────────────────────────────────
-function editarSesion(id, desc, notas, dia, turno) {
+function editarSesion(id, desc, notas, dia, turno, fechaInicio) {
   document.getElementById('ses-id').value = id;
   document.getElementById('ses-desc').value = desc;
   document.getElementById('ses-notas').value = notas;
   document.getElementById('modal-ses-titulo').textContent = `${dia} — ${turno}`;
+
+  // Calcular fecha real del día
+  if (fechaInicio) {
+    const dias = ['lunes','martes','miércoles','jueves','viernes','sábado','domingo'];
+    const offset = dias.indexOf(dia);
+    if (offset >= 0) {
+      const base = new Date(fechaInicio + 'T12:00:00');
+      base.setDate(base.getDate() + offset);
+      const fechaDia = base.toISOString().substring(0,10);
+      cargarGarminDia(fechaDia);
+    }
+  }
   abrirModal('modal-sesion');
+}
+
+async function cargarGarminDia(fecha) {
+  const cont = document.getElementById('modal-ses-garmin');
+  if (!cont) return;
+  cont.innerHTML = '<div style="font-size:.75rem;color:var(--muted)">Buscando actividades Garmin...</div>';
+  const d = await (await fetch(`/api/training/garmin_dia?fecha=${fecha}`)).json();
+  if (!d.ok || !d.rows.length) {
+    cont.innerHTML = '<div style="font-size:.75rem;color:var(--dim)">Sin actividades Garmin registradas este día.</div>';
+    return;
+  }
+  cont.innerHTML = d.rows.map(a => {
+    const dur = a.duracion_seg ? Math.floor(a.duracion_seg/60)+"'" : '—';
+    const dist = a.distancia_m ? (a.distancia_m/1000).toFixed(2)+'km' : '';
+    return `<div style="display:flex;gap:.5rem;align-items:center;padding:.4rem .6rem;background:var(--accent-light);border-radius:4px;margin-bottom:.3rem;font-size:.78rem">
+      <span>⌚</span>
+      <span style="font-weight:500">${a.nombre||a.tipo}</span>
+      <span style="color:var(--muted)">${dur} ${dist} ${a.fc_media ? '· FC '+a.fc_media : ''}</span>
+      <a href="/garmin" style="margin-left:auto;font-size:.7rem;color:var(--accent);text-decoration:none">Ver →</a>
+    </div>`;
+  }).join('');
 }
 
 async function guardarSesion() {
