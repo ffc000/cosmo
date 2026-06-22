@@ -75,12 +75,16 @@ def init_garmin_db():
 init_garmin_db()
 
 # ── Helpers BD ────────────────────────────────────────────────────────────────
-def get_actividades(limit=50, tipo=None):
+def get_actividades(limit=50, tipo=None, desde=None, hasta=None):
     con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    q = "SELECT * FROM garmin_actividades"
+    q = "SELECT * FROM garmin_actividades WHERE 1=1"
     params = []
     if tipo and tipo != "todas":
-        q += " WHERE tipo=?"; params.append(tipo)
+        q += " AND tipo=?"; params.append(tipo)
+    if desde:
+        q += " AND fecha >= ?"; params.append(desde)
+    if hasta:
+        q += " AND fecha <= ?"; params.append(hasta + "T23:59:59")
     q += " ORDER BY fecha DESC LIMIT ?"
     params.append(limit)
     rows = [dict(r) for r in con.execute(q, params).fetchall()]
@@ -525,6 +529,13 @@ def _sync_worker(job_id: str, user: str, modo: str, semana_offset: int = 0):
         logging.error(f"GARMIN SYNC ERROR | {e}")
 
 # ── Análisis Claude ───────────────────────────────────────────────────────────
+def _limpiar_label(txt):
+    """MINOR_ANAEROBIC_BENEFIT_15 → Minor Anaerobic Benefit"""
+    if not txt: return None
+    import re
+    txt = re.sub(r'_\d+$', '', txt)          # quitar número final
+    return txt.replace('_', ' ').title()
+
 def _fmt_duracion(seg):
     if not seg: return "—"
     h, m = divmod(int(seg) // 60, 60)
@@ -538,54 +549,129 @@ def _fmt_ritmo(vel_ms):
     return f"{m}:{s:02d} /km"
 
 def _build_prompt_sesion(act: dict) -> str:
-    meta = json.loads(act.get("metadata") or "{}")
-    laps = json.loads(act.get("laps") or "[]")
-    zonas = json.loads(act.get("zonas_fc") or "{}")
+    meta   = json.loads(act.get("metadata") or "{}")
+    zonas  = json.loads(act.get("zonas_fc") or "{}")
+    splits = meta.get("splits") or []
+    ejercicios = meta.get("ejercicios") or []
     dist_km = (act.get("distancia_m") or 0) / 1000
-    return f"""Analizá esta sesión de entrenamiento y dá feedback técnico conciso.
+    tipo = act.get("tipo", "")
 
-ACTIVIDAD: {act.get('nombre','')} ({act.get('tipo','')})
-Fecha: {act.get('fecha','')}
-Duración: {_fmt_duracion(act.get('duracion_seg'))}
-Distancia: {dist_km:.2f} km
+    # Zonas FC formateadas
+    zonas_txt = ""
+    if zonas:
+        zonas_txt = "Distribución zonas FC:\n" + "\n".join([
+            f"  {z}: {d.get('seg',0)//60:.0f}' ({d.get('pct') or '?'}%)"
+            for z, d in zonas.items()
+        ])
+
+    # Splits formateados
+    splits_txt = ""
+    if splits:
+        splits_txt = "Splits:\n" + "\n".join([
+            f"  {s.get('tipo','').replace('RWD_','').replace('_',' ')} — "
+            f"N:{s.get('n','?')} | {_fmt_duracion(s.get('duracion_seg'))} | "
+            f"{(s.get('distancia_m') or 0)/1000:.2f}km | {_fmt_ritmo(s.get('vel_media'))}"
+            for s in splits
+        ])
+
+    # Ejercicios formateados (fuerza)
+    ej_txt = ""
+    if ejercicios:
+        ej_txt = "Ejercicios:\n" + "\n".join([
+            f"  {(e.get('subcategoria') or e.get('categoria') or '?').replace('_',' ')} — "
+            f"{e.get('sets','?')} sets x {e.get('reps','?')} reps"
+            f"{' @ '+str(e.get('peso_g')//1000)+'kg' if e.get('peso_g') else ''}"
+            for e in ejercicios
+        ])
+
+    # Sección específica por deporte
+    deporte_txt = ""
+    if tipo == "running":
+        deporte_txt = f"""Running:
+  Ritmo medio: {_fmt_ritmo(act.get('velocidad_media'))}
+  Ritmo aj. pendiente: {_fmt_ritmo(meta.get('vel_ajustada_pend'))}
+  Split más rápido 1km: {meta.get('faster_split_1k') or '—'}s
+  Cadencia: {act.get('cadencia_media') or '—'} spm
+  Desnivel +: {act.get('desnivel_pos') or '—'} m / -: {meta.get('desnivel_neg') or '—'} m
+  Contacto suelo: {meta.get('ground_contact') or '—'} ms
+  Oscilación vertical: {meta.get('vertical_osc') or '—'} cm
+  Ratio vertical: {meta.get('vertical_ratio') or '—'} %
+  Long. zancada: {meta.get('stride_length') or '—'} m
+  Running power: {meta.get('running_power') or '—'} W"""
+    elif tipo == "cycling":
+        deporte_txt = f"""Ciclismo:
+  Potencia media: {act.get('potencia_media') or '—'} W
+  Potencia normalizada: {act.get('normalizada_w') or '—'} W
+  Potencia máx: {meta.get('potencia_max') or '—'} W
+  IF: {meta.get('if_factor') or '—'}
+  FTP: {meta.get('ftp') or '—'} W
+  Cadencia: {act.get('cadencia_media') or '—'} rpm"""
+    elif tipo == "swimming":
+        deporte_txt = f"""Natación:
+  SWOLF: {meta.get('swolf') or '—'}
+  Dist/brazada: {meta.get('brazadas_largo') or '—'} m
+  Estilo: {meta.get('estilo_nado') or '—'}"""
+    elif tipo == "strength":
+        deporte_txt = f"Fuerza/Hyrox — {len(ejercicios)} ejercicios registrados"
+
+    te_label = _limpiar_label(meta.get('aerobic_te_label')) or ''
+    te_msg   = _limpiar_label(meta.get('anaerobic_te_msg')) or ''
+
+    return f"""Analizá esta sesión de entrenamiento. Soy triatleta y competidor de Hyrox, actualmente en preparación para 21K (23/08/2026) y Hybrid Race Individual (12/09/2026).
+
+ACTIVIDAD: {act.get('nombre','')} ({tipo})
+Fecha: {act.get('fecha','')[:10]} | Ubicación: {meta.get('ubicacion') or '—'}
+Duración: {_fmt_duracion(act.get('duracion_seg'))} | Distancia: {dist_km:.2f} km
+
 FC media: {act.get('fc_media') or '—'} bpm | FC máx: {act.get('fc_max') or '—'} bpm
-Calorías: {act.get('calorias') or '—'}
-Ritmo medio: {_fmt_ritmo(act.get('velocidad_media'))}
-Cadencia media: {act.get('cadencia_media') or '—'} rpm/spm
-Desnivel +: {act.get('desnivel_pos') or '—'} m
-Potencia media: {act.get('potencia_media') or '—'} W
-TSS: {act.get('tss') or '—'}
-VO2max estimado: {meta.get('vo2max') or '—'}
-Efecto aeróbico: {meta.get('aerobic_te') or '—'} | Efecto anaeróbico: {meta.get('anaerobic_te') or '—'}
-Zonas FC: {json.dumps(zonas) if zonas else 'No disponible'}
-Vueltas: {len(laps)} registradas
+Calorías: {act.get('calorias') or '—'} kcal | TSS: {act.get('tss') or '—'}
+Carga: {meta.get('load_primario') or '—'} | Recuperación estimada: {meta.get('tiempo_recuperacion') or '—'} h
+VO2max: {meta.get('vo2max') or '—'} | TE aeróbico: {act.get('aerobic_te') if hasattr(act,'get') else meta.get('aerobic_te') or '—'} ({te_label}) | TE anaeróbico: {meta.get('anaerobic_te') or '—'} ({te_msg})
+Body Battery Δ: {meta.get('body_battery_delta') or '—'} | Min vigorosa: {meta.get('min_vigorosa') or '—'}
+
+{deporte_txt}
+
+{zonas_txt}
+
+{splits_txt}
+
+{ej_txt}
 
 Respondé en español con:
-1. Resumen ejecutivo de la sesión (2-3 líneas)
+1. Resumen ejecutivo (2-3 líneas)
 2. Puntos positivos
-3. Puntos a mejorar o atención
-4. Recomendación para la próxima sesión del mismo tipo
+3. Puntos a mejorar o señales de alerta
+4. Recomendación concreta para la próxima sesión del mismo tipo
+Sé técnico y directo. Máximo 300 palabras.
 """
 
 def _build_prompt_progresion(actividades: list, tipo: str, rango: str) -> str:
     resumen = []
     for a in actividades:
+        meta = json.loads(a.get("metadata") or "{}")
         dist_km = (a.get("distancia_m") or 0) / 1000
+        zonas = json.loads(a.get("zonas_fc") or "{}")
+        z5_pct = (zonas.get("Z5") or {}).get("pct") or (zonas.get("Z5") or {}).get("seg", 0)
         resumen.append(
             f"- {a.get('fecha','')[:10]} | {_fmt_duracion(a.get('duracion_seg'))} | "
-            f"{dist_km:.1f}km | FC:{a.get('fc_media') or '—'} | ritmo:{_fmt_ritmo(a.get('velocidad_media'))} | TSS:{a.get('tss') or '—'}"
+            f"{dist_km:.1f}km | FC:{a.get('fc_media') or '—'} | {_fmt_ritmo(a.get('velocidad_media'))} | "
+            f"TSS:{a.get('tss') or '—'} | Carga:{meta.get('load_primario') or '—'} | "
+            f"TE:{meta.get('aerobic_te') or '—'} | Z5:{z5_pct or '—'}"
         )
-    return f"""Analizá la progresión de entrenamiento de las últimas sesiones de {tipo}.
 
-Período: {rango}
+    return f"""Analizá la progresión de entrenamiento. Soy triatleta/Hyrox competidor preparando 21K (23/08) y Hybrid Race (12/09/2026).
+
+Deporte: {tipo} | Período: {rango}
 Sesiones ({len(actividades)}):
 {chr(10).join(resumen)}
 
 Respondé en español con:
-1. Tendencia general (volumen, intensidad, recuperación)
-2. Sesión más destacada y por qué
-3. Señales de fatiga o sobreentrenamiento si las hay
-4. Recomendación para las próximas 2 semanas
+1. Tendencia de volumen, intensidad y recuperación
+2. Progresión de rendimiento (ritmo/potencia/FC a igual esfuerzo)
+3. Sesión más destacada y por qué
+4. Señales de fatiga o sobreentrenamiento
+5. Recomendación para las próximas 2 semanas considerando los objetivos de carrera
+Sé técnico y directo. Máximo 400 palabras.
 """
 
 # ── Rutas ─────────────────────────────────────────────────────────────────────
@@ -601,7 +687,9 @@ def garmin_index():
 def api_actividades():
     tipo  = request.args.get("tipo", "todas")
     limit = int(request.args.get("limit", 50))
-    rows  = get_actividades(limit=limit, tipo=tipo)
+    desde = request.args.get("desde")
+    hasta = request.args.get("hasta")
+    rows  = get_actividades(limit=limit, tipo=tipo, desde=desde, hasta=hasta)
     return jsonify({"ok": True, "rows": rows})
 
 @garmin_bp.route("/api/garmin/actividades/<act_id>")
@@ -723,7 +811,7 @@ def api_config_get():
     return jsonify({
         "ok": True,
         "configurado": credenciales_configuradas(),
-        "usuario": u,  # devuelve usuario pero no contraseña
+        "usuario": u,
     })
 
 @garmin_bp.route("/api/garmin/config", methods=["POST"])
@@ -735,3 +823,114 @@ def api_config_set():
         return jsonify({"ok": False, "error": "Usuario y contraseña son requeridos"})
     set_credenciales_garmin(usuario, passwd)
     return jsonify({"ok": True})
+
+@garmin_bp.route("/api/garmin/carga_semanal")
+def api_carga_semanal():
+    """ATL (fatiga aguda 7d) y CTL (forma crónica 42d) basados en carga diaria."""
+    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
+    rows = con.execute("""
+        SELECT DATE(fecha) as dia,
+               SUM(COALESCE(CAST(json_extract(metadata,'$.load_primario') AS REAL), 0)) as carga,
+               COUNT(*) as sesiones
+        FROM garmin_actividades
+        WHERE fecha >= DATE('now', '-90 days')
+        GROUP BY dia ORDER BY dia
+    """).fetchall()
+    con.close()
+
+    from datetime import date, timedelta
+    datos = {r["dia"]: {"carga": r["carga"], "sesiones": r["sesiones"]} for r in rows}
+
+    semanas = []
+    hoy = date.today()
+    for w in range(12, -1, -1):
+        lunes = hoy - timedelta(days=hoy.weekday()) - timedelta(weeks=w)
+        carga_sem = sum(
+            datos.get((lunes + timedelta(days=d)).isoformat(), {}).get("carga", 0)
+            for d in range(7)
+        )
+        sesiones_sem = sum(
+            datos.get((lunes + timedelta(days=d)).isoformat(), {}).get("sesiones", 0)
+            for d in range(7)
+        )
+        semanas.append({
+            "semana": lunes.isoformat(),
+            "carga": round(carga_sem, 1),
+            "sesiones": sesiones_sem,
+        })
+
+    # ATL (7d) y CTL (42d) — promedio móvil
+    dias_ordenados = sorted(datos.keys())
+    if dias_ordenados:
+        ultimo = dias_ordenados[-1]
+        cargas_7  = [datos.get((date.fromisoformat(ultimo) - timedelta(days=i)).isoformat(), {}).get("carga", 0) for i in range(7)]
+        cargas_42 = [datos.get((date.fromisoformat(ultimo) - timedelta(days=i)).isoformat(), {}).get("carga", 0) for i in range(42)]
+        atl = round(sum(cargas_7) / 7, 1)
+        ctl = round(sum(cargas_42) / 42, 1)
+        tsb = round(ctl - atl, 1)  # Training Stress Balance
+    else:
+        atl = ctl = tsb = 0
+
+    return jsonify({"ok": True, "semanas": semanas, "atl": atl, "ctl": ctl, "tsb": tsb})
+
+@garmin_bp.route("/api/garmin/comparar")
+def api_comparar():
+    """Últimas N sesiones del mismo tipo para comparación."""
+    tipo  = request.args.get("tipo", "running")
+    limit = int(request.args.get("limit", 8))
+    rows  = get_actividades(limit=limit, tipo=tipo)
+    # Extraer métricas clave para gráfico
+    datos = []
+    for a in rows:
+        meta = json.loads(a.get("metadata") or "{}")
+        datos.append({
+            "fecha":        a.get("fecha","")[:10],
+            "nombre":       a.get("nombre",""),
+            "duracion_min": round((a.get("duracion_seg") or 0) / 60, 1),
+            "distancia_km": round((a.get("distancia_m") or 0) / 1000, 2),
+            "fc_media":     a.get("fc_media"),
+            "ritmo":        round(1000 / a["velocidad_media"], 1) if a.get("velocidad_media") else None,
+            "tss":          a.get("tss"),
+            "carga":        meta.get("load_primario"),
+            "vo2max":       meta.get("vo2max"),
+            "cadencia":     a.get("cadencia_media"),
+        })
+    return jsonify({"ok": True, "rows": datos[::-1]})  # cronológico
+
+@garmin_bp.route("/api/garmin/export_csv")
+def api_export_csv():
+    import csv, io as sio
+    tipo  = request.args.get("tipo", "todas")
+    limit = int(request.args.get("limit", 500))
+    rows  = get_actividades(limit=limit, tipo=tipo)
+
+    output = sio.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "id","fecha","nombre","tipo","duracion_min","distancia_km",
+        "fc_media","fc_max","calorias","tss","cadencia","ritmo_min_km",
+        "desnivel_pos","potencia_media","normalizada_w","vo2max",
+        "aerobic_te","anaerobic_te","carga","recuperacion_h","ubicacion"
+    ])
+    for a in rows:
+        meta = json.loads(a.get("metadata") or "{}")
+        dist_km = round((a.get("distancia_m") or 0) / 1000, 2)
+        dur_min = round((a.get("duracion_seg") or 0) / 60, 1)
+        vel = a.get("velocidad_media")
+        ritmo = round(1000 / vel, 1) if vel else ""
+        writer.writerow([
+            a.get("id"), a.get("fecha","")[:10], a.get("nombre",""), a.get("tipo",""),
+            dur_min, dist_km, a.get("fc_media",""), a.get("fc_max",""),
+            a.get("calorias",""), a.get("tss",""), a.get("cadencia_media",""), ritmo,
+            a.get("desnivel_pos",""), a.get("potencia_media",""), a.get("normalizada_w",""),
+            meta.get("vo2max",""), meta.get("aerobic_te",""), meta.get("anaerobic_te",""),
+            meta.get("load_primario",""), meta.get("tiempo_recuperacion",""), meta.get("ubicacion","")
+        ])
+
+    output.seek(0)
+    return send_file(
+        io.BytesIO(output.getvalue().encode("utf-8-sig")),
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name=f"garmin_actividades_{tipo}.csv"
+    )

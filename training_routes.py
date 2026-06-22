@@ -365,3 +365,18 @@ def api_stats():
         "completadas": completadas,
         "semana_actual": _semana_actual(),
     })
+
+@training_bp.route("/api/training/garmin_dia")
+def api_garmin_dia():
+    """Actividades Garmin del día indicado — para vincular con el plan."""
+    fecha = request.args.get("fecha")  # YYYY-MM-DD
+    if not fecha:
+        return jsonify({"ok": False, "error": "Fecha requerida"})
+    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
+    rows = con.execute(
+        "SELECT id, nombre, tipo, duracion_seg, distancia_m, fc_media, calorias "
+        "FROM garmin_actividades WHERE DATE(fecha) = ? ORDER BY fecha",
+        (fecha,)
+    ).fetchall()
+    con.close()
+    return jsonify({"ok": True, "rows": [dict(r) for r in rows]})
