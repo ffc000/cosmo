@@ -1,14 +1,12 @@
-{% extends "base.html" %}
-{% set active_module = "training" %}
-{% set page_title = "Training" %}
-{% block brand_name %}Training{% endblock %}
-{% block brand_sub %}Garmin · Plan · Análisis{% endblock %}
-
-{% block head_scripts %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CosmoTools — Training</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-{% endblock %}
-
-{% block page_css %}
+<style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
   --bg:#F0F4F8;--surface:#FFFFFF;--surface2:#F8FAFC;
@@ -175,10 +173,25 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
   .data-table th,.data-table td{padding:.4rem .5rem}
   .metric-row{gap:.9rem}
 }
-{% endblock %}
+</style>
+</head>
+<body>
+<div class="sidebar-overlay" id="sidebar-overlay"></div>
+<div class="app">
 
-{% block sidebar_nav %}
-<div class="nav-section">Garmin</div>
+  <!-- ── SIDEBAR ── -->
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <div class="name">Training</div>
+      <div class="sub">Garmin · Plan · Análisis</div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section">CosmoTools</div>
+      <div class="nav-item" onclick="location.href='/sintia'"><span class="nav-icon">📊</span><span class="nav-label">SINTIA</span></div>
+      <div class="nav-item" onclick="location.href='/vua'"><span class="nav-icon">✈️</span><span class="nav-label">VUA</span></div>
+      <div class="nav-item" onclick="location.href='/senasa'"><span class="nav-icon">🌿</span><span class="nav-label">SENASA</span></div>
+      <div class="nav-item" onclick="location.href='/stock'"><span class="nav-icon">🏭</span><span class="nav-label">Stock Depósitos</span></div>
+      <div class="nav-section">Garmin</div>
       <div class="nav-item" id="nav-actividades" onclick="switchModule('garmin','actividades')"><span class="nav-icon">⌚</span><span class="nav-label">Actividades</span></div>
       <div class="nav-item" id="nav-carga" onclick="switchModule('garmin','carga')"><span class="nav-icon">📊</span><span class="nav-label">Carga semanal</span></div>
       <div class="nav-item" id="nav-comparar" onclick="switchModule('garmin','comparar')"><span class="nav-icon">🔁</span><span class="nav-label">Comparar sesiones</span></div>
@@ -188,19 +201,29 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
       <div class="nav-item" id="nav-plan" onclick="switchModule('training','plan')"><span class="nav-icon">📅</span><span class="nav-label">Plan semanal</span></div>
       <div class="nav-item" id="nav-log" onclick="switchModule('training','log')"><span class="nav-icon">📋</span><span class="nav-label">Registro</span></div>
       <div class="nav-item" id="nav-claude" onclick="switchModule('training','claude')"><span class="nav-icon">💬</span><span class="nav-label">Asistente Claude</span></div>
-{% endblock %}
+    </nav>
+    <div class="sidebar-footer">
+      <a href="/" class="back-link">← Inicio</a>
+      <a class="logout" href="/logout">Cerrar sesión</a>
+    </div>
+  </div>
 
-{% block topbar_title %}TRAINING / ACTIVIDADES{% endblock %}
+  <!-- ── MAIN ── -->
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-left">
+        <button class="hamburger" id="hamburger">☰</button>
+        <div class="topbar-title" id="topbar-title">TRAINING / ACTIVIDADES</div>
+      </div>
+      <div class="topbar-actions" id="topbar-actions">
+        <button class="btn btn-garmin btn-sm" id="btn-sync-top" onclick="abrirSync()">🔄 Sync Garmin</button>
+        <span class="topbar-user">{{ username }}</span>
+      </div>
+    </div>
 
-{% block topbar_actions_class %}topbar-actions{% endblock %}
+    <div class="content">
 
-{% block topbar_actions %}
-<button class="btn btn-garmin btn-sm" id="btn-sync-top" onclick="abrirSync()">🔄 Sync Garmin</button>
-<span class="topbar-user">{{ username }}</span>
-{% endblock %}
-
-{% block content %}
-<!-- ══ GARMIN PANELS ══ -->
+      <!-- ══ GARMIN PANELS ══ -->
 
       <!-- Panel: Actividades -->
       <div class="panel active" id="panel-actividades">
@@ -384,9 +407,14 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
           </div>
         </div>
       </div>
-{% endblock %}
 
-{% block modals %}
+    </div><!-- /content -->
+  </div><!-- /main -->
+</div><!-- /app -->
+
+<!-- ── MODALS ── -->
+
+<!-- Modal: Actividad Garmin -->
 <div class="modal-overlay" id="modal-actividad">
   <div class="modal" style="max-width:820px">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1rem">
@@ -400,6 +428,8 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
     </div>
   </div>
 </div>
+
+<!-- Modal: Sync Garmin -->
 <div class="modal-overlay" id="modal-sync">
   <div class="modal" style="max-width:440px">
     <h3>🔄 Sincronizar Garmin</h3>
@@ -436,6 +466,8 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
     </div>
   </div>
 </div>
+
+<!-- Modal: Editar sesión plan -->
 <div class="modal-overlay" id="modal-sesion">
   <div class="modal">
     <h3 id="modal-ses-titulo">Sesión</h3>
@@ -457,6 +489,8 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
     </div>
   </div>
 </div>
+
+<!-- Modal: Nueva sesión plan -->
 <div class="modal-overlay" id="modal-nueva-sesion">
   <div class="modal">
     <h3>Nueva sesión</h3>
@@ -483,6 +517,8 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
     </div>
   </div>
 </div>
+
+<!-- Modal: Registrar log -->
 <div class="modal-overlay" id="modal-log">
   <div class="modal">
     <h3>Registrar sesión</h3>
@@ -513,9 +549,8 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
     </div>
   </div>
 </div>
-{% endblock %}
 
-{% block scripts %}
+<script>
 // ══════════════════════════════════════════════════════════════════════════════
 // NAVIGATION
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1349,4 +1384,6 @@ document.addEventListener('DOMContentLoaded', () => {
   cargarActividades();
   cargarCalendario();
 });
-{% endblock %}
+</script>
+</body>
+</html>

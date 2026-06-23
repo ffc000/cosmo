@@ -1,10 +1,11 @@
-{% extends "base.html" %}
-{% set active_module = "vua" %}
-{% set page_title = "VUA" %}
-{% block brand_name %}VUA{% endblock %}
-{% block brand_sub %}Carga Aérea — Ezeiza{% endblock %}
-
-{% block page_css %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CosmoTools — VUA</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
   --bg:#F0F4F8;--surface:#FFFFFF;--surface2:#F8FAFC;
@@ -184,10 +185,128 @@ select option{background:var(--surface)}
 .minuta-preview-section{margin-bottom:.75rem}
 .minuta-preview-title{font-family:var(--mono);font-size:.62rem;color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:.1em;margin-bottom:.3rem}
 .minuta-preview-item{font-size:.8rem;color:var(--text-sub);line-height:1.55;margin-bottom:.3rem;padding-left:.75rem;border-left:2px solid var(--border)}
-{% endblock %}
+</style>
+</head>
+<body>
 
-{% block sidebar_nav %}
-<div class="nav-section">Herramientas</div>
+<!-- Modal nueva actividad -->
+<div class="modal-overlay" id="modal-crono">
+  <div class="modal">
+    <h3>➕ Nueva actividad</h3>
+    <div class="form-row cols2">
+      <div><label>Fecha</label><input type="text" id="mc-fecha" placeholder="dd/mm/yyyy o 'A definir'"></div>
+      <div><label>Estado</label>
+        <select id="mc-estado"><option value="Completado">Completado</option><option value="En curso">En curso</option><option value="Pendiente" selected>Pendiente</option></select>
+      </div>
+    </div>
+    <div class="form-row"><div><label>Actividad</label><textarea id="mc-actividad" rows="3"></textarea></div></div>
+    <div class="form-row"><div><label>Participantes</label><input type="text" id="mc-participantes" placeholder="DI REPA, VUCEA, ..."></div></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline btn-sm" onclick="cerrarModal('modal-crono')">Cancelar</button>
+      <button class="btn btn-primary btn-sm" onclick="guardarActividad()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal editar eje -->
+<div class="modal-overlay" id="modal-eje">
+  <div class="modal">
+    <h3>✏️ Editar eje de trabajo</h3>
+    <input type="hidden" id="me-id">
+    <div class="form-row"><div><label>Nombre</label><textarea id="me-nombre" rows="2"></textarea></div></div>
+    <div class="form-row"><div><label>Estado</label><input type="text" id="me-estado"></div></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline btn-sm" onclick="cerrarModal('modal-eje')">Cancelar</button>
+      <button class="btn btn-primary btn-sm" onclick="guardarEje()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal editor de sección (config) -->
+<div class="modal-overlay" id="modal-editor">
+  <div class="editor-modal">
+    <h3 id="modal-editor-title">✏️ Editar sección</h3>
+    <input type="hidden" id="modal-editor-clave">
+    <textarea class="editor-textarea" id="modal-editor-content" rows="10"></textarea>
+    <div class="ia-sugerencia" id="ia-sugerencia"></div>
+    <div id="modal-editor-error" style="color:var(--danger);font-size:.78rem;margin-top:.5rem;display:none"></div>
+    <div style="display:flex;gap:.6rem;justify-content:space-between;margin-top:1rem;flex-wrap:wrap">
+      <button class="btn btn-outline btn-sm" id="btn-mejorar-ia" onclick="mejorarSeccionIA()">✨ Mejorar con IA</button>
+      <div style="display:flex;gap:.6rem">
+        <button class="btn btn-outline btn-sm" onclick="cerrarModal('modal-editor')">Cancelar</button>
+        <button class="btn btn-primary btn-sm" onclick="guardarSeccion()">💾 Guardar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal nueva persona equipo -->
+<div class="modal-overlay" id="modal-persona">
+  <div class="modal">
+    <h3 id="modal-persona-title">➕ Agregar persona</h3>
+    <input type="hidden" id="mp-id">
+    <div class="form-row cols2">
+      <div><label>Nombre</label><input type="text" id="mp-nombre" placeholder="Nombre completo"></div>
+      <div><label>Organismo</label><input type="text" id="mp-organismo" placeholder="DI REPA, VUCEA..."></div>
+    </div>
+    <div class="form-row">
+      <div><label>Cargo</label><input type="text" id="mp-cargo" placeholder="Jefe de..."></div>
+    </div>
+    <div class="form-row">
+      <div><label>Email (opcional)</label><input type="text" id="mp-email" placeholder="usuario@arca.gob.ar"></div>
+    </div>
+    <div id="modal-persona-error" style="color:var(--danger);font-size:.78rem;margin-top:.5rem;display:none"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline btn-sm" onclick="cerrarModal('modal-persona')">Cancelar</button>
+      <button class="btn btn-primary btn-sm" onclick="guardarPersona()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal nuevo término glosario -->
+<div class="modal-overlay" id="modal-glosario">
+  <div class="modal">
+    <h3 id="modal-glosario-title">➕ Nuevo término</h3>
+    <input type="hidden" id="mg-id">
+    <div class="form-row cols2">
+      <div><label>Término / Sigla</label><input type="text" id="mg-termino" placeholder="XFWB, ATA MT..."></div>
+      <div><label>Categoría</label>
+        <select id="mg-categoria">
+          <option value="proyecto">Proyecto</option>
+          <option value="actores">Actores</option>
+          <option value="xml">XML / Mensajes</option>
+          <option value="normativa">Normativa</option>
+          <option value="sistemas">Sistemas</option>
+          <option value="general">General</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div><label>Definición</label><textarea id="mg-definicion" rows="3"></textarea></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline btn-sm" onclick="cerrarModal('modal-glosario')">Cancelar</button>
+      <button class="btn btn-primary btn-sm" onclick="guardarTermino()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+<div class="app">
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <div class="name">VUA</div>
+      <div class="sub">Carga Aérea — Ezeiza</div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section">CosmoTools</div>
+      <div class="nav-item" onclick="location.href='/sintia'"><span class="nav-icon">📊</span><span class="nav-label">SINTIA</span></div>
+      <div class="nav-item active" onclick="location.href='/vua'"><span class="nav-icon">✈️</span><span class="nav-label">VUA</span></div>
+      <div class="nav-item" onclick="location.href='/senasa'"><span class="nav-icon">🌿</span><span class="nav-label">SENASA</span></div>
+      <div class="nav-item" onclick="location.href='/stock'"><span class="nav-icon">🏭</span><span class="nav-label">Stock Depósitos</span></div>
+      <div class="nav-item" onclick="location.href='/training'"><span class="nav-icon">🏃</span><span class="nav-label">Training</span></div>
+      <div class="nav-section">Herramientas</div>
       <div class="nav-item active" data-tab="minutas"><span class="nav-icon">📋</span><span class="nav-label">Minutas</span></div>
       <div class="nav-item" data-tab="correos"><span class="nav-icon">✉️</span><span class="nav-label">Correos</span></div>
       <div class="nav-item" data-tab="normativa"><span class="nav-icon">⚖️</span><span class="nav-label">Normativa</span></div>
@@ -203,12 +322,25 @@ select option{background:var(--surface)}
       <div class="nav-item" data-tab="integrantes"><span class="nav-icon">👥</span><span class="nav-label">Integrantes</span></div>
       <div class="nav-item" data-tab="historial-vua"><span class="nav-icon">📁</span><span class="nav-label">Historial</span></div>
       <div class="nav-item" data-tab="informe"><span class="nav-icon">📥</span><span class="nav-label">Descargar informe</span></div>
-{% endblock %}
+    </nav>
+    <div class="sidebar-footer">
+      <a href="/" class="back-link">← Inicio</a>
+      <a href="/admin" class="back-link" style="margin-bottom:.2rem">⚙ Administración</a>
+      <a href="/logout" class="logout">Salir</a>
+    </div>
+  </div>
 
-{% block topbar_title %}VUA — Ventanilla Única Aeroportuaria{% endblock %}
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-left">
+        <button class="hamburger" id="hamburger">&#9776;</button>
+        <div class="topbar-title" id="topbar-title">VUA — Ventanilla Única Aeroportuaria</div>
+      </div>
+      <div class="topbar-user">{{ username }}</div>
+    </div>
+    <div class="content">
 
-{% block content %}
-<!-- MINUTAS -->
+      <!-- MINUTAS -->
       <div class="panel active" id="tab-minutas">
 
         <div class="card">
@@ -481,104 +613,12 @@ select option{background:var(--surface)}
           </div>
         </div>
       </div>
-{% endblock %}
 
-{% block modals %}
-<div class="modal-overlay" id="modal-crono">
-  <div class="modal">
-    <h3>➕ Nueva actividad</h3>
-    <div class="form-row cols2">
-      <div><label>Fecha</label><input type="text" id="mc-fecha" placeholder="dd/mm/yyyy o 'A definir'"></div>
-      <div><label>Estado</label>
-        <select id="mc-estado"><option value="Completado">Completado</option><option value="En curso">En curso</option><option value="Pendiente" selected>Pendiente</option></select>
-      </div>
-    </div>
-    <div class="form-row"><div><label>Actividad</label><textarea id="mc-actividad" rows="3"></textarea></div></div>
-    <div class="form-row"><div><label>Participantes</label><input type="text" id="mc-participantes" placeholder="DI REPA, VUCEA, ..."></div></div>
-    <div class="modal-actions">
-      <button class="btn btn-outline btn-sm" onclick="cerrarModal('modal-crono')">Cancelar</button>
-      <button class="btn btn-primary btn-sm" onclick="guardarActividad()">Guardar</button>
     </div>
   </div>
 </div>
-<div class="modal-overlay" id="modal-eje">
-  <div class="modal">
-    <h3>✏️ Editar eje de trabajo</h3>
-    <input type="hidden" id="me-id">
-    <div class="form-row"><div><label>Nombre</label><textarea id="me-nombre" rows="2"></textarea></div></div>
-    <div class="form-row"><div><label>Estado</label><input type="text" id="me-estado"></div></div>
-    <div class="modal-actions">
-      <button class="btn btn-outline btn-sm" onclick="cerrarModal('modal-eje')">Cancelar</button>
-      <button class="btn btn-primary btn-sm" onclick="guardarEje()">Guardar</button>
-    </div>
-  </div>
-</div>
-<div class="modal-overlay" id="modal-editor">
-  <div class="editor-modal">
-    <h3 id="modal-editor-title">✏️ Editar sección</h3>
-    <input type="hidden" id="modal-editor-clave">
-    <textarea class="editor-textarea" id="modal-editor-content" rows="10"></textarea>
-    <div class="ia-sugerencia" id="ia-sugerencia"></div>
-    <div id="modal-editor-error" style="color:var(--danger);font-size:.78rem;margin-top:.5rem;display:none"></div>
-    <div style="display:flex;gap:.6rem;justify-content:space-between;margin-top:1rem;flex-wrap:wrap">
-      <button class="btn btn-outline btn-sm" id="btn-mejorar-ia" onclick="mejorarSeccionIA()">✨ Mejorar con IA</button>
-      <div style="display:flex;gap:.6rem">
-        <button class="btn btn-outline btn-sm" onclick="cerrarModal('modal-editor')">Cancelar</button>
-        <button class="btn btn-primary btn-sm" onclick="guardarSeccion()">💾 Guardar</button>
-      </div>
-    </div>
-  </div>
-</div>
-<div class="modal-overlay" id="modal-persona">
-  <div class="modal">
-    <h3 id="modal-persona-title">➕ Agregar persona</h3>
-    <input type="hidden" id="mp-id">
-    <div class="form-row cols2">
-      <div><label>Nombre</label><input type="text" id="mp-nombre" placeholder="Nombre completo"></div>
-      <div><label>Organismo</label><input type="text" id="mp-organismo" placeholder="DI REPA, VUCEA..."></div>
-    </div>
-    <div class="form-row">
-      <div><label>Cargo</label><input type="text" id="mp-cargo" placeholder="Jefe de..."></div>
-    </div>
-    <div class="form-row">
-      <div><label>Email (opcional)</label><input type="text" id="mp-email" placeholder="usuario@arca.gob.ar"></div>
-    </div>
-    <div id="modal-persona-error" style="color:var(--danger);font-size:.78rem;margin-top:.5rem;display:none"></div>
-    <div class="modal-actions">
-      <button class="btn btn-outline btn-sm" onclick="cerrarModal('modal-persona')">Cancelar</button>
-      <button class="btn btn-primary btn-sm" onclick="guardarPersona()">Guardar</button>
-    </div>
-  </div>
-</div>
-<div class="modal-overlay" id="modal-glosario">
-  <div class="modal">
-    <h3 id="modal-glosario-title">➕ Nuevo término</h3>
-    <input type="hidden" id="mg-id">
-    <div class="form-row cols2">
-      <div><label>Término / Sigla</label><input type="text" id="mg-termino" placeholder="XFWB, ATA MT..."></div>
-      <div><label>Categoría</label>
-        <select id="mg-categoria">
-          <option value="proyecto">Proyecto</option>
-          <option value="actores">Actores</option>
-          <option value="xml">XML / Mensajes</option>
-          <option value="normativa">Normativa</option>
-          <option value="sistemas">Sistemas</option>
-          <option value="general">General</option>
-        </select>
-      </div>
-    </div>
-    <div class="form-row">
-      <div><label>Definición</label><textarea id="mg-definicion" rows="3"></textarea></div>
-    </div>
-    <div class="modal-actions">
-      <button class="btn btn-outline btn-sm" onclick="cerrarModal('modal-glosario')">Cancelar</button>
-      <button class="btn btn-primary btn-sm" onclick="guardarTermino()">Guardar</button>
-    </div>
-  </div>
-</div>
-{% endblock %}
 
-{% block scripts %}
+<script>
 // Sidebar
 const sidebar=document.getElementById('sidebar'),overlay=document.getElementById('sidebar-overlay');
 document.getElementById('hamburger').addEventListener('click',()=>{sidebar.classList.toggle('open');overlay.classList.toggle('visible')});
@@ -586,9 +626,9 @@ overlay.addEventListener('click',()=>{sidebar.classList.remove('open');overlay.c
 
 // Nav
 const TITLES={'minutas':'Minutas','correos':'Correos','normativa':'Normativa','bpmn':'Validar BPMN','xfwb':'Checklist XFWB','estado':'Estado del Proyecto','ejes':'Ejes de Trabajo','riesgos':'Riesgos','equipo':'Equipos y Normativa','cronologia':'Cronología','glosario':'Glosario','historial-vua':'Historial','informe':'Descargar Informe'};
-document.querySelectorAll('.nav-item').forEach(item=>{
+document.querySelectorAll('.nav-item[data-tab]').forEach(item=>{
   item.addEventListener('click',()=>{
-    document.querySelectorAll('.nav-item').forEach(i=>i.classList.remove('active'));
+    document.querySelectorAll('.nav-item[data-tab]').forEach(i=>i.classList.remove('active'));
     document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
     item.classList.add('active');
     const tab=document.getElementById('tab-'+item.dataset.tab);
@@ -1292,4 +1332,7 @@ async function importarMinutaDocx() {
     if(status){status.textContent='✗ '+e.message;status.style.color='#dc2626';}
   }
 }
-{% endblock %}
+
+</script>
+</body>
+</html>

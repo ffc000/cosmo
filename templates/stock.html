@@ -1,10 +1,11 @@
-{% extends "base.html" %}
-{% set active_module = "stock" %}
-{% set page_title = "Stock Depósitos" %}
-{% block brand_name %}Stock Depósitos{% endblock %}
-{% block brand_sub %}Reporte de transmisión{% endblock %}
-
-{% block page_css %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CosmoTools — Stock Depósitos</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
   --bg:#F0F4F8;--surface:#FFFFFF;--surface2:#F8FAFC;
@@ -84,17 +85,41 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(26
   .content{padding:1.1rem}
   .form-row.cols2,.form-row.cols3{grid-template-columns:1fr}
 }
-{% endblock %}
-
-{% block sidebar_nav %}
-<div class="nav-section">Módulo</div>
+</style>
+</head>
+<body>
+<div class="sidebar-overlay" id="sidebar-overlay"></div>
+<div class="app">
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <div class="name">Stock Depósitos</div>
+      <div class="sub">Reporte de transmisión</div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section">CosmoTools</div>
+      <div class="nav-item" onclick="location.href='/sintia'"><span class="nav-icon">📊</span><span class="nav-label">SINTIA</span></div>
+      <div class="nav-item" onclick="location.href='/vua'"><span class="nav-icon">✈️</span><span class="nav-label">VUA</span></div>
+      <div class="nav-item" onclick="location.href='/senasa'"><span class="nav-icon">🌿</span><span class="nav-label">SENASA</span></div>
+      <div class="nav-item" onclick="location.href='/training'"><span class="nav-icon">🏃</span><span class="nav-label">Training</span></div>
+      <div class="nav-section">Módulo</div>
       <div class="nav-item active"><span class="nav-icon">🏭</span><span class="nav-label">Generar reporte</span></div>
-{% endblock %}
-
-{% block topbar_title %}STOCK DEPÓSITOS — Reporte de transmisión{% endblock %}
-
-{% block content %}
-<div class="card">
+    </nav>
+    <div class="sidebar-footer">
+      <a href="/" class="back-link">← Inicio</a>
+      <a href="/admin" class="back-link">⚙ Administración</a>
+      <a href="/logout" class="logout">Salir</a>
+    </div>
+  </div>
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-left">
+        <button class="hamburger" id="hamburger">&#9776;</button>
+        <div class="topbar-title">STOCK DEPÓSITOS — Reporte de transmisión</div>
+      </div>
+      <div class="topbar-user">{{ username }}</div>
+    </div>
+    <div class="content">
+      <div class="card">
         <div class="card-title">Parámetros</div>
         <div class="form-row cols3">
           <div>
@@ -134,9 +159,11 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(26
       </div>
       <div class="log-box" id="log-box"></div>
       <div class="download-area" id="download-area"></div>
-{% endblock %}
+    </div>
+  </div>
+</div>
 
-{% block scripts %}
+<script>
 // ── Sidebar ──
 const sidebar = document.getElementById('sidebar');
 const overlay = document.getElementById('sidebar-overlay');
@@ -264,4 +291,6 @@ function resetBtn(btn) {
   btn.disabled = false;
   btn.innerHTML = 'Generar reporte';
 }
-{% endblock %}
+</script>
+</body>
+</html>

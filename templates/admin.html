@@ -1,10 +1,11 @@
-{% extends "base.html" %}
-{% set active_module = "admin" %}
-{% set page_title = "Administración" %}
-{% block brand_name %}Administración{% endblock %}
-{% block brand_sub %}CosmoTools{% endblock %}
-
-{% block page_css %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CosmoTools — Administración</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
   --bg:#F0F4F8;--surface:#FFFFFF;--surface2:#F8FAFC;
@@ -133,10 +134,82 @@ select option{background:var(--surface)}
   .data-table th,.data-table td{padding:.4rem .5rem}
   .col-hide-mobile{display:none}
 }
-{% endblock %}
+</style>
+</head>
+<body>
 
-{% block sidebar_nav %}
-<div class="nav-section">Base de datos</div>
+<!-- Modal usuario -->
+<div class="modal-overlay" id="modal-usuario">
+  <div class="modal">
+    <h3 id="modal-usr-title">➕ Nuevo usuario</h3>
+    <input type="hidden" id="modal-usr-id">
+    <div class="form-row cols2">
+      <div><label>Usuario</label><input type="text" id="modal-usr-username" placeholder="nombre_usuario"></div>
+      <div><label>Contraseña</label><input type="password" id="modal-usr-password" placeholder="Mín. 8 caracteres"></div>
+    </div>
+    <div class="form-row cols2">
+      <div><label>Rol</label>
+        <select id="modal-usr-rol">
+          <option value="readonly">readonly — Solo lectura</option>
+          <option value="operator">operator — Operador</option>
+          <option value="admin">admin — Administrador</option>
+        </select>
+      </div>
+      <div><label>Estado</label>
+        <select id="modal-usr-activo"><option value="1">Activo</option><option value="0">Inactivo</option></select>
+      </div>
+    </div>
+    <div>
+      <label>Módulos habilitados</label>
+      <div style="display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.3rem">
+        <label style="display:flex;align-items:center;gap:.4rem;font-size:.82rem;text-transform:none;letter-spacing:0;color:var(--text-sub);cursor:pointer;font-weight:400"><input type="checkbox" value="sintia" id="mod-sintia"> 📊 SINTIA</label>
+        <label style="display:flex;align-items:center;gap:.4rem;font-size:.82rem;text-transform:none;letter-spacing:0;color:var(--text-sub);cursor:pointer;font-weight:400"><input type="checkbox" value="vua" id="mod-vua"> ✈️ VUA</label>
+        <label style="display:flex;align-items:center;gap:.4rem;font-size:.82rem;text-transform:none;letter-spacing:0;color:var(--text-sub);cursor:pointer;font-weight:400"><input type="checkbox" value="admin" id="mod-admin"> 🔧 Admin</label>
+        <label style="display:flex;align-items:center;gap:.4rem;font-size:.82rem;text-transform:none;letter-spacing:0;color:var(--text-sub);cursor:pointer;font-weight:400"><input type="checkbox" value="stock" id="mod-stock"> 🏭 Stock Depósitos</label>
+      </div>
+    </div>
+    <div id="modal-usr-error" style="color:var(--danger);font-size:.78rem;margin-top:.6rem;display:none"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline btn-sm" onclick="cerrarModal('modal-usuario')">Cancelar</button>
+      <button class="btn btn-primary btn-sm" onclick="guardarUsuario()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal prompt -->
+<div class="modal-overlay" id="modal-prompt">
+  <div class="modal" style="max-width:780px">
+    <h3 id="modal-prompt-title">✏️ Editar prompt</h3>
+    <input type="hidden" id="modal-prompt-id">
+    <p id="modal-prompt-desc" style="font-size:.75rem;color:var(--muted);margin-bottom:.75rem"></p>
+    <div class="alert alert-warn" style="margin-bottom:.75rem;font-size:.75rem">
+      ⚠ Las variables entre llaves <code style="background:var(--bg);padding:.1rem .3rem;border-radius:3px;font-family:var(--mono)">{variable}</code> son reemplazadas automáticamente. No las elimines.
+    </div>
+    <textarea class="prompt-editor" id="modal-prompt-content" rows="18"></textarea>
+    <div id="modal-prompt-error" style="color:var(--danger);font-size:.78rem;margin-top:.6rem;display:none"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline btn-sm" onclick="cerrarModal('modal-prompt')">Cancelar</button>
+      <button class="btn btn-primary btn-sm" onclick="guardarPrompt()">💾 Guardar</button>
+    </div>
+  </div>
+</div>
+
+<div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+<div class="app">
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <div class="name">Administración</div>
+      <div class="sub">CosmoTools</div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section">CosmoTools</div>
+      <div class="nav-item" onclick="location.href='/sintia'"><span class="nav-icon">📊</span><span class="nav-label">SINTIA</span></div>
+      <div class="nav-item" onclick="location.href='/vua'"><span class="nav-icon">✈️</span><span class="nav-label">VUA</span></div>
+      <div class="nav-item" onclick="location.href='/senasa'"><span class="nav-icon">🌿</span><span class="nav-label">SENASA</span></div>
+      <div class="nav-item" onclick="location.href='/stock'"><span class="nav-icon">🏭</span><span class="nav-label">Stock Depósitos</span></div>
+      <div class="nav-item" onclick="location.href='/training'"><span class="nav-icon">🏃</span><span class="nav-label">Training</span></div>
+      <div class="nav-section">Base de datos</div>
       <div class="nav-item active" data-tab="actualizar"><span class="nav-icon">🔄</span><span class="nav-label">Actualización semanal</span></div>
       <div class="nav-item" data-tab="historial"><span class="nav-icon">📁</span><span class="nav-label">Historial</span>{% if pendientes %}<span class="badge">{{ pendientes|length }}</span>{% endif %}</div>
       <div class="nav-item" data-tab="bd"><span class="nav-icon">🗄️</span><span class="nav-label">Base de datos</span></div>
@@ -144,12 +217,25 @@ select option{background:var(--surface)}
       <div class="nav-item" data-tab="usuarios"><span class="nav-icon">👤</span><span class="nav-label">Usuarios</span></div>
       <div class="nav-item" data-tab="sesiones"><span class="nav-icon">🔌</span><span class="nav-label">Sesiones activas</span></div>
       <div class="nav-item" data-tab="prompts"><span class="nav-icon">🧠</span><span class="nav-label">Prompts IA</span></div>
-{% endblock %}
+    </nav>
+    <div class="sidebar-footer">
+      <span class="db-pill {% if db_exists %}ok{% else %}missing{% endif %}">{% if db_exists %}✓ BD {{ db_size }} GB{% else %}BD no cargada{% endif %}</span>
+      <a href="/" class="back-link">← Inicio</a>
+      <a href="/logout" class="logout">Salir</a>
+    </div>
+  </div>
 
-{% block topbar_title %}Actualización Semanal{% endblock %}
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-left">
+        <button class="hamburger" id="hamburger">&#9776;</button>
+        <div class="topbar-title" id="topbar-title">Actualización Semanal</div>
+      </div>
+      <div class="topbar-user">{{ username }}</div>
+    </div>
+    <div class="content">
 
-{% block content %}
-<!-- ACTUALIZACIÓN -->
+      <!-- ACTUALIZACIÓN -->
       <div class="panel active" id="tab-actualizar">
         {% if not db_exists %}<div class="alert alert-warn">⚠ La BD no está cargada.</div>{% endif %}
         <div class="card">
@@ -252,64 +338,12 @@ select option{background:var(--surface)}
           <div id="prompts-list"><div style="color:var(--muted);font-size:.82rem">Cargando...</div></div>
         </div>
       </div>
-{% endblock %}
 
-{% block modals %}
-<div class="modal-overlay" id="modal-usuario">
-  <div class="modal">
-    <h3 id="modal-usr-title">➕ Nuevo usuario</h3>
-    <input type="hidden" id="modal-usr-id">
-    <div class="form-row cols2">
-      <div><label>Usuario</label><input type="text" id="modal-usr-username" placeholder="nombre_usuario"></div>
-      <div><label>Contraseña</label><input type="password" id="modal-usr-password" placeholder="Mín. 8 caracteres"></div>
-    </div>
-    <div class="form-row cols2">
-      <div><label>Rol</label>
-        <select id="modal-usr-rol">
-          <option value="readonly">readonly — Solo lectura</option>
-          <option value="operator">operator — Operador</option>
-          <option value="admin">admin — Administrador</option>
-        </select>
-      </div>
-      <div><label>Estado</label>
-        <select id="modal-usr-activo"><option value="1">Activo</option><option value="0">Inactivo</option></select>
-      </div>
-    </div>
-    <div>
-      <label>Módulos habilitados</label>
-      <div style="display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.3rem">
-        <label style="display:flex;align-items:center;gap:.4rem;font-size:.82rem;text-transform:none;letter-spacing:0;color:var(--text-sub);cursor:pointer;font-weight:400"><input type="checkbox" value="sintia" id="mod-sintia"> 📊 SINTIA</label>
-        <label style="display:flex;align-items:center;gap:.4rem;font-size:.82rem;text-transform:none;letter-spacing:0;color:var(--text-sub);cursor:pointer;font-weight:400"><input type="checkbox" value="vua" id="mod-vua"> ✈️ VUA</label>
-        <label style="display:flex;align-items:center;gap:.4rem;font-size:.82rem;text-transform:none;letter-spacing:0;color:var(--text-sub);cursor:pointer;font-weight:400"><input type="checkbox" value="admin" id="mod-admin"> 🔧 Admin</label>
-        <label style="display:flex;align-items:center;gap:.4rem;font-size:.82rem;text-transform:none;letter-spacing:0;color:var(--text-sub);cursor:pointer;font-weight:400"><input type="checkbox" value="stock" id="mod-stock"> 🏭 Stock Depósitos</label>
-      </div>
-    </div>
-    <div id="modal-usr-error" style="color:var(--danger);font-size:.78rem;margin-top:.6rem;display:none"></div>
-    <div class="modal-actions">
-      <button class="btn btn-outline btn-sm" onclick="cerrarModal('modal-usuario')">Cancelar</button>
-      <button class="btn btn-primary btn-sm" onclick="guardarUsuario()">Guardar</button>
     </div>
   </div>
 </div>
-<div class="modal-overlay" id="modal-prompt">
-  <div class="modal" style="max-width:780px">
-    <h3 id="modal-prompt-title">✏️ Editar prompt</h3>
-    <input type="hidden" id="modal-prompt-id">
-    <p id="modal-prompt-desc" style="font-size:.75rem;color:var(--muted);margin-bottom:.75rem"></p>
-    <div class="alert alert-warn" style="margin-bottom:.75rem;font-size:.75rem">
-      ⚠ Las variables entre llaves <code style="background:var(--bg);padding:.1rem .3rem;border-radius:3px;font-family:var(--mono)">{variable}</code> son reemplazadas automáticamente. No las elimines.
-    </div>
-    <textarea class="prompt-editor" id="modal-prompt-content" rows="18"></textarea>
-    <div id="modal-prompt-error" style="color:var(--danger);font-size:.78rem;margin-top:.6rem;display:none"></div>
-    <div class="modal-actions">
-      <button class="btn btn-outline btn-sm" onclick="cerrarModal('modal-prompt')">Cancelar</button>
-      <button class="btn btn-primary btn-sm" onclick="guardarPrompt()">💾 Guardar</button>
-    </div>
-  </div>
-</div>
-{% endblock %}
 
-{% block scripts %}
+<script>
 const sidebar=document.getElementById('sidebar'),overlay=document.getElementById('sidebar-overlay');
 document.getElementById('hamburger').addEventListener('click',()=>{sidebar.classList.toggle('open');overlay.classList.toggle('visible')});
 overlay.addEventListener('click',()=>{sidebar.classList.remove('open');overlay.classList.remove('visible')});
@@ -527,4 +561,6 @@ function guardarPrompt(){
 function cerrarModal(id){document.getElementById(id).classList.remove('visible')}
 document.querySelectorAll('.modal-overlay').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)m.classList.remove('visible')}));
 function showMsg(id,msg,type){const el=document.getElementById(id);if(!el)return;const c={ok:'var(--accent2)',warn:'var(--warn)',err:'var(--danger)',info:'var(--muted)'};el.style.color=c[type]||'var(--text)';el.textContent=msg}
-{% endblock %}
+</script>
+</body>
+</html>
