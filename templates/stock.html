@@ -5,62 +5,6 @@
 {% set page_title = "Stock Depósitos" %}
 
 {% block extra_css %}
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{
-  --bg:#F0F4F8;--surface:#FFFFFF;--surface2:#F8FAFC;
-  --sidebar-bg:#1E2A3B;--sidebar-hover:rgba(255,255,255,.06);--sidebar-active:rgba(41,121,200,.15);
-  --border:#E5E7EB;--border-dark:rgba(255,255,255,.08);
-  --accent:#1A56DB;--accent-hover:#1447C0;--accent-light:#EBF5FF;
-  --accent2:#057A55;--accent2-light:#F0FFF4;
-  --warn:#D97706;--warn-light:#FFFBEB;
-  --text:#111928;--text-sub:#374151;--muted:#6B7280;--dim:#9CA3AF;
-  --text-sidebar:#CBD5E1;--text-sidebar-muted:#64748B;
-  --mono:'IBM Plex Mono',monospace;--sans:'IBM Plex Sans',sans-serif;
-  --radius:8px;--radius-sm:4px;
-  --shadow-sm:0 1px 3px rgba(0,0,0,.08);
-  --shadow:0 4px 12px rgba(0,0,0,.08);
-  --sidebar-w:230px;
-}
-body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
-.app{display:flex;flex:1;min-height:0}
-.sidebar{width:var(--sidebar-w);min-width:var(--sidebar-w);background:var(--sidebar-bg);display:flex;flex-direction:column;z-index:50}
-.sidebar-brand{padding:1.4rem 1.4rem 1rem;border-bottom:1px solid var(--border-dark)}
-.sidebar-brand .name{font-family:var(--mono);font-size:.92rem;font-weight:600;color:#fff;letter-spacing:.03em}
-.sidebar-brand .sub{font-size:.65rem;color:var(--text-sidebar-muted);margin-top:.2rem}
-.sidebar-nav{flex:1;padding:.6rem 0;overflow-y:auto}
-.nav-section{font-family:var(--mono);font-size:.58rem;color:var(--text-sidebar-muted);letter-spacing:.18em;text-transform:uppercase;padding:.8rem 1.4rem .3rem}
-.nav-item{display:flex;align-items:center;gap:.7rem;padding:.62rem 1.4rem;cursor:pointer;color:var(--text-sidebar-muted);font-size:.82rem;transition:all .15s;border-left:2px solid transparent;user-select:none}
-.nav-item:hover{color:var(--text-sidebar);background:var(--sidebar-hover)}
-.nav-item.active{color:#fff;background:var(--sidebar-active);border-left-color:var(--accent)}
-.nav-icon{font-size:.9rem;width:18px;text-align:center;flex-shrink:0}
-.sidebar-footer{padding:.9rem 1.4rem;border-top:1px solid var(--border-dark)}
-.back-link{font-size:.72rem;color:var(--text-sidebar-muted);text-decoration:none;display:block;margin-bottom:.4rem;transition:color .15s}
-.back-link:hover{color:var(--text-sidebar)}
-.logout{font-size:.72rem;color:var(--text-sidebar-muted);text-decoration:none;display:block;transition:color .15s}
-.logout:hover{color:var(--text-sidebar)}
-.main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
-.topbar{background:var(--surface);border-bottom:1px solid var(--border);padding:.75rem 1.75rem;display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-shrink:0;box-shadow:var(--shadow-sm)}
-.topbar-left{display:flex;align-items:center;gap:.75rem}
-.hamburger{display:none;background:none;border:none;color:var(--muted);font-size:1.3rem;cursor:pointer;padding:.25rem;line-height:1;min-width:36px}
-.topbar-title{font-family:var(--mono);font-size:.78rem;color:var(--accent);letter-spacing:.08em;font-weight:600}
-.topbar-user{font-family:var(--mono);font-size:.7rem;color:var(--muted)}
-.content{flex:1;padding:1.75rem;overflow-y:auto}
-.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;margin-bottom:1.25rem;box-shadow:var(--shadow-sm)}
-.card-title{font-family:var(--mono);font-size:.65rem;color:var(--muted);letter-spacing:.14em;text-transform:uppercase;margin-bottom:.9rem;font-weight:600}
-label{display:block;font-size:.7rem;font-weight:600;color:var(--text-sub);letter-spacing:.05em;text-transform:uppercase;margin-bottom:.3rem}
-input[type=text],input[type=date],input[type=number],select{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:var(--mono);font-size:.85rem;padding:.55rem .8rem;outline:none;transition:border-color .2s,box-shadow .2s}
-input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(26,86,219,.12)}
-.form-row{display:grid;gap:.9rem;margin-bottom:.9rem}
-.form-row.cols2{grid-template-columns:1fr 1fr}
-.form-row.cols3{grid-template-columns:1fr 1fr 1fr}
-.btn{display:inline-flex;align-items:center;gap:.5rem;border:none;border-radius:var(--radius-sm);cursor:pointer;font-family:var(--sans);font-weight:600;font-size:.85rem;padding:.6rem 1.2rem;transition:all .15s}
-.btn-primary{background:var(--accent);color:#fff}
-.btn-primary:hover{background:var(--accent-hover)}
-.btn-primary:disabled{background:var(--dim);cursor:not-allowed}
-.btn-full{width:100%;justify-content:center}
-.upload-zone{border:2px dashed var(--border);border-radius:var(--radius);padding:1.2rem;text-align:center;cursor:pointer;transition:border-color .2s;background:var(--surface2)}
-.upload-zone:hover,.upload-zone.drag{border-color:var(--accent);background:var(--accent-light)}
-.upload-zone input[type=file]{display:none}
 .upload-zone .icon{font-size:1.5rem;margin-bottom:.4rem}
 .upload-zone .label{font-size:.78rem;color:var(--muted)}
 .upload-zone .loaded{font-size:.78rem;color:var(--accent2);font-weight:600;margin-top:.3rem}
@@ -72,9 +16,6 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(26
 .download-area{display:none;margin-top:.9rem}.download-area.visible{display:flex;gap:.6rem;flex-wrap:wrap}
 .download-btn{display:inline-flex;align-items:center;gap:.4rem;background:var(--accent2-light);border:1px solid rgba(5,122,85,.25);border-radius:var(--radius-sm);color:var(--accent2);font-family:var(--mono);font-size:.72rem;padding:.45rem .9rem;text-decoration:none;transition:all .15s;font-weight:600;cursor:pointer}
 .download-btn:hover{background:#D1FAE5}
-.sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:40}
-@keyframes spin{to{transform:rotate(360deg)}}
-.spinner{width:13px;height:13px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;display:inline-block}
 @media(max-width:768px){
   .sidebar{position:fixed;top:0;left:0;bottom:0;transform:translateX(-100%)}
   .sidebar.open{transform:translateX(0)}
@@ -90,8 +31,6 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(26
 <div class="nav-section">Módulo</div>
       <div class="nav-item active"><span class="nav-icon">🏭</span><span class="nav-label">Generar reporte</span></div>
 {% endblock %}
-
-{% block topbar_title %}STOCK DEPÓSITOS — Reporte de transmisión{% endblock %}
 
 {% block content %}
 <div class="card">
