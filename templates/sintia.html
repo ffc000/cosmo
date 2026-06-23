@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CosmoTools — SINTIA</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#F0F4F8;--surface:#FFFFFF;--surface2:#F8FAFC;
+  --sidebar-bg:#1E2A3B;--sidebar-hover:rgba(255,255,255,.06);--sidebar-active:rgba(41,121,200,.15);
+  --border:#E5E7EB;--border-dark:rgba(255,255,255,.08);
+  --accent:#1A56DB;--accent-hover:#1447C0;--accent-light:#EBF5FF;
+  --accent2:#057A55;--accent2-light:#F0FFF4;
+  --warn:#D97706;--warn-light:#FFFBEB;
+  --danger:#DC2626;
+  --text:#111928;--text-sub:#374151;--muted:#6B7280;--dim:#9CA3AF;
+  --text-sidebar:#CBD5E1;--text-sidebar-muted:#64748B;
+  --mono:'IBM Plex Mono',monospace;--sans:'IBM Plex Sans',sans-serif;
+  --radius:8px;--radius-sm:4px;
+  --shadow-sm:0 1px 3px rgba(0,0,0,.08);
+  --shadow:0 4px 12px rgba(0,0,0,.08);
+  --sidebar-w:230px;
+}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
+.app{display:flex;flex:1;min-height:0}
+.sidebar{width:var(--sidebar-w);min-width:var(--sidebar-w);background:var(--sidebar-bg);display:flex;flex-direction:column;z-index:50;transition:transform .25s ease}
+.sidebar-brand{padding:1.4rem 1.4rem 1rem;border-bottom:1px solid var(--border-dark)}
+.sidebar-brand .name{font-family:var(--mono);font-size:.92rem;font-weight:600;color:#fff;letter-spacing:.03em}
+.sidebar-brand .sub{font-size:.65rem;color:var(--text-sidebar-muted);margin-top:.2rem}
+.sidebar-nav{flex:1;padding:.6rem 0;overflow-y:auto}
+.nav-section{font-family:var(--mono);font-size:.58rem;color:var(--text-sidebar-muted);letter-spacing:.18em;text-transform:uppercase;padding:.8rem 1.4rem .3rem}
+.nav-item{display:flex;align-items:center;gap:.7rem;padding:.62rem 1.4rem;cursor:pointer;color:var(--text-sidebar-muted);font-size:.82rem;transition:all .15s;border-left:2px solid transparent;user-select:none}
+.nav-item:hover{color:var(--text-sidebar);background:var(--sidebar-hover)}
+.nav-item.active{color:#fff;background:var(--sidebar-active);border-left-color:var(--accent)}
+.nav-icon{font-size:.9rem;width:18px;text-align:center;flex-shrink:0}
+.nav-label{flex:1}
+.sidebar-footer{padding:.9rem 1.4rem;border-top:1px solid var(--border-dark)}
+.db-pill{font-family:var(--mono);font-size:.62rem;padding:.3rem .65rem;border-radius:20px;margin-bottom:.6rem;display:inline-block}
+.db-pill.ok{background:rgba(5,122,85,.2);color:#34D399;border:1px solid rgba(5,122,85,.3)}
+.db-pill.missing{background:rgba(217,119,6,.15);color:#FCD34D;border:1px solid rgba(217,119,6,.3)}
+.back-link{font-size:.72rem;color:var(--text-sidebar-muted);text-decoration:none;display:block;margin-bottom:.4rem;transition:color .15s}
+.back-link:hover{color:var(--text-sidebar)}
+.logout{font-size:.72rem;color:var(--text-sidebar-muted);text-decoration:none;display:block;transition:color .15s}
+.logout:hover{color:var(--text-sidebar)}
+.main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.topbar{background:var(--surface);border-bottom:1px solid var(--border);padding:.75rem 1.75rem;display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-shrink:0;box-shadow:var(--shadow-sm)}
+.topbar-left{display:flex;align-items:center;gap:.75rem}
+.hamburger{display:none;background:none;border:none;color:var(--muted);font-size:1.3rem;cursor:pointer;padding:.25rem;line-height:1;min-width:36px}
+.hamburger:hover{color:var(--text)}
+.topbar-title{font-family:var(--mono);font-size:.78rem;color:var(--accent);letter-spacing:.08em;font-weight:600}
+.topbar-user{font-family:var(--mono);font-size:.7rem;color:var(--muted)}
+.content{flex:1;padding:1.75rem;overflow-y:auto}
+.panel{display:none}.panel.active{display:block}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;margin-bottom:1.25rem;box-shadow:var(--shadow-sm)}
+.card-title{font-family:var(--mono);font-size:.65rem;color:var(--muted);letter-spacing:.14em;text-transform:uppercase;margin-bottom:.9rem;font-weight:600}
+label{display:block;font-size:.7rem;font-weight:600;color:var(--text-sub);letter-spacing:.05em;text-transform:uppercase;margin-bottom:.3rem}
+input[type=number],input[type=text],input[type=date],select{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:var(--mono);font-size:.85rem;padding:.55rem .8rem;outline:none;transition:border-color .2s,box-shadow .2s}
+input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(26,86,219,.12)}
+select option{background:var(--surface)}
+.form-row{display:grid;gap:.9rem;margin-bottom:.9rem}
+.form-row.cols2{grid-template-columns:1fr 1fr}
+.form-row.cols3{grid-template-columns:1fr 1fr 1fr}
+.form-row.cols4{grid-template-columns:1fr 1fr 1fr 1fr}
+.toggle-row{display:flex;align-items:center;gap:.75rem;margin-bottom:1rem}
+.toggle{position:relative;width:40px;height:22px;cursor:pointer;flex-shrink:0}
+.toggle input{opacity:0;width:0;height:0}
+.slider{position:absolute;inset:0;background:var(--border);border-radius:22px;transition:.2s}
+.slider::before{content:"";position:absolute;height:16px;width:16px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.2s;box-shadow:var(--shadow-sm)}
+input:checked+.slider{background:var(--accent)}
+input:checked+.slider::before{transform:translateX(18px)}
+.toggle-label{font-size:.82rem;color:var(--text-sub)}
+.btn{display:inline-flex;align-items:center;gap:.5rem;border:none;border-radius:var(--radius-sm);cursor:pointer;font-family:var(--sans);font-weight:600;font-size:.85rem;padding:.6rem 1.2rem;transition:all .15s}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{background:var(--accent-hover)}
+.btn-primary:disabled{background:var(--dim);cursor:not-allowed}
+.btn-secondary{background:var(--surface2);color:var(--text-sub);border:1px solid var(--border)}
+.btn-secondary:hover{background:var(--border)}
+.btn-full{width:100%;justify-content:center}
+.btn-row{display:flex;gap:.6rem;flex-wrap:wrap}
+.log-box{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);font-family:var(--mono);font-size:.72rem;color:var(--text-sub);padding:.9rem;height:160px;overflow-y:auto;margin-top:.9rem;display:none}
+.log-box.visible{display:block}
+.log-line{margin-bottom:.2rem}
+.log-line.ok{color:var(--accent2)}
+.log-line.err{color:var(--danger)}
+.download-area{display:none;margin-top:.9rem}.download-area.visible{display:flex;gap:.6rem;flex-wrap:wrap}
+.download-btn{display:inline-flex;align-items:center;gap:.4rem;background:var(--accent2-light);border:1px solid rgba(5,122,85,.25);border-radius:var(--radius-sm);color:var(--accent2);font-family:var(--mono);font-size:.72rem;padding:.45rem .9rem;text-decoration:none;transition:all .15s;font-weight:600;cursor:pointer}
+.download-btn:hover{background:#D1FAE5}
+.alert{padding:.7rem 1rem;border-radius:var(--radius-sm);font-size:.82rem;margin-bottom:.9rem}
+.alert-warn{background:var(--warn-light);border:1px solid rgba(217,119,6,.25);color:var(--warn)}
+.alert-warn a{color:var(--accent)}
+/* Tabla de resultados */
+.tbl-wrap{overflow-x:auto;margin-top:1rem;border-radius:var(--radius);box-shadow:var(--shadow-sm)}
+.tbl-wrap table{width:100%;border-collapse:collapse;background:var(--surface);font-size:.78rem}
+.tbl-wrap thead th{background:var(--sidebar-bg);color:#fff;padding:.55rem .75rem;text-align:left;white-space:nowrap;font-size:.7rem;font-family:var(--mono)}
+.tbl-wrap tbody tr:hover{background:var(--accent-light)}
+.tbl-wrap tbody td{padding:.45rem .75rem;border-bottom:1px solid var(--border);white-space:nowrap;font-family:var(--mono);font-size:.75rem}
+.tbl-info{font-size:.75rem;color:var(--muted);margin-top:.5rem;font-family:var(--mono)}
+.sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:40}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{width:13px;height:13px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;display:inline-block}
+@media(max-width:768px){
+  .sidebar{position:fixed;top:0;left:0;bottom:0;transform:translateX(-100%)}
+  .sidebar.open{transform:translateX(0)}
+  .sidebar-overlay.visible{display:block}
+  .hamburger{display:block}
+  .topbar-user{display:none}
+  .content{padding:1.1rem}
+  .form-row.cols2,.form-row.cols3,.form-row.cols4{grid-template-columns:1fr 1fr}
+}
+</style>
+</head>
+<body>
+<div class="sidebar-overlay" id="sidebar-overlay"></div>
+<div class="app">
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <div class="name">SINTIA</div>
+      <div class="sub">Informes de Transmisión</div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section">CosmoTools</div>
+      <div class="nav-item" onclick="location.href='/sintia'"><span class="nav-icon">📊</span><span class="nav-label">SINTIA</span></div>
+      <div class="nav-item" onclick="location.href='/vua'"><span class="nav-icon">✈️</span><span class="nav-label">VUA</span></div>
+      <div class="nav-item" onclick="location.href='/senasa'"><span class="nav-icon">🌿</span><span class="nav-label">SENASA</span></div>
+      <div class="nav-section">Módulo</div>
+      <div class="nav-item" id="nav-generar" onclick="showPanel('generar')"><span class="nav-icon">📄</span><span class="nav-label">Generar informe</span></div>
+      <div class="nav-item" id="nav-dat"     onclick="showPanel('dat')"><span class="nav-icon">🔍</span><span class="nav-label">Consulta DAT</span></div>
+      <div class="nav-item" id="nav-rec"     onclick="showPanel('rec')"><span class="nav-icon">⚠️</span><span class="nav-label">Consulta Rechazos</span></div>
+    </nav>
+    <div class="sidebar-footer">
+      <span class="db-pill {% if db_exists %}ok{% else %}missing{% endif %}">
+        {% if db_exists %}✓ BD {{ db_size }} GB{% else %}BD no cargada{% endif %}
+      </span>
+      <a href="/" class="back-link">← Inicio</a>
+      <a href="/admin" class="back-link" style="margin-bottom:.2rem">⚙ Administración</a>
+      <a href="/logout" class="logout">Salir</a>
+    </div>
+  </div>
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-left">
+        <button class="hamburger" id="hamburger">&#9776;</button>
+        <div class="topbar-title" id="topbar-title">SINTIA — Generar informe</div>
+      </div>
+      <div class="topbar-user">{{ username }}</div>
+    </div>
+    <div class="content">
+
+      <!-- ── PANEL: GENERAR INFORME ── -->
+      <div class="panel" id="tab-generar">
+        {% if not db_exists %}
+        <div class="alert alert-warn">⚠ La BD no está cargada. <a href="/admin">Ir a Administración →</a></div>
+        {% endif %}
+        <div class="card">
+          <div class="card-title">Parámetros del informe</div>
+          <div class="form-row cols2">
+            <div><label>País emisor</label>
+              <select id="pais">
+                <option value="BO">Bolivia (BO)</option>
+                <option value="PY">Paraguay (PY)</option>
+                <option value="BR">Brasil (BR)</option>
+                <option value="CL">Chile (CL)</option>
+                <option value="UY">Uruguay (UY)</option>
+              </select>
+            </div>
+            <div><label>Año</label><input type="number" id="anio" value="{{ now.year }}" min="2020" max="2030"></div>
+          </div>
+          <div class="form-row cols2">
+            <div><label>Mes desde</label>
+              <select id="mes_d">{% for k,v in meses.items() %}<option value="{{ k }}" {% if k=='01' %}selected{% endif %}>{{ k }} — {{ v }}</option>{% endfor %}</select>
+            </div>
+            <div><label>Mes hasta</label>
+              <select id="mes_h">{% for k,v in meses.items() %}<option value="{{ k }}" {% if k==mes_ult %}selected{% endif %}>{{ k }} — {{ v }}</option>{% endfor %}</select>
+            </div>
+          </div>
+          <div class="toggle-row">
+            <label class="toggle">
+              <input type="checkbox" id="usar_ia" {% if api_key %}checked{% endif %} {% if not api_key %}disabled{% endif %}>
+              <span class="slider"></span>
+            </label>
+            <span class="toggle-label">Narrativa con IA{% if not api_key %} <span style="color:var(--warn);font-size:.72rem">(API key no configurada)</span>{% endif %}</span>
+          </div>
+          <button class="btn btn-primary btn-full" id="btn-generar" {% if not db_exists %}disabled{% endif %}>Generar informe</button>
+        </div>
+        <div class="log-box" id="log-box"></div>
+        <div class="download-area" id="download-area"></div>
+      </div>
+
+      <!-- ── PANEL: CONSULTA DAT_2026 ── -->
+      <div class="panel" id="tab-dat">
+        {% if not db_exists %}
+        <div class="alert alert-warn">⚠ La BD no está cargada. <a href="/admin">Ir a Administración →</a></div>
+        {% endif %}
+        <div class="card">
+          <div class="card-title">Filtros — DAT_{{ now.year }}</div>
+          <div class="form-row cols4">
+            <div><label>Fecha ingreso desde</label><input type="date" id="dat-fec-d"></div>
+            <div><label>Fecha ingreso hasta</label><input type="date" id="dat-fec-h"></div>
+            <div><label>Fecha trans. desde</label><input type="date" id="dat-ftx-d"></div>
+            <div><label>Fecha trans. hasta</label><input type="date" id="dat-ftx-h"></div>
+          </div>
+          <div class="form-row cols4">
+            <div><label>Aduana</label>
+              <select id="dat-aduana">
+                <option value="">Todas</option>
+                <option value="001">001 — Buenos Aires</option>
+                <option value="008">008 — Campana</option>
+                <option value="010">010 — Barranqueras</option>
+                <option value="012">012 — Clorinda</option>
+                <option value="013">013 — Colón</option>
+                <option value="015">015 — Concepción del Uruguay</option>
+                <option value="016">016 — Concordia</option>
+                <option value="017">017 — Córdoba</option>
+                <option value="018">018 — Corrientes</option>
+                <option value="019">019 — Puerto Deseado</option>
+                <option value="020">020 — Diamante</option>
+                <option value="023">023 — Esquel</option>
+                <option value="024">024 — Formosa</option>
+                <option value="025">025 — Goya</option>
+                <option value="026">026 — Gualeguaychú</option>
+                <option value="029">029 — Iguazú</option>
+                <option value="031">031 — Jujuy</option>
+                <option value="033">033 — La Plata</option>
+                <option value="034">034 — La Quiaca</option>
+                <option value="037">037 — Mar del Plata</option>
+                <option value="038">038 — Mendoza</option>
+                <option value="040">040 — Necochea</option>
+                <option value="041">041 — Paraná</option>
+                <option value="042">042 — Paso de los Libres</option>
+                <option value="045">045 — Pocitos</option>
+                <option value="046">046 — Posadas</option>
+                <option value="047">047 — Puerto Madryn</option>
+                <option value="048">048 — Río Gallegos</option>
+                <option value="049">049 — Río Grande</option>
+                <option value="052">052 — Rosario</option>
+                <option value="053">053 — Salta</option>
+                <option value="054">054 — San Javier</option>
+                <option value="055">055 — San Juan</option>
+                <option value="057">057 — San Lorenzo</option>
+                <option value="058">058 — San Martín de los Andes</option>
+                <option value="059">059 — San Nicolás</option>
+                <option value="060">060 — San Pedro</option>
+                <option value="061">061 — Santa Cruz</option>
+                <option value="062">062 — Santa Fe</option>
+                <option value="066">066 — Tinogasta</option>
+                <option value="067">067 — Ushuaia</option>
+                <option value="069">069 — Villa Constitución</option>
+                <option value="073">073 — Ezeiza</option>
+                <option value="074">074 — Tucumán</option>
+                <option value="075">075 — Neuquén</option>
+                <option value="076">076 — Orán</option>
+                <option value="079">079 — La Rioja</option>
+                <option value="082">082 — Bernardo de Irigoyen</option>
+                <option value="083">083 — San Luis</option>
+                <option value="084">084 — Santo Tomé</option>
+                <option value="085">085 — Villa Regina</option>
+                <option value="086">086 — Oberá</option>
+                <option value="087">087 — Caleta Olivia</option>
+                <option value="088">088 — General Deheza</option>
+                <option value="089">089 — Santiago del Estero</option>
+                <option value="090">090 — General Pico</option>
+                <option value="093">093 — Rafaela</option>
+                <option value="094">094 — Venado Tuerto</option>
+              </select>
+            </div>
+            <div><label>Tipo registro</label>
+              <select id="dat-tipo">
+                <option value="">Todos</option>
+                <option value="I">I — Importación</option>
+                <option value="E">E — Exportación</option>
+              </select>
+            </div>
+            <div><label>Cargado</label>
+              <select id="dat-cargado">
+                <option value="">Todos</option>
+                <option value="SI">SI</option>
+                <option value="NO">NO</option>
+              </select>
+            </div>
+            <div><label>País (MIC)</label>
+              <select id="dat-pais">
+                <option value="">Todos</option>
+                <option value="BO">Bolivia (BO)</option>
+                <option value="PY">Paraguay (PY)</option>
+                <option value="BR">Brasil (BR)</option>
+                <option value="CL">Chile (CL)</option>
+                <option value="UY">Uruguay (UY)</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row cols4">
+            <div><label>MIC</label><input type="text" id="dat-mic" placeholder="Número de MIC"></div>
+            <div><label>LOT</label><input type="text" id="dat-lot" placeholder="Código LOT"></div>
+            <div><label>Empresa</label><input type="text" id="dat-empresa" placeholder="Razón social"></div>
+            <div><label>Tractor / Semi</label><input type="text" id="dat-vehiculo" placeholder="Patente"></div>
+          </div>
+          <div class="form-row cols2">
+            <div><label>Est. MIC</label>
+              <select id="dat-est">
+                <option value="">Todos</option>
+                <option value="Oficializado">Oficializado</option>
+                <option value="Cancelado">Cancelado</option>
+                <option value="Cerrado">Cerrado</option>
+              </select>
+            </div>
+            <div><label>Tiene novedad</label>
+              <select id="dat-novedad">
+                <option value="">Todos</option>
+                <option value="SI">SI</option>
+                <option value="NO">NO</option>
+              </select>
+            </div>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-primary" id="btn-dat-buscar" {% if not db_exists %}disabled{% endif %} onclick="buscarDat()">🔍 Buscar</button>
+            <button class="btn btn-secondary" onclick="limpiarDat()">✕ Limpiar</button>
+          </div>
+        </div>
+        <div id="dat-resultado" style="display:none">
+          <div class="tbl-info" id="dat-info"></div>
+          <div class="tbl-wrap" id="dat-tabla"></div>
+          <div style="margin-top:.75rem">
+            <button class="download-btn" onclick="exportarDat()">📥 Descargar Excel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── PANEL: CONSULTA RECHAZOS ── -->
+      <div class="panel" id="tab-rec">
+        {% if not db_exists %}
+        <div class="alert alert-warn">⚠ La BD no está cargada. <a href="/admin">Ir a Administración →</a></div>
+        {% endif %}
+        <div class="card">
+          <div class="card-title">Filtros — RECHAZOS</div>
+          <div class="form-row cols4">
+            <div><label>Fecha desde</label><input type="date" id="rec-fec-d"></div>
+            <div><label>Fecha hasta</label><input type="date" id="rec-fec-h"></div>
+            <div><label>País emisor</label>
+              <select id="rec-pais">
+                <option value="">Todos</option>
+                <option value="BO">Bolivia (BO)</option>
+                <option value="PY">Paraguay (PY)</option>
+                <option value="BR">Brasil (BR)</option>
+                <option value="CL">Chile (CL)</option>
+                <option value="UY">Uruguay (UY)</option>
+              </select>
+            </div>
+            <div><label>Año</label>
+              <select id="rec-anio">
+                <option value="">Todos</option>
+                {% for y in range(now.year, 2019, -1) %}<option value="{{ y }}" {% if y==now.year %}selected{% endif %}>{{ y }}</option>{% endfor %}
+              </select>
+            </div>
+          </div>
+          <div class="form-row cols3">
+            <div><label>NroMic</label><input type="text" id="rec-nromic" placeholder="Número de MIC"></div>
+            <div><label>Mensaje (contiene)</label><input type="text" id="rec-mensaje" placeholder="Texto en el mensaje"></div>
+            <div><label>Método</label>
+              <select id="rec-metodo">
+                <option value="">Todos</option>
+                <option value="OficializarMicDta">OficializarMicDta</option>
+              </select>
+            </div>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-primary" id="btn-rec-buscar" {% if not db_exists %}disabled{% endif %} onclick="buscarRec()">🔍 Buscar</button>
+            <button class="btn btn-secondary" onclick="limpiarRec()">✕ Limpiar</button>
+          </div>
+        </div>
+        <div id="rec-resultado" style="display:none">
+          <div class="tbl-info" id="rec-info"></div>
+          <div class="tbl-wrap" id="rec-tabla"></div>
+          <div style="margin-top:.75rem">
+            <button class="download-btn" onclick="exportarRec()">📥 Descargar Excel</button>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /content -->
+  </div><!-- /main -->
+</div><!-- /app -->
+
+<script>
+// ── Sidebar ──
+const sidebar=document.getElementById('sidebar'),overlay=document.getElementById('sidebar-overlay');
+document.getElementById('hamburger').addEventListener('click',()=>{sidebar.classList.toggle('open');overlay.classList.toggle('visible')});
+overlay.addEventListener('click',()=>{sidebar.classList.remove('open');overlay.classList.remove('visible')});
+
+// ── Panel switching ──
+const TITULOS = {generar:'SINTIA — Generar informe', dat:'SINTIA — Consulta DAT', rec:'SINTIA — Consulta Rechazos'};
+function showPanel(id) {
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item[id^="nav-"]').forEach(n=>n.classList.remove('active'));
+  document.getElementById('tab-'+id).classList.add('active');
+  document.getElementById('nav-'+id).classList.add('active');
+  document.getElementById('topbar-title').textContent = TITULOS[id] || '';
+}
+showPanel('generar');
+
+// ── Generar informe ──
+document.getElementById('btn-generar').addEventListener('click',()=>{
+  const pais=document.getElementById('pais').value,anio=document.getElementById('anio').value,
+        mes_d=document.getElementById('mes_d').value,mes_h=document.getElementById('mes_h').value,
+        usar_ia=document.getElementById('usar_ia').checked;
+  const logBox=document.getElementById('log-box'),dlArea=document.getElementById('download-area');
+  logBox.classList.add('visible');logBox.innerHTML='';dlArea.classList.remove('visible');dlArea.innerHTML='';
+  const btn=document.getElementById('btn-generar');btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Generando...';
+  addLog(logBox,'Iniciando generación...');
+  fetch('/api/generar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pais,anio,mes_d,mes_h,usar_ia})})
+    .then(r=>r.json()).then(data=>{
+      if(!data.ok){addLog(logBox,'✗ '+data.error,'err');resetBtn(btn);return}
+      pollJob(data.job_id,logBox,dlArea,btn);
+    });
+});
+function pollJob(jobId,logBox,dlArea,btn){
+  let lastLen=0;
+  const iv=setInterval(()=>{
+    fetch('/api/job/'+jobId).then(r=>r.json()).then(data=>{
+      (data.log||[]).slice(lastLen).forEach(l=>addLog(logBox,l));lastLen=(data.log||[]).length;
+      if(data.status==='done'){
+        clearInterval(iv);resetBtn(btn);
+        (data.files||[]).forEach((f,i)=>{const a=document.createElement('a');a.href=`/api/download/${jobId}/${i}`;a.className='download-btn';a.textContent=f.endsWith('.docx')?'📄 Descargar Word':'📊 Descargar Excel';dlArea.appendChild(a)});
+        dlArea.classList.add('visible');
+      }else if(data.status==='error'){clearInterval(iv);resetBtn(btn)}
+    });
+  },1200);
+}
+function addLog(box,msg,cls){const div=document.createElement('div');div.className='log-line'+(cls?' '+cls:msg.includes('✓')?' ok':msg.includes('✗')||msg.includes('Error')?' err':'');div.textContent=msg;box.appendChild(div);box.scrollTop=box.scrollHeight}
+function resetBtn(btn){btn.disabled=false;btn.innerHTML='Generar informe'}
+
+// ── Helpers tabla ──
+function renderTabla(containerId, cols, rows) {
+  if(!rows.length){document.getElementById(containerId).innerHTML='<p style="padding:.75rem;color:var(--muted);font-size:.8rem">Sin resultados.</p>';return;}
+  let h='<table><thead><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr></thead><tbody>';
+  rows.forEach(r=>{h+='<tr>'+r.map(c=>`<td>${c??''}</td>`).join('')+'</tr>';});
+  h+='</tbody></table>';
+  document.getElementById(containerId).innerHTML=h;
+}
+
+// Cache para exportar
+let _datRows=[], _datCols=[], _recRows=[], _recCols=[];
+
+// ── CONSULTA DAT ──
+function buscarDat(){
+  const params={
+    fec_d: document.getElementById('dat-fec-d').value,
+    fec_h: document.getElementById('dat-fec-h').value,
+    ftx_d: document.getElementById('dat-ftx-d').value,
+    ftx_h: document.getElementById('dat-ftx-h').value,
+    aduana: document.getElementById('dat-aduana').value,
+    tipo:   document.getElementById('dat-tipo').value,
+    cargado:document.getElementById('dat-cargado').value,
+    pais:   document.getElementById('dat-pais').value,
+    mic:    document.getElementById('dat-mic').value.trim(),
+    lot:    document.getElementById('dat-lot').value.trim(),
+    empresa:document.getElementById('dat-empresa').value.trim(),
+    vehiculo:document.getElementById('dat-vehiculo').value.trim(),
+    est:    document.getElementById('dat-est').value,
+    novedad:document.getElementById('dat-novedad').value,
+  };
+  const btn=document.getElementById('btn-dat-buscar');
+  btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Buscando...';
+  fetch('/api/sintia/dat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(params)})
+    .then(r=>r.json()).then(data=>{
+      btn.disabled=false;btn.innerHTML='🔍 Buscar';
+      if(!data.ok){alert('Error: '+data.error);return;}
+      _datCols=data.cols;_datRows=data.rows;
+      document.getElementById('dat-info').textContent=`${data.rows.length} registros encontrados${data.truncated?' (mostrando primeros 500)':''}`;
+      renderTabla('dat-tabla',data.cols,data.rows);
+      document.getElementById('dat-resultado').style.display='block';
+    }).catch(e=>{btn.disabled=false;btn.innerHTML='🔍 Buscar';alert('Error de red: '+e);});
+}
+function limpiarDat(){
+  ['dat-fec-d','dat-fec-h','dat-ftx-d','dat-ftx-h','dat-mic','dat-lot','dat-empresa','dat-vehiculo'].forEach(id=>document.getElementById(id).value='');
+  ['dat-aduana','dat-tipo','dat-cargado','dat-pais','dat-est','dat-novedad'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('dat-resultado').style.display='none';
+}
+function exportarDat(){
+  fetch('/api/sintia/dat/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cols:_datCols,rows:_datRows})})
+    .then(r=>r.blob()).then(b=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='DAT_consulta.xlsx';a.click();});
+}
+
+// ── CONSULTA RECHAZOS ──
+function buscarRec(){
+  const params={
+    fec_d:   document.getElementById('rec-fec-d').value,
+    fec_h:   document.getElementById('rec-fec-h').value,
+    pais:    document.getElementById('rec-pais').value,
+    anio:    document.getElementById('rec-anio').value,
+    nromic:  document.getElementById('rec-nromic').value.trim(),
+    mensaje: document.getElementById('rec-mensaje').value.trim(),
+    metodo:  document.getElementById('rec-metodo').value,
+  };
+  const btn=document.getElementById('btn-rec-buscar');
+  btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Buscando...';
+  fetch('/api/sintia/rec',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(params)})
+    .then(r=>r.json()).then(data=>{
+      btn.disabled=false;btn.innerHTML='🔍 Buscar';
+      if(!data.ok){alert('Error: '+data.error);return;}
+      _recCols=data.cols;_recRows=data.rows;
+      document.getElementById('rec-info').textContent=`${data.rows.length} registros encontrados${data.truncated?' (mostrando primeros 500)':''}`;
+      renderTabla('rec-tabla',data.cols,data.rows);
+      document.getElementById('rec-resultado').style.display='block';
+    }).catch(e=>{btn.disabled=false;btn.innerHTML='🔍 Buscar';alert('Error de red: '+e);});
+}
+function limpiarRec(){
+  ['rec-fec-d','rec-fec-h','rec-nromic','rec-mensaje'].forEach(id=>document.getElementById(id).value='');
+  ['rec-pais','rec-metodo'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('rec-anio').value='{{ now.year }}';
+  document.getElementById('rec-resultado').style.display='none';
+}
+function exportarRec(){
+  fetch('/api/sintia/rec/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cols:_recCols,rows:_recRows})})
+    .then(r=>r.blob()).then(b=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='RECHAZOS_consulta.xlsx';a.click();});
+}
+</script>
+</body>
+</html>
