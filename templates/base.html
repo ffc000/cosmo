@@ -7,128 +7,7 @@
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 {% block head_scripts %}{% endblock %}
 <style>
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{
-  --bg:#F0F4F8;--surface:#FFFFFF;--surface2:#F8FAFC;
-  --sidebar-bg:#1E2A3B;--sidebar-hover:rgba(255,255,255,.06);--sidebar-active:rgba(41,121,200,.15);
-  --border:#E5E7EB;--border-dark:rgba(255,255,255,.08);
-  --accent:#1A56DB;--accent-hover:#1447C0;--accent-light:#EBF5FF;
-  --accent2:#057A55;--accent2-light:#F0FFF4;
-  --warn:#D97706;--warn-light:#FFFBEB;
-  --danger:#DC2626;--danger-light:#FEF2F2;
-  --garmin:#00A0E9;--garmin-light:#E0F4FF;
-  --text:#111928;--text-sub:#374151;--muted:#6B7280;--dim:#9CA3AF;
-  --text-sidebar:#CBD5E1;--text-sidebar-muted:#64748B;
-  --mono:'IBM Plex Mono',monospace;--sans:'IBM Plex Sans',sans-serif;
-  --radius:8px;--radius-sm:4px;
-  --shadow-sm:0 1px 3px rgba(0,0,0,.07);--shadow:0 4px 12px rgba(0,0,0,.08);
-  --sidebar-w:230px;
-}
-html,body{min-height:100vh}
-body{font-family:var(--sans);background:var(--bg);color:var(--text);display:flex;flex-direction:column}
-.app{display:flex;flex:1;min-height:0}
-
-/* ── Sidebar ── */
-.sidebar{width:var(--sidebar-w);min-width:var(--sidebar-w);background:var(--sidebar-bg);display:flex;flex-direction:column;z-index:50;transition:transform .25s ease}
-.sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:40}
-.sidebar-brand{padding:1.4rem 1.4rem 1rem;border-bottom:1px solid var(--border-dark)}
-.sidebar-brand .name{font-family:var(--mono);font-size:.92rem;font-weight:600;color:#fff}
-.sidebar-brand .sub{font-size:.65rem;color:var(--text-sidebar-muted);margin-top:.2rem}
-.sidebar-nav{flex:1;padding:.6rem 0;overflow-y:auto}
-.nav-section{font-family:var(--mono);font-size:.58rem;color:var(--text-sidebar-muted);letter-spacing:.18em;text-transform:uppercase;padding:.8rem 1.4rem .3rem}
-.nav-item{display:flex;align-items:center;gap:.7rem;padding:.62rem 1.4rem;cursor:pointer;color:var(--text-sidebar-muted);font-size:.82rem;transition:all .15s;border-left:2px solid transparent;user-select:none;text-decoration:none}
-.nav-item:hover{color:var(--text-sidebar);background:var(--sidebar-hover)}
-.nav-item.active{color:#fff;background:var(--sidebar-active);border-left-color:var(--accent)}
-.nav-item.active-garmin{color:#fff;background:rgba(0,160,233,.15);border-left-color:var(--garmin)}
-.nav-icon{font-size:.9rem;width:18px;text-align:center;flex-shrink:0}
-.badge{background:var(--warn);color:#fff;font-family:var(--mono);font-size:.58rem;font-weight:700;padding:.1rem .35rem;border-radius:10px;margin-left:.4rem}
-.sidebar-footer{padding:.9rem 1.4rem;border-top:1px solid var(--border-dark)}
-.back-link{font-size:.72rem;color:var(--text-sidebar-muted);text-decoration:none;display:block;margin-bottom:.4rem;transition:color .15s}
-.back-link:hover{color:var(--text-sidebar)}
-.logout{font-size:.72rem;color:var(--text-sidebar-muted);text-decoration:none;display:block;transition:color .15s}
-.logout:hover{color:var(--text-sidebar)}
-
-/* ── Main ── */
-.main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
-.topbar{background:var(--surface);border-bottom:1px solid var(--border);padding:.75rem 1.75rem;display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-shrink:0;box-shadow:var(--shadow-sm)}
-.topbar-left{display:flex;align-items:center;gap:.75rem}
-.hamburger{display:none;background:none;border:none;color:var(--muted);font-size:1.3rem;cursor:pointer;padding:.25rem;line-height:1;min-width:36px}
-.topbar-title{font-family:var(--mono);font-size:.78rem;color:var(--accent);letter-spacing:.08em;font-weight:600}
-.topbar-actions{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
-.topbar-user{font-family:var(--mono);font-size:.7rem;color:var(--muted)}
-.content{flex:1;padding:1.75rem;overflow-y:auto}
-.panel{display:none}.panel.active{display:block}
-
-/* ── Cards ── */
-.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;margin-bottom:1.25rem;box-shadow:var(--shadow-sm)}
-.card-title{font-family:var(--mono);font-size:.65rem;color:var(--muted);letter-spacing:.14em;text-transform:uppercase;margin-bottom:.9rem;font-weight:600}
-
-/* ── Forms ── */
-label{display:block;font-size:.7rem;font-weight:600;color:var(--text-sub);letter-spacing:.05em;text-transform:uppercase;margin-bottom:.3rem}
-input[type=text],input[type=date],input[type=number],input[type=password],input[type=email],select,textarea{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:var(--mono);font-size:.85rem;padding:.55rem .8rem;outline:none;transition:border-color .2s}
-input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(26,86,219,.1)}
-textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85rem}
-.form-row{display:grid;gap:.9rem;margin-bottom:.9rem}
-.form-row.cols2{grid-template-columns:1fr 1fr}
-.form-row.cols3{grid-template-columns:1fr 1fr 1fr}
-
-/* ── Buttons ── */
-.btn{display:inline-flex;align-items:center;gap:.5rem;border:none;border-radius:var(--radius-sm);cursor:pointer;font-family:var(--sans);font-weight:600;font-size:.85rem;padding:.6rem 1.2rem;transition:all .15s;text-decoration:none}
-.btn-primary{background:var(--accent);color:#fff}.btn-primary:hover{background:var(--accent-hover)}
-.btn-primary:disabled{background:var(--dim);cursor:not-allowed}
-.btn-outline{background:var(--surface);color:var(--text-sub);border:1px solid var(--border)}.btn-outline:hover{border-color:var(--accent);color:var(--accent)}
-.btn-danger{background:var(--danger-light);color:var(--danger);border:1px solid rgba(220,38,38,.2)}
-.btn-ok{background:var(--accent2-light);color:var(--accent2);border:1px solid rgba(5,122,85,.2)}
-.btn-garmin{background:var(--garmin);color:#fff}.btn-garmin:hover{background:#0088c7}
-.btn-sm{padding:.3rem .75rem;font-size:.75rem}
-.btn-full{width:100%;justify-content:center}
-
-/* ── Alerts ── */
-.alert{padding:.75rem 1rem;border-radius:var(--radius-sm);font-size:.82rem;margin-bottom:.9rem}
-.alert-info{background:var(--accent-light);border:1px solid rgba(26,86,219,.2);color:var(--accent)}
-.alert-ok{background:var(--accent2-light);border:1px solid rgba(5,122,85,.2);color:var(--accent2)}
-.alert-warn{background:var(--warn-light);border:1px solid rgba(217,119,6,.2);color:var(--warn)}
-.alert-danger{background:var(--danger-light);border:1px solid rgba(220,38,38,.2);color:var(--danger)}
-
-/* ── Tables ── */
-.data-table{width:100%;border-collapse:collapse;font-size:.8rem}
-.data-table th{font-family:var(--mono);font-size:.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;padding:.5rem .75rem;text-align:left;border-bottom:2px solid var(--border);background:var(--surface2)}
-.data-table td{padding:.55rem .75rem;border-bottom:1px solid var(--border);vertical-align:middle;color:var(--text-sub)}
-.data-table tr:hover td{background:var(--bg)}
-
-/* ── Modal ── */
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:200;display:none;align-items:center;justify-content:center;padding:1rem}
-.modal-overlay.visible{display:flex}
-.modal{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.75rem;width:100%;max-width:560px;max-height:90vh;overflow-y:auto;box-shadow:var(--shadow)}
-.modal h3{font-size:.95rem;font-weight:600;color:var(--text);margin-bottom:1.1rem}
-.modal-actions{display:flex;gap:.6rem;justify-content:flex-end;margin-top:1.25rem}
-
-/* ── Misc ── */
-.ia-box{background:var(--accent-light);border:1px solid rgba(26,86,219,.2);border-radius:var(--radius-sm);padding:1rem;font-size:.82rem;line-height:1.7;white-space:pre-wrap;display:none}
-.ia-box.visible{display:block}
-@keyframes spin{to{transform:rotate(360deg)}}
-.spinner{width:13px;height:13px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;display:inline-block}
-.spinner-dark{border:2px solid rgba(0,0,0,.1);border-top-color:var(--accent)}
-
-/* ── Upload zones ── */
-.upload-zone{border:2px dashed var(--border);border-radius:var(--radius);padding:2rem;text-align:center;cursor:pointer;transition:all .2s;background:var(--surface2)}
-.upload-zone:hover,.upload-zone.drag{border-color:var(--accent);background:var(--accent-light)}
-.upload-zone .zone-icon{font-size:1.5rem;margin-bottom:.5rem}
-.upload-zone .zone-label{font-size:.8rem;color:var(--muted)}
-
-/* ── Responsive ── */
-@media(max-width:768px){
-  .sidebar{position:fixed;top:0;left:0;bottom:0;transform:translateX(-100%)}
-  .sidebar.open{transform:translateX(0)}
-  .sidebar-overlay.visible{display:block}
-  .hamburger{display:block}
-  .topbar-user{display:none}
-  .content{padding:1.1rem}
-  .form-row.cols2,.form-row.cols3{grid-template-columns:1fr}
-  .data-table{font-size:.73rem}
-  .data-table th,.data-table td{padding:.4rem .5rem}
-}
-{% block extra_css %}{% endblock %}
+{% block page_css %}{% endblock %}
 </style>
 </head>
 <body>
@@ -161,9 +40,10 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
         <button class="hamburger" id="hamburger">☰</button>
         <div class="topbar-title" id="topbar-title">{% block topbar_title %}{% endblock %}</div>
       </div>
-      <div class="topbar-actions">
-        {% block topbar_actions %}{% endblock %}
+      <div class="{% block topbar_actions_class %}topbar-right{% endblock %}">
+        {% block topbar_actions %}
         <span class="topbar-user">{{ username }}</span>
+        {% endblock %}
       </div>
     </div>
     <div class="content">
@@ -175,15 +55,10 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
 {% block modals %}{% endblock %}
 
 <script>
-// ── Sidebar móvil (compartido) ─────────────────────────────────────────────
-document.getElementById('hamburger').onclick = () => {
-  document.getElementById('sidebar').classList.toggle('open');
-  document.getElementById('sidebar-overlay').classList.toggle('visible');
-};
-document.getElementById('sidebar-overlay').onclick = () => {
-  document.getElementById('sidebar').classList.remove('open');
-  document.getElementById('sidebar-overlay').classList.remove('visible');
-};
+// ── Sidebar móvil ─────────────────────────────────────────────────────────────
+const sidebar=document.getElementById('sidebar'),overlay=document.getElementById('sidebar-overlay');
+document.getElementById('hamburger').addEventListener('click',()=>{sidebar.classList.toggle('open');overlay.classList.toggle('visible')});
+overlay.addEventListener('click',()=>{sidebar.classList.remove('open');overlay.classList.remove('visible')});
 function abrirModal(id){document.getElementById(id).classList.add('visible')}
 function cerrarModal(id){document.getElementById(id).classList.remove('visible')}
 {% block scripts %}{% endblock %}
