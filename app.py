@@ -4111,5 +4111,174 @@ def api_garmin_sets(act_id):
         return jsonify({"ok": False, "error": str(e)})
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# MÓDULO STOCK DEPÓSITOS
+# ══════════════════════════════════════════════════════════════════════════════
+_stock_jobs = {}
+
+@app.route("/stock")
+@login_required
+def stock_index():
+    from flask import session as s
+    return render_template("stock.html", username=s.get("username", ""))
+
+@app.route("/api/stock/generar", methods=["POST"])
+@login_required
+def api_stock_generar():
+    import csv, io, tempfile, hashlib
+    from datetime import datetime, timedelta
+
+    stock_file  = request.files.get("stock")
+    depo_file   = request.files.get("depositos")
+    fecha_max   = request.form.get("fecha_max", "")
+    dias_tol    = int(request.form.get("dias_tol", 5))
+
+    if not stock_file or not depo_file:
+        return jsonify({"ok": False, "error": "Faltan archivos"})
+
+    try:
+        # Parsear fecha máxima
+        try:
+            fecha_limite = datetime.strptime(fecha_max, "%Y-%m-%d") if fecha_max else datetime.today()
+        except ValueError:
+            fecha_limite = datetime.today()
+
+        # Leer archivo de depósitos autorizados
+        depo_content = depo_file.read().decode("utf-8", errors="replace")
+        depositos_auth = {}
+        for row in csv.DictReader(io.StringIO(depo_content)):
+            codigo = (row.get("codigo") or row.get("CODIGO") or row.get("Codigo") or "").strip()
+            nombre = (row.get("nombre") or row.get("NOMBRE") or row.get("Nombre") or "").strip()
+            if codigo:
+                depositos_auth[codigo] = nombre
+        # Si no tiene columnas reconocidas, tratar como lista simple
+        if not depositos_auth:
+            for line in depo_content.splitlines():
+                line = line.strip()
+                if line:
+                    parts = line.split(",")
+                    depositos_auth[parts[0].strip()] = parts[1].strip() if len(parts) > 1 else parts[0].strip()
+
+        # Leer archivo de stock (transmisiones)
+        stock_content = stock_file.read().decode("utf-8", errors="replace")
+        transmisiones = {}  # codigo_depo -> ultima_fecha
+        for row in csv.DictReader(io.StringIO(stock_content)):
+            codigo = (row.get("codigo") or row.get("CODIGO") or row.get("deposito") or row.get("DEPOSITO") or "").strip()
+            fecha_str = (row.get("fecha") or row.get("FECHA") or row.get("fecha_transmision") or "").strip()
+            if not codigo or not fecha_str:
+                continue
+            try:
+                fecha_tx = datetime.strptime(fecha_str[:10], "%Y-%m-%d")
+            except ValueError:
+                try:
+                    fecha_tx = datetime.strptime(fecha_str[:10], "%d/%m/%Y")
+                except ValueError:
+                    continue
+            if codigo not in transmisiones or fecha_tx > transmisiones[codigo]["fecha"]:
+                transmisiones[codigo] = {"fecha": fecha_tx, "fecha_str": fecha_tx.strftime("%d/%m/%Y")}
+
+        # Calcular semáforo
+        VERDE    = "VERDE"
+        AZUL     = "AZUL"
+        AMARILLO = "AMARILLO"
+        ROJO     = "ROJO"
+        NEGRO    = "NEGRO"
+
+        COLOR_CSS = {
+            VERDE:    "#D1FAE5",
+            AZUL:     "#DBEAFE",
+            AMARILLO: "#FEF9C3",
+            ROJO:     "#FEE2E2",
+            NEGRO:    "#E5E7EB",
+        }
+        COLOR_TEXT = {
+            VERDE: "#065F46", AZUL: "#1E40AF",
+            AMARILLO: "#854D0E", ROJO: "#991B1B", NEGRO: "#374151"
+        }
+
+        resultados = []
+        conteo = {VERDE: 0, AZUL: 0, AMARILLO: 0, ROJO: 0, NEGRO: 0}
+
+        codigos = depositos_auth if isinstance(depositos_auth, set) else set(depositos_auth.keys())
+        nombres = depositos_auth if isinstance(depositos_auth, dict) else {}
+
+        for codigo in sorted(codigos):
+            nombre = nombres.get(codigo, codigo)
+            tx = transmisiones.get(codigo)
+            if not tx:
+                estado = NEGRO
+                dias = None
+                fecha_display = "Sin datos"
+            else:
+                dias = (fecha_limite - tx["fecha"]).days
+                fecha_display = tx["fecha_str"]
+                if dias <= dias_tol:
+                    estado = VERDE
+                elif dias <= dias_tol * 2:
+                    estado = AZUL
+                elif dias <= dias_tol * 4:
+                    estado = AMARILLO
+                elif dias <= dias_tol * 8:
+                    estado = ROJO
+                else:
+                    estado = NEGRO
+            conteo[estado] += 1
+            resultados.append({
+                "codigo": codigo, "nombre": nombre,
+                "fecha": fecha_display, "dias": dias, "estado": estado,
+                "bg": COLOR_CSS[estado], "color": COLOR_TEXT[estado]
+            })
+
+        # Generar HTML
+        filas = "".join([
+            f'<tr style="background:{r["bg"]};color:{r["color"]}">'
+            f'<td style="font-family:monospace;padding:.5rem .75rem;border-bottom:1px solid #E5E7EB">{r["codigo"]}</td>'
+            f'<td style="padding:.5rem .75rem;border-bottom:1px solid #E5E7EB">{r["nombre"]}</td>'
+            f'<td style="font-family:monospace;padding:.5rem .75rem;border-bottom:1px solid #E5E7EB">{r["fecha"]}</td>'
+            f'<td style="font-family:monospace;padding:.5rem .75rem;border-bottom:1px solid #E5E7EB">{r["dias"] if r["dias"] is not None else "—"}</td>'
+            f'<td style="padding:.5rem .75rem;border-bottom:1px solid #E5E7EB;font-weight:700">{r["estado"]}</td>'
+            f'</tr>'
+            for r in resultados
+        ])
+
+        resumen = " | ".join([f'<span style="font-weight:700">{k}</span>: {v}' for k, v in conteo.items()])
+
+        html_out = f"""<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8">
+<title>Stock Depósitos — {fecha_limite.strftime('%d/%m/%Y')}</title>
+<style>body{{font-family:sans-serif;padding:2rem;background:#F0F4F8}}
+table{{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)}}
+th{{background:#1E2A3B;color:#fff;padding:.6rem .75rem;text-align:left;font-size:.75rem;letter-spacing:.08em;text-transform:uppercase}}
+</style></head><body>
+<h2 style="font-family:monospace;margin-bottom:.5rem">Stock Depósitos Fiscales</h2>
+<p style="color:#6B7280;margin-bottom:1rem">Fecha de corte: {fecha_limite.strftime('%d/%m/%Y')} · Tolerancia: {dias_tol} días · Total: {len(resultados)} depósitos</p>
+<p style="margin-bottom:1.5rem">{resumen}</p>
+<table><thead><tr><th>Código</th><th>Nombre</th><th>Última transmisión</th><th>Días</th><th>Estado</th></tr></thead>
+<tbody>{filas}</tbody></table>
+</body></html>"""
+
+        job_id = hashlib.md5(html_out.encode()).hexdigest()[:12]
+        _stock_jobs[job_id] = html_out
+
+        return jsonify({
+            "ok": True, "job_id": job_id,
+            "total": len(resultados), "conteo": conteo
+        })
+
+    except Exception as e:
+        logging.error(f"STOCK ERROR | {e}")
+        return jsonify({"ok": False, "error": str(e)})
+
+@app.route("/api/stock/download/<job_id>")
+@login_required
+def api_stock_download(job_id):
+    from flask import Response
+    html = _stock_jobs.get(job_id)
+    if not html:
+        return jsonify({"ok": False, "error": "Reporte no encontrado o expirado"}), 404
+    return Response(html, mimetype="text/html",
+                    headers={"Content-Disposition": f"attachment; filename=stock_{job_id}.html"})
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
