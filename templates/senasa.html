@@ -1,11 +1,10 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CosmoTools — SENASA</title>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
-<style>
+{% extends "base.html" %}
+{% block brand_name %}SENASA{% endblock %}
+{% block brand_sub %}Integración PAD / Embalajes{% endblock %}
+{% set active_module = "senasa" %}
+{% set page_title = "SENASA" %}
+
+{% block extra_css %}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
   --bg:#F0F4F8;--surface:#FFFFFF;--surface2:#F8FAFC;
@@ -116,23 +115,10 @@ textarea{resize:vertical;min-height:80px;font-family:var(--sans);font-size:.85re
   .data-table{font-size:.73rem}
   .data-table th,.data-table td{padding:.4rem .5rem}
 }
-</style>
-</head>
-<body>
-<div class="sidebar-overlay" id="sidebar-overlay"></div>
+{% endblock %}
 
-<div class="app">
-  <div class="sidebar" id="sidebar">
-    <div class="sidebar-brand">
-      <div class="name">SENASA</div>
-      <div class="sub">Integración PAD / Embalajes</div>
-    </div>
-    <nav class="sidebar-nav">
-      <div class="nav-section">CosmoTools</div>
-      <div class="nav-item" onclick="location.href='/sintia'"><span class="nav-icon">📊</span><span class="nav-label">SINTIA</span></div>
-      <div class="nav-item" onclick="location.href='/vua'"><span class="nav-icon">✈️</span><span class="nav-label">VUA</span></div>
-      <div class="nav-item active" onclick="location.href='/senasa'"><span class="nav-icon">🌿</span><span class="nav-label">SENASA</span></div>
-      <div class="nav-section">Proyecto</div>
+{% block sidebar_nav %}
+<div class="nav-section">Proyecto</div>
       <div class="nav-item active" data-tab="cronologia"><span class="nav-icon">📅</span><span class="nav-label">Cronología</span></div>
       <div class="nav-item" data-tab="ejes"><span class="nav-icon">🎯</span><span class="nav-label">Ejes de trabajo</span></div>
       <div class="nav-item" data-tab="minutas"><span class="nav-icon">📋</span><span class="nav-label">Minutas</span></div>
@@ -140,26 +126,12 @@ textarea{resize:vertical;min-height:80px;font-family:var(--sans);font-size:.85re
       <div class="nav-section">Gestión</div>
       <div class="nav-item" data-tab="integrantes"><span class="nav-icon">👥</span><span class="nav-label">Integrantes</span></div>
       <div class="nav-item" data-tab="informe"><span class="nav-icon">📥</span><span class="nav-label">Descargar informe</span></div>
-    </nav>
-    <div class="sidebar-footer">
-      <a href="/" class="back-link">← Inicio</a>
-      <a href="/admin" class="back-link" style="margin-bottom:.2rem">⚙ Administración</a>
-      <a href="/logout" class="logout">Salir</a>
-    </div>
+{% endblock %}
 
-  </div>
-  <div class="main">
-    <div class="topbar">
-      <div class="topbar-left">
-        <button class="hamburger" id="hamburger">&#9776;</button>
-        <div class="topbar-title">SENASA · Integración PAD / Embalajes de Madera</div>
-      </div>
-      <div class="topbar-user">{{ username }}</div>
-    </div>
+{% block topbar_title %}SENASA · Integración PAD / Embalajes de Madera{% endblock %}
 
-    <div class="content">
-
-      <!-- ═══════════ PANEL: CRONOLOGÍA ═══════════ -->
+{% block content %}
+<!-- ═══════════ PANEL: CRONOLOGÍA ═══════════ -->
       <div id="panel-cronologia" class="panel active">
         <div class="card">
           <div class="card-title">Cronología de reuniones</div>
@@ -280,12 +252,9 @@ textarea{resize:vertical;min-height:80px;font-family:var(--sans);font-size:.85re
           </div>
         </div>
       </div>
+{% endblock %}
 
-    </div><!-- /content -->
-  </div><!-- /main -->
-</div><!-- /app -->
-
-<!-- MODAL CRONOLOGÍA -->
+{% block modals %}
 <div class="modal-overlay" id="modal-crono">
   <div class="modal">
     <h3 id="modal-crono-titulo">Nueva entrada en cronología</h3>
@@ -312,8 +281,6 @@ textarea{resize:vertical;min-height:80px;font-family:var(--sans);font-size:.85re
     </div>
   </div>
 </div>
-
-<!-- MODAL EJE -->
 <div class="modal-overlay" id="modal-eje">
   <div class="modal">
     <h3>Editar eje de trabajo</h3>
@@ -333,8 +300,6 @@ textarea{resize:vertical;min-height:80px;font-family:var(--sans);font-size:.85re
     </div>
   </div>
 </div>
-
-<!-- MODAL ACUERDO -->
 <div class="modal-overlay" id="modal-acuerdo">
   <div class="modal">
     <h3 id="modal-acuerdo-titulo">Nuevo compromiso</h3>
@@ -361,8 +326,9 @@ textarea{resize:vertical;min-height:80px;font-family:var(--sans);font-size:.85re
     </div>
   </div>
 </div>
+{% endblock %}
 
-<script>
+{% block scripts %}
 // ── Navegación ────────────────────────────────────────────────────────────────
 const sidebar = document.getElementById('sidebar');
 const overlay = document.getElementById('sidebar-overlay');
@@ -748,6 +714,4 @@ async function eliminarAcuerdo(id) {
 document.addEventListener('DOMContentLoaded', () => {
   showTab('cronologia');
 });
-</script>
-</body>
-</html>
+{% endblock %}

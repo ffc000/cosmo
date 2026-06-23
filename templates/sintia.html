@@ -1,11 +1,10 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CosmoTools — SINTIA</title>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
-<style>
+{% extends "base.html" %}
+{% block brand_name %}SINTIA{% endblock %}
+{% block brand_sub %}Informes de Transmisión{% endblock %}
+{% set active_module = "sintia" %}
+{% set page_title = "SINTIA" %}
+
+{% block extra_css %}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
   --bg:#F0F4F8;--surface:#FFFFFF;--surface2:#F8FAFC;
@@ -109,46 +108,19 @@ input:checked+.slider::before{transform:translateX(18px)}
   .content{padding:1.1rem}
   .form-row.cols2,.form-row.cols3,.form-row.cols4{grid-template-columns:1fr 1fr}
 }
-</style>
-</head>
-<body>
-<div class="sidebar-overlay" id="sidebar-overlay"></div>
-<div class="app">
-  <div class="sidebar" id="sidebar">
-    <div class="sidebar-brand">
-      <div class="name">SINTIA</div>
-      <div class="sub">Informes de Transmisión</div>
-    </div>
-    <nav class="sidebar-nav">
-      <div class="nav-section">CosmoTools</div>
-      <div class="nav-item" onclick="location.href='/sintia'"><span class="nav-icon">📊</span><span class="nav-label">SINTIA</span></div>
-      <div class="nav-item" onclick="location.href='/vua'"><span class="nav-icon">✈️</span><span class="nav-label">VUA</span></div>
-      <div class="nav-item" onclick="location.href='/senasa'"><span class="nav-icon">🌿</span><span class="nav-label">SENASA</span></div>
-      <div class="nav-section">Módulo</div>
+{% endblock %}
+
+{% block sidebar_nav %}
+<div class="nav-section">Módulo</div>
       <div class="nav-item" id="nav-generar" onclick="showPanel('generar')"><span class="nav-icon">📄</span><span class="nav-label">Generar informe</span></div>
       <div class="nav-item" id="nav-dat"     onclick="showPanel('dat')"><span class="nav-icon">🔍</span><span class="nav-label">Consulta DAT</span></div>
       <div class="nav-item" id="nav-rec"     onclick="showPanel('rec')"><span class="nav-icon">⚠️</span><span class="nav-label">Consulta Rechazos</span></div>
-    </nav>
-    <div class="sidebar-footer">
-      <span class="db-pill {% if db_exists %}ok{% else %}missing{% endif %}">
-        {% if db_exists %}✓ BD {{ db_size }} GB{% else %}BD no cargada{% endif %}
-      </span>
-      <a href="/" class="back-link">← Inicio</a>
-      <a href="/admin" class="back-link" style="margin-bottom:.2rem">⚙ Administración</a>
-      <a href="/logout" class="logout">Salir</a>
-    </div>
-  </div>
-  <div class="main">
-    <div class="topbar">
-      <div class="topbar-left">
-        <button class="hamburger" id="hamburger">&#9776;</button>
-        <div class="topbar-title" id="topbar-title">SINTIA — Generar informe</div>
-      </div>
-      <div class="topbar-user">{{ username }}</div>
-    </div>
-    <div class="content">
+{% endblock %}
 
-      <!-- ── PANEL: GENERAR INFORME ── -->
+{% block topbar_title %}SINTIA — Generar informe{% endblock %}
+
+{% block content %}
+<!-- ── PANEL: GENERAR INFORME ── -->
       <div class="panel" id="tab-generar">
         {% if not db_exists %}
         <div class="alert alert-warn">⚠ La BD no está cargada. <a href="/admin">Ir a Administración →</a></div>
@@ -377,12 +349,9 @@ input:checked+.slider::before{transform:translateX(18px)}
           </div>
         </div>
       </div>
+{% endblock %}
 
-    </div><!-- /content -->
-  </div><!-- /main -->
-</div><!-- /app -->
-
-<script>
+{% block scripts %}
 // ── Sidebar ──
 const sidebar=document.getElementById('sidebar'),overlay=document.getElementById('sidebar-overlay');
 document.getElementById('hamburger').addEventListener('click',()=>{sidebar.classList.toggle('open');overlay.classList.toggle('visible')});
@@ -546,6 +515,4 @@ function exportarRec(){
   fetch('/api/sintia/rec/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(params)})
     .then(r=>r.blob()).then(b=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='Res_Rechazos_'+hoy()+'.xlsx';a.click();});
 }
-</script>
-</body>
-</html>
+{% endblock %}
