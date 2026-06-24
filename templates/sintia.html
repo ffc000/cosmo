@@ -438,6 +438,8 @@ overlay.addEventListener('click',()=>{sidebar.classList.remove('open');overlay.c
 
 // ── Panel switching ──
 const TITULOS = {dashboard:'SINTIA — Dashboard', generar:'SINTIA — Generar informe', dat:'SINTIA — Consulta DAT', rec:'SINTIA — Consulta Rechazos'};
+let _dashCharts = {};
+let _dashLoaded = false;
 function showPanel(id) {
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.nav-item[id^="nav-"]').forEach(n=>n.classList.remove('active'));
@@ -597,9 +599,6 @@ function exportarRec(){
 }
 
 // ── Dashboard ──
-let _dashCharts = {};
-let _dashLoaded = false;
-
 async function loadDashboard() {
   if (_dashLoaded) return;
   const loading = document.getElementById('dash-loading');
