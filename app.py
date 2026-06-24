@@ -2396,6 +2396,85 @@ def token_revocado(token):
 # Requiere: openpyxl   →   pip install openpyxl --break-system-packages
 # ══════════════════════════════════════════════════════════════════════════════
 
+@app.route("/api/sintia/dashboard")
+@login_required
+def sintia_dashboard():
+    if not os.path.exists(DB_PATH):
+        return jsonify({"ok": False, "error": "BD no cargada."})
+    import datetime as _dt
+    try:
+        con = sqlite3.connect(DB_PATH)
+        cur = con.cursor()
+        anio = _dt.date.today().year
+        tabla = f"DAT_{anio}"
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,))
+        if not cur.fetchone():
+            con.close()
+            return jsonify({"ok": False, "error": f"Tabla {tabla} no encontrada."})
+
+        hoy = _dt.date.today()
+        mes_actual = hoy.strftime("%Y-%m")
+        mes_ant = (hoy.replace(day=1) - _dt.timedelta(days=1)).strftime("%Y-%m")
+
+        # Total MICs mes actual y anterior
+        cur.execute(f"SELECT COUNT(*) FROM {tabla} WHERE FECHA_INGRESO_ISO LIKE ?", (f"{mes_actual}%",))
+        total_mes = cur.fetchone()[0]
+        cur.execute(f"SELECT COUNT(*) FROM {tabla} WHERE FECHA_INGRESO_ISO LIKE ?", (f"{mes_ant}%",))
+        total_ant = cur.fetchone()[0]
+
+        # Por país (mes actual)
+        paises = {"BO": "Bolivia", "PY": "Paraguay", "BR": "Brasil", "CL": "Chile", "UY": "Uruguay"}
+        por_pais = {}
+        for cod, nombre in paises.items():
+            cur.execute(f"SELECT COUNT(*) FROM {tabla} WHERE FECHA_INGRESO_ISO LIKE ? AND MIC LIKE ?", (f"{mes_actual}%", f"%{cod}%"))
+            por_pais[nombre] = cur.fetchone()[0]
+
+        # Por estado (mes actual)
+        por_estado = {}
+        for est in ["Oficializado", "Cancelado", "Cerrado"]:
+            cur.execute(f"SELECT COUNT(*) FROM {tabla} WHERE FECHA_INGRESO_ISO LIKE ? AND EST_MIC = ?", (f"{mes_actual}%", est))
+            por_estado[est] = cur.fetchone()[0]
+
+        # Con novedad (mes actual)
+        cur.execute(f"SELECT COUNT(*) FROM {tabla} WHERE FECHA_INGRESO_ISO LIKE ? AND TIENE_NOVEDAD = 'SI'", (f"{mes_actual}%",))
+        con_novedad = cur.fetchone()[0]
+
+        # Rechazos mes actual
+        tabla_rec = "RECHAZOS"
+        rechazos_mes = 0
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='RECHAZOS'")
+        if cur.fetchone():
+            cur.execute("SELECT COUNT(*) FROM RECHAZOS WHERE Fecha LIKE ?", (f"%/{hoy.strftime('%Y')}%",))
+            rechazos_mes = cur.fetchone()[0]
+
+        # Evolución últimos 6 meses
+        evolucion = []
+        for i in range(5, -1, -1):
+            d = (hoy.replace(day=1) - _dt.timedelta(days=1)) if i > 0 else hoy
+            for _ in range(i - 1):
+                d = (d.replace(day=1) - _dt.timedelta(days=1))
+            mes = d.strftime("%Y-%m") if i > 0 else mes_actual
+            label = d.strftime("%b") if i > 0 else hoy.strftime("%b")
+            cur.execute(f"SELECT COUNT(*) FROM {tabla} WHERE FECHA_INGRESO_ISO LIKE ?", (f"{mes}%",))
+            evolucion.append({"mes": label, "total": cur.fetchone()[0]})
+
+        con.close()
+        return jsonify({
+            "ok": True,
+            "mes_actual": hoy.strftime("%B %Y"),
+            "total_mes": total_mes,
+            "total_ant": total_ant,
+            "variacion": round((total_mes - total_ant) / total_ant * 100, 1) if total_ant else 0,
+            "por_pais": por_pais,
+            "por_estado": por_estado,
+            "con_novedad": con_novedad,
+            "rechazos_mes": rechazos_mes,
+            "evolucion": evolucion,
+        })
+    except Exception as e:
+        logging.error(f"SINTIA DASHBOARD ERROR | {e}")
+        return jsonify({"ok": False, "error": str(e)})
+
 @app.route("/api/sintia/dat", methods=["POST"])
 @login_required
 def sintia_dat_query():
@@ -4133,54 +4212,144 @@ def stock_index():
 @app.route("/api/stock/generar", methods=["POST"])
 @login_required
 def api_stock_generar():
-    import hashlib, importlib.util, os
-    from datetime import datetime
+    import csv, io, tempfile, hashlib
+    from datetime import datetime, timedelta
 
-    stock_file = request.files.get("stock")
-    depo_file  = request.files.get("depositos")
-    fecha_max  = request.form.get("fecha_max", "")
-    dias_tol   = int(request.form.get("dias_tol", 5))
+    stock_file  = request.files.get("stock")
+    depo_file   = request.files.get("depositos")
+    fecha_max   = request.form.get("fecha_max", "")
+    dias_tol    = int(request.form.get("dias_tol", 5))
 
     if not stock_file or not depo_file:
         return jsonify({"ok": False, "error": "Faltan archivos"})
 
     try:
-        # Leer contenido de los archivos
-        stock_txt = stock_file.read().decode("utf-8", errors="replace")
-        depo_txt  = depo_file.read().decode("utf-8", errors="replace")
-
-        # Parsear fecha máxima → formato YYMMDD que usa _RFIXWIS
+        # Parsear fecha máxima
         try:
-            fecha_dt = datetime.strptime(fecha_max, "%Y-%m-%d") if fecha_max else datetime.today()
+            fecha_limite = datetime.strptime(fecha_max, "%Y-%m-%d") if fecha_max else datetime.today()
         except ValueError:
-            fecha_dt = datetime.today()
-        fecha_yymmdd = fecha_dt.strftime("%y%m%d")
+            fecha_limite = datetime.today()
 
-        # Importar _RFIXWIS.py dinámicamente
-        script_path = os.path.join(os.path.dirname(__file__), "_RFIXWIS.py")
-        spec = importlib.util.spec_from_file_location("rfixwis", script_path)
-        mod  = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+        # Leer archivo de depósitos autorizados
+        depo_content = depo_file.read().decode("utf-8", errors="replace")
+        depositos_auth = {}
+        for row in csv.DictReader(io.StringIO(depo_content)):
+            codigo = (row.get("codigo") or row.get("CODIGO") or row.get("Codigo") or "").strip()
+            nombre = (row.get("nombre") or row.get("NOMBRE") or row.get("Nombre") or "").strip()
+            if codigo:
+                depositos_auth[codigo] = nombre
+        # Si no tiene columnas reconocidas, tratar como lista simple
+        if not depositos_auth:
+            for line in depo_content.splitlines():
+                line = line.strip()
+                if line:
+                    parts = line.split(",")
+                    depositos_auth[parts[0].strip()] = parts[1].strip() if len(parts) > 1 else parts[0].strip()
 
-        # Generar reporte
-        html_bytes = mod.generar_reporte(stock_txt, depo_txt, fecha_yymmdd, dias_tol)
-        html_out   = html_bytes.decode("utf-8")
+        # Leer archivo de stock (transmisiones)
+        stock_content = stock_file.read().decode("utf-8", errors="replace")
+        transmisiones = {}  # codigo_depo -> ultima_fecha
+        for row in csv.DictReader(io.StringIO(stock_content)):
+            codigo = (row.get("codigo") or row.get("CODIGO") or row.get("deposito") or row.get("DEPOSITO") or "").strip()
+            fecha_str = (row.get("fecha") or row.get("FECHA") or row.get("fecha_transmision") or "").strip()
+            if not codigo or not fecha_str:
+                continue
+            try:
+                fecha_tx = datetime.strptime(fecha_str[:10], "%Y-%m-%d")
+            except ValueError:
+                try:
+                    fecha_tx = datetime.strptime(fecha_str[:10], "%d/%m/%Y")
+                except ValueError:
+                    continue
+            if codigo not in transmisiones or fecha_tx > transmisiones[codigo]["fecha"]:
+                transmisiones[codigo] = {"fecha": fecha_tx, "fecha_str": fecha_tx.strftime("%d/%m/%Y")}
 
-        # Calcular conteo real usando procesar()
-        fecha_yymmdd_str = fecha_dt.strftime("%y%m%d")
-        registros = mod.procesar(stock_txt, depo_txt, fecha_yymmdd_str, dias_tol)
-        conteo = {"VERDE": 0, "AZUL": 0, "AMARILLO": 0, "ROJO": 0, "NEGRO": 0}
-        for r in registros:
-            estado = r[5] if len(r) > 5 else "NEGRO"
-            if estado in conteo:
-                conteo[estado] += 1
+        # Calcular semáforo
+        VERDE    = "VERDE"
+        AZUL     = "AZUL"
+        AMARILLO = "AMARILLO"
+        ROJO     = "ROJO"
+        NEGRO    = "NEGRO"
+
+        COLOR_CSS = {
+            VERDE:    "#D1FAE5",
+            AZUL:     "#DBEAFE",
+            AMARILLO: "#FEF9C3",
+            ROJO:     "#FEE2E2",
+            NEGRO:    "#E5E7EB",
+        }
+        COLOR_TEXT = {
+            VERDE: "#065F46", AZUL: "#1E40AF",
+            AMARILLO: "#854D0E", ROJO: "#991B1B", NEGRO: "#374151"
+        }
+
+        resultados = []
+        conteo = {VERDE: 0, AZUL: 0, AMARILLO: 0, ROJO: 0, NEGRO: 0}
+
+        codigos = depositos_auth if isinstance(depositos_auth, set) else set(depositos_auth.keys())
+        nombres = depositos_auth if isinstance(depositos_auth, dict) else {}
+
+        for codigo in sorted(codigos):
+            nombre = nombres.get(codigo, codigo)
+            tx = transmisiones.get(codigo)
+            if not tx:
+                estado = NEGRO
+                dias = None
+                fecha_display = "Sin datos"
+            else:
+                dias = (fecha_limite - tx["fecha"]).days
+                fecha_display = tx["fecha_str"]
+                if dias <= dias_tol:
+                    estado = VERDE
+                elif dias <= dias_tol * 2:
+                    estado = AZUL
+                elif dias <= dias_tol * 4:
+                    estado = AMARILLO
+                elif dias <= dias_tol * 8:
+                    estado = ROJO
+                else:
+                    estado = NEGRO
+            conteo[estado] += 1
+            resultados.append({
+                "codigo": codigo, "nombre": nombre,
+                "fecha": fecha_display, "dias": dias, "estado": estado,
+                "bg": COLOR_CSS[estado], "color": COLOR_TEXT[estado]
+            })
+
+        # Generar HTML
+        filas = "".join([
+            f'<tr style="background:{r["bg"]};color:{r["color"]}">'
+            f'<td style="font-family:monospace;padding:.5rem .75rem;border-bottom:1px solid #E5E7EB">{r["codigo"]}</td>'
+            f'<td style="padding:.5rem .75rem;border-bottom:1px solid #E5E7EB">{r["nombre"]}</td>'
+            f'<td style="font-family:monospace;padding:.5rem .75rem;border-bottom:1px solid #E5E7EB">{r["fecha"]}</td>'
+            f'<td style="font-family:monospace;padding:.5rem .75rem;border-bottom:1px solid #E5E7EB">{r["dias"] if r["dias"] is not None else "—"}</td>'
+            f'<td style="padding:.5rem .75rem;border-bottom:1px solid #E5E7EB;font-weight:700">{r["estado"]}</td>'
+            f'</tr>'
+            for r in resultados
+        ])
+
+        resumen = " | ".join([f'<span style="font-weight:700">{k}</span>: {v}' for k, v in conteo.items()])
+
+        html_out = f"""<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8">
+<title>Stock Depósitos — {fecha_limite.strftime('%d/%m/%Y')}</title>
+<style>body{{font-family:sans-serif;padding:2rem;background:#F0F4F8}}
+table{{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)}}
+th{{background:#1E2A3B;color:#fff;padding:.6rem .75rem;text-align:left;font-size:.75rem;letter-spacing:.08em;text-transform:uppercase}}
+</style></head><body>
+<h2 style="font-family:monospace;margin-bottom:.5rem">Stock Depósitos Fiscales</h2>
+<p style="color:#6B7280;margin-bottom:1rem">Fecha de corte: {fecha_limite.strftime('%d/%m/%Y')} · Tolerancia: {dias_tol} días · Total: {len(resultados)} depósitos</p>
+<p style="margin-bottom:1.5rem">{resumen}</p>
+<table><thead><tr><th>Código</th><th>Nombre</th><th>Última transmisión</th><th>Días</th><th>Estado</th></tr></thead>
+<tbody>{filas}</tbody></table>
+</body></html>"""
 
         job_id = hashlib.md5(html_out.encode()).hexdigest()[:12]
         _stock_jobs[job_id] = html_out
 
         return jsonify({
             "ok": True, "job_id": job_id,
-            "total": sum(conteo.values()), "conteo": conteo
+            "total": len(resultados), "conteo": conteo
         })
 
     except Exception as e:
