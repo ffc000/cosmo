@@ -110,6 +110,7 @@ input:checked+.slider::before{transform:translateX(18px)}
   .form-row.cols2,.form-row.cols3,.form-row.cols4{grid-template-columns:1fr 1fr}
 }
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
 <body>
 <div class="sidebar-overlay" id="sidebar-overlay"></div>
@@ -122,14 +123,19 @@ input:checked+.slider::before{transform:translateX(18px)}
     <nav class="sidebar-nav">
       {% include '_sidebar_nav.html' %}
       <div class="nav-section">Módulo</div>
+      <div class="nav-item" id="nav-dashboard" onclick="showPanel('dashboard')"><span class="nav-icon">🏠</span><span class="nav-label">Dashboard</span></div>
       <div class="nav-item" id="nav-generar" onclick="showPanel('generar')"><span class="nav-icon">📄</span><span class="nav-label">Generar informe</span></div>
       <div class="nav-item" id="nav-dat"     onclick="showPanel('dat')"><span class="nav-icon">🔍</span><span class="nav-label">Consulta DAT</span></div>
       <div class="nav-item" id="nav-rec"     onclick="showPanel('rec')"><span class="nav-icon">⚠️</span><span class="nav-label">Consulta Rechazos</span></div>
     </nav>
-    <span class="db-pill {% if db_exists %}ok{% else %}missing{% endif %}">
-      {% if db_exists %}✓ BD {{ db_size }} GB{% else %}BD no cargada{% endif %}
-    </span>
-    {% include '_sidebar_footer.html' %}
+    <div class="sidebar-footer">
+      <span class="db-pill {% if db_exists %}ok{% else %}missing{% endif %}">
+        {% if db_exists %}✓ BD {{ db_size }} GB{% else %}BD no cargada{% endif %}
+      </span>
+      <a href="/" class="back-link">← Inicio</a>
+      <a href="/admin" class="back-link" style="margin-bottom:.2rem">⚙ Administración</a>
+      <a href="/logout" class="logout">Salir</a>
+    </div>
   </div>
   <div class="main">
     <div class="topbar">
@@ -142,6 +148,55 @@ input:checked+.slider::before{transform:translateX(18px)}
     <div class="content">
 
       <!-- ── PANEL: GENERAR INFORME ── -->
+      <!-- ═══════════ PANEL: DASHBOARD ═══════════ -->
+      <div class="panel" id="tab-dashboard">
+        <div id="dash-loading" style="color:var(--muted);font-size:.82rem;padding:2rem 0">Cargando métricas...</div>
+        <div id="dash-error" style="display:none;color:var(--danger);font-size:.82rem;padding:.5rem 0"></div>
+        <div id="dash-content" style="display:none">
+
+          <!-- Fila 1: KPIs -->
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:.9rem;margin-bottom:1.25rem">
+            <div class="card" style="padding:1rem 1.2rem;margin:0">
+              <div class="card-title" style="margin-bottom:.4rem">MICs del mes</div>
+              <div id="dash-total-mes" style="font-size:1.8rem;font-weight:700;color:var(--accent);font-family:var(--mono)">—</div>
+              <div id="dash-variacion" style="font-size:.72rem;margin-top:.3rem;color:var(--muted)"></div>
+            </div>
+            <div class="card" style="padding:1rem 1.2rem;margin:0">
+              <div class="card-title" style="margin-bottom:.4rem">Mes anterior</div>
+              <div id="dash-total-ant" style="font-size:1.8rem;font-weight:700;color:var(--text);font-family:var(--mono)">—</div>
+              <div style="font-size:.72rem;margin-top:.3rem;color:var(--muted)" id="dash-mes-ant-label"></div>
+            </div>
+            <div class="card" style="padding:1rem 1.2rem;margin:0">
+              <div class="card-title" style="margin-bottom:.4rem">Con novedad</div>
+              <div id="dash-novedad" style="font-size:1.8rem;font-weight:700;color:var(--warn);font-family:var(--mono)">—</div>
+              <div style="font-size:.72rem;margin-top:.3rem;color:var(--muted)">TIENE_NOVEDAD = SI</div>
+            </div>
+            <div class="card" style="padding:1rem 1.2rem;margin:0">
+              <div class="card-title" style="margin-bottom:.4rem">Rechazos</div>
+              <div id="dash-rechazos" style="font-size:1.8rem;font-weight:700;color:var(--danger);font-family:var(--mono)">—</div>
+              <div style="font-size:.72rem;margin-top:.3rem;color:var(--muted)">acumulado histórico</div>
+            </div>
+          </div>
+
+          <!-- Fila 2: Gráficos -->
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:.9rem;margin-bottom:1.25rem">
+            <div class="card" style="margin:0">
+              <div class="card-title">Por país</div>
+              <canvas id="dash-chart-pais" height="180"></canvas>
+            </div>
+            <div class="card" style="margin:0">
+              <div class="card-title">Por estado</div>
+              <canvas id="dash-chart-estado" height="180"></canvas>
+            </div>
+            <div class="card" style="margin:0">
+              <div class="card-title">Evolución 6 meses</div>
+              <canvas id="dash-chart-evol" height="180"></canvas>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
       <div class="panel" id="tab-generar">
         {% if not db_exists %}
         <div class="alert alert-warn">⚠ La BD no está cargada. <a href="/admin">Ir a Administración →</a></div>
@@ -382,7 +437,7 @@ document.getElementById('hamburger').addEventListener('click',()=>{sidebar.class
 overlay.addEventListener('click',()=>{sidebar.classList.remove('open');overlay.classList.remove('visible')});
 
 // ── Panel switching ──
-const TITULOS = {generar:'SINTIA — Generar informe', dat:'SINTIA — Consulta DAT', rec:'SINTIA — Consulta Rechazos'};
+const TITULOS = {dashboard:'SINTIA — Dashboard', generar:'SINTIA — Generar informe', dat:'SINTIA — Consulta DAT', rec:'SINTIA — Consulta Rechazos'};
 function showPanel(id) {
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.nav-item[id^="nav-"]').forEach(n=>n.classList.remove('active'));
@@ -392,8 +447,9 @@ function showPanel(id) {
   // Limpiar el otro panel al cambiar
   if(id==='dat'){limpiarRec();}
   else if(id==='rec'){limpiarDat();}
+  else if(id==='dashboard'){loadDashboard();}
 }
-showPanel('generar');
+showPanel('dashboard');
 
 // ── Generar informe ──
 document.getElementById('btn-generar').addEventListener('click',()=>{
@@ -538,6 +594,81 @@ function exportarRec(){
   };
   fetch('/api/sintia/rec/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(params)})
     .then(r=>r.blob()).then(b=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='Res_Rechazos_'+hoy()+'.xlsx';a.click();});
+}
+
+// ── Dashboard ──
+let _dashCharts = {};
+let _dashLoaded = false;
+
+async function loadDashboard() {
+  if (_dashLoaded) return;
+  const loading = document.getElementById('dash-loading');
+  const error   = document.getElementById('dash-error');
+  const content = document.getElementById('dash-content');
+  loading.style.display = 'block';
+  error.style.display   = 'none';
+  content.style.display = 'none';
+
+  try {
+    const r = await fetch('/api/sintia/dashboard');
+    const d = await r.json();
+    if (!d.ok) { error.textContent = d.error; error.style.display='block'; loading.style.display='none'; return; }
+
+    // KPIs
+    document.getElementById('dash-total-mes').textContent = d.total_mes.toLocaleString('es-AR');
+    document.getElementById('dash-total-ant').textContent = d.total_ant.toLocaleString('es-AR');
+    document.getElementById('dash-novedad').textContent   = d.con_novedad.toLocaleString('es-AR');
+    document.getElementById('dash-rechazos').textContent  = d.rechazos_mes.toLocaleString('es-AR');
+
+    const vari = d.variacion;
+    const variEl = document.getElementById('dash-variacion');
+    variEl.textContent = (vari >= 0 ? '▲ +' : '▼ ') + vari + '% vs mes anterior';
+    variEl.style.color = vari >= 0 ? 'var(--accent2)' : 'var(--danger)';
+    document.getElementById('dash-mes-ant-label').textContent = 'mes anterior';
+
+    const destroyChart = (id) => { if (_dashCharts[id]) { _dashCharts[id].destroy(); delete _dashCharts[id]; } };
+
+    // Gráfico por país
+    destroyChart('pais');
+    _dashCharts['pais'] = new Chart(document.getElementById('dash-chart-pais'), {
+      type: 'bar',
+      data: {
+        labels: Object.keys(d.por_pais),
+        datasets: [{ data: Object.values(d.por_pais), backgroundColor: ['#1A56DB','#057A55','#D97706','#DC2626','#7C3AED'], borderRadius: 4 }]
+      },
+      options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } }, responsive: true }
+    });
+
+    // Gráfico por estado
+    destroyChart('estado');
+    _dashCharts['estado'] = new Chart(document.getElementById('dash-chart-estado'), {
+      type: 'doughnut',
+      data: {
+        labels: Object.keys(d.por_estado),
+        datasets: [{ data: Object.values(d.por_estado), backgroundColor: ['#057A55','#DC2626','#6B7280'], borderWidth: 2 }]
+      },
+      options: { plugins: { legend: { position: 'bottom' } }, responsive: true }
+    });
+
+    // Gráfico evolución
+    destroyChart('evol');
+    _dashCharts['evol'] = new Chart(document.getElementById('dash-chart-evol'), {
+      type: 'line',
+      data: {
+        labels: d.evolucion.map(e => e.mes),
+        datasets: [{ data: d.evolucion.map(e => e.total), borderColor: '#1A56DB', backgroundColor: 'rgba(26,86,219,.1)', fill: true, tension: .3, pointRadius: 4 }]
+      },
+      options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } }, responsive: true }
+    });
+
+    loading.style.display = 'none';
+    content.style.display = 'block';
+    _dashLoaded = true;
+  } catch(e) {
+    error.textContent = 'Error al cargar métricas.';
+    error.style.display = 'block';
+    loading.style.display = 'none';
+  }
 }
 </script>
 </body>
