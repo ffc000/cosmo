@@ -203,12 +203,7 @@ select option{background:var(--surface)}
       <div class="sub">CosmoTools</div>
     </div>
     <nav class="sidebar-nav">
-      <div class="nav-section">CosmoTools</div>
-      <div class="nav-item" onclick="location.href='/sintia'"><span class="nav-icon">📊</span><span class="nav-label">SINTIA</span></div>
-      <div class="nav-item" onclick="location.href='/vua'"><span class="nav-icon">✈️</span><span class="nav-label">VUA</span></div>
-      <div class="nav-item" onclick="location.href='/senasa'"><span class="nav-icon">🌿</span><span class="nav-label">SENASA</span></div>
-      <div class="nav-item" onclick="location.href='/stock'"><span class="nav-icon">🏭</span><span class="nav-label">Stock Depósitos</span></div>
-      <div class="nav-item" onclick="location.href='/training'"><span class="nav-icon">🏃</span><span class="nav-label">Training</span></div>
+      {% include '_sidebar_nav.html' %}
       <div class="nav-section">Base de datos</div>
       <div class="nav-item active" data-tab="actualizar"><span class="nav-icon">🔄</span><span class="nav-label">Actualización semanal</span></div>
       <div class="nav-item" data-tab="historial"><span class="nav-icon">📁</span><span class="nav-label">Historial</span>{% if pendientes %}<span class="badge">{{ pendientes|length }}</span>{% endif %}</div>
@@ -218,11 +213,8 @@ select option{background:var(--surface)}
       <div class="nav-item" data-tab="sesiones"><span class="nav-icon">🔌</span><span class="nav-label">Sesiones activas</span></div>
       <div class="nav-item" data-tab="prompts"><span class="nav-icon">🧠</span><span class="nav-label">Prompts IA</span></div>
     </nav>
-    <div class="sidebar-footer">
-      <span class="db-pill {% if db_exists %}ok{% else %}missing{% endif %}">{% if db_exists %}✓ BD {{ db_size }} GB{% else %}BD no cargada{% endif %}</span>
-      <a href="/" class="back-link">← Inicio</a>
-      <a href="/logout" class="logout">Salir</a>
-    </div>
+    <span class="db-pill {% if db_exists %}ok{% else %}missing{% endif %}">{% if db_exists %}✓ BD {{ db_size }} GB{% else %}BD no cargada{% endif %}</span>
+    {% include '_sidebar_footer.html' %}
   </div>
 
   <div class="main">
