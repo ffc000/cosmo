@@ -135,6 +135,25 @@ def crear_tarjeta(db_path: str, nombre: str, motor: str, dia_cierre: int = None)
     return tid
 
 
+# ── Categorías ─────────────────────────────────────────────────────────────
+def crear_categoria(db_path: str, nombre: str, color: str = "#9CA3AF", presupuesto_mensual: float = 0):
+    """id determinístico a partir del nombre (slug, sin acentos), para evitar
+    duplicados obvios si el usuario intenta crear 'Mascotas' dos veces."""
+    import unicodedata
+    sin_acentos = unicodedata.normalize("NFKD", nombre.strip().lower()).encode("ascii", "ignore").decode()
+    slug = re.sub(r"[^a-z0-9]+", "_", sin_acentos).strip("_") or str(uuid.uuid4())[:8]
+    con = sqlite3.connect(db_path); con.row_factory = sqlite3.Row
+    existente = con.execute("SELECT id FROM fin_categorias WHERE id=?", (slug,)).fetchone()
+    if existente:
+        con.close()
+        raise ValueError(f"Ya existe una categoría con ese nombre")
+    orden = con.execute("SELECT COALESCE(MAX(orden),0)+1 FROM fin_categorias").fetchone()[0]
+    con.execute("INSERT INTO fin_categorias (id,nombre,presupuesto_mensual,color,orden) VALUES (?,?,?,?,?)",
+                (slug, nombre.strip(), presupuesto_mensual, color, orden))
+    con.commit(); con.close()
+    return slug
+
+
 # ── Categorización ─────────────────────────────────────────────────────────
 def _normalizar(desc: str) -> str:
     return re.sub(r"\s+", " ", desc.upper()).strip()
@@ -201,10 +220,20 @@ def guardar_resumen(db_path: str, tarjeta_id: str, archivo_nombre: str,
 
 def guardar_movimientos(db_path: str, tarjeta_id: str, resumen_id: str, movimientos: list,
                          origen: str = "pdf"):
-    """Inserta/actualiza movimientos ya parseados, auto-categorizando los que
-    matchean alguna regla. Devuelve la lista enriquecida con id/categoria para
-    que el caller arme la previsualización editable."""
-    con = sqlite3.connect(db_path)
+    """Inserta/actualiza movimientos ya parseados.
+
+    Prioridad para decidir la categoría de cada movimiento:
+      1. Si ya existía y el usuario la había corregido a mano (categoria_manual=1),
+         no se toca — aunque se vuelva a subir el mismo resumen.
+      2. Si el caller ya trae una categoria_id elegida (ej. la que el usuario
+         seleccionó en la previsualización antes de confirmar), se respeta.
+      3. Si no, se hereda la de otra cuota de la misma compra.
+      4. Si no, se auto-categoriza por reglas.
+      5. Los cargos (intereses/impuestos) siempre van a 'cargos_tarjeta'.
+
+    Devuelve la lista enriquecida con id/categoria para la previsualización.
+    """
+    con = sqlite3.connect(db_path); con.row_factory = sqlite3.Row
     ahora = datetime.now().isoformat()
     resultado = []
     for m in movimientos:
@@ -214,31 +243,35 @@ def guardar_movimientos(db_path: str, tarjeta_id: str, resumen_id: str, movimien
         compra_clave = _compra_clave(tarjeta_id, m["descripcion"], m.get("comprobante", ""),
                                       m.get("cuota_total"))
 
-        categoria_id = None
-        if m["tipo"] == "consumo":
-            # si ya categorizamos otra cuota de la misma compra, heredar esa categoría
-            if compra_clave:
-                prev = con.execute(
-                    "SELECT categoria_id FROM fin_movimientos WHERE compra_clave=? AND categoria_id IS NOT NULL LIMIT 1",
-                    (compra_clave,)).fetchone()
-                if prev:
-                    categoria_id = prev[0]
-            if not categoria_id:
-                categoria_id = categorizar(db_path, m["descripcion"])
-        elif m["tipo"] == "cargo":
-            categoria_id = "cargos_tarjeta"
+        existente = con.execute(
+            "SELECT categoria_id, categoria_manual FROM fin_movimientos WHERE id=?", (mid,)
+        ).fetchone()
+
+        if existente and existente["categoria_manual"]:
+            categoria_id = existente["categoria_id"]
+        else:
+            categoria_id = m.get("categoria_id") or None
+            if m["tipo"] == "consumo":
+                if not categoria_id and compra_clave:
+                    prev = con.execute(
+                        "SELECT categoria_id FROM fin_movimientos WHERE compra_clave=? AND categoria_id IS NOT NULL LIMIT 1",
+                        (compra_clave,)).fetchone()
+                    if prev:
+                        categoria_id = prev["categoria_id"]
+                if not categoria_id:
+                    categoria_id = categorizar(db_path, m["descripcion"])
+            elif m["tipo"] == "cargo":
+                categoria_id = "cargos_tarjeta"
 
         con.execute("""INSERT OR REPLACE INTO fin_movimientos
             (id,tarjeta_id,resumen_id,compra_clave,fecha,descripcion,comprobante,
              monto_ars,monto_usd,cuota_actual,cuota_total,tipo,categoria_id,
              categoria_manual,origen,creado)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,
-                    COALESCE((SELECT categoria_manual FROM fin_movimientos WHERE id=?),0),
-                    ?,?)""",
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (mid, tarjeta_id, resumen_id, compra_clave, m["fecha"], m["descripcion"],
              m.get("comprobante", ""), m["monto_ars"], m["monto_usd"],
              m.get("cuota_actual"), m.get("cuota_total"), m["tipo"], categoria_id,
-             mid, origen, ahora))
+             int(existente["categoria_manual"]) if existente else 0, origen, ahora))
 
         resultado.append({**m, "id": mid, "compra_clave": compra_clave, "categoria_id": categoria_id})
 
@@ -263,8 +296,12 @@ def recategorizar_movimiento(db_path: str, movimiento_id: str, categoria_id: str
     con.commit()
 
     if aprender:
-        # palabra clave = primer "token" significativo de la descripción (ej. "RAPPI" de "RAPPI ARG S.A.S.")
-        primer_token = _normalizar(mov["descripcion"]).split(" ")[0]
+        # palabra clave = comercio real, no el procesador de pago
+        # (ej. de "MERPAGO*GARMIN" o "PAYU*AR*ADIDAS" aprender "GARMIN"/"ADIDAS", no el prefijo)
+        normalizado = _normalizar(mov["descripcion"])
+        partes = normalizado.split("*")
+        candidato = partes[-1].strip() if len(partes) > 1 else normalizado
+        primer_token = candidato.split(" ")[0]
         con.close()
         if len(primer_token) >= 4:
             aprender_regla(db_path, primer_token, categoria_id)
@@ -272,6 +309,15 @@ def recategorizar_movimiento(db_path: str, movimiento_id: str, categoria_id: str
 
     con.close()
     return True
+
+
+def eliminar_movimiento(db_path: str, movimiento_id: str) -> bool:
+    con = sqlite3.connect(db_path)
+    cur = con.execute("DELETE FROM fin_movimientos WHERE id=?", (movimiento_id,))
+    con.commit()
+    borrado = cur.rowcount > 0
+    con.close()
+    return borrado
 
 
 # ── Presupuesto y resumen mensual ──────────────────────────────────────────

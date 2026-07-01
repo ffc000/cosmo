@@ -5298,13 +5298,17 @@ def api_fin_confirmar():
     if not tarjeta_id or not movimientos:
         return jsonify({"ok": False, "error": "Faltan datos"})
 
-    resumen_id = fin.guardar_resumen(
-        HIST_DB, tarjeta_id, data.get("archivo_nombre", ""),
-        data.get("periodo_desde"), data.get("periodo_hasta"),
-        data.get("total_declarado_ars") or 0, data.get("total_calculado_ars") or 0,
-        bool(data.get("validado")), session.get("username", "?"))
+    try:
+        resumen_id = fin.guardar_resumen(
+            HIST_DB, tarjeta_id, data.get("archivo_nombre", ""),
+            data.get("periodo_desde"), data.get("periodo_hasta"),
+            data.get("total_declarado_ars") or 0, data.get("total_calculado_ars") or 0,
+            bool(data.get("validado")), session.get("username", "?"))
+        guardados = fin.guardar_movimientos(HIST_DB, tarjeta_id, resumen_id, movimientos)
+    except (KeyError, TypeError, ValueError) as e:
+        logging.error(f"FINANZAS CONFIRMAR ERROR | {e}")
+        return jsonify({"ok": False, "error": f"Los datos recibidos no tienen el formato esperado: {e}"})
 
-    guardados = fin.guardar_movimientos(HIST_DB, tarjeta_id, resumen_id, movimientos)
     logging.info(f"FINANZAS UPLOAD | user={session.get('username')} | tarjeta={tarjeta_id} | movs={len(guardados)}")
     return jsonify({"ok": True, "resumen_id": resumen_id, "guardados": len(guardados)})
 
@@ -5366,6 +5370,16 @@ def api_fin_recategorizar(mov_id):
     return jsonify({"ok": ok})
 
 
+@app.route("/api/finanzas/movimientos/<mov_id>", methods=["DELETE"])
+@login_required
+def api_fin_eliminar_movimiento(mov_id):
+    ok = fin.eliminar_movimiento(HIST_DB, mov_id)
+    if not ok:
+        return jsonify({"ok": False, "error": "No se encontró el movimiento"})
+    logging.info(f"FINANZAS DELETE | user={session.get('username')} | mov={mov_id}")
+    return jsonify({"ok": True})
+
+
 @app.route("/api/finanzas/categorias", methods=["GET"])
 @login_required
 def api_fin_categorias():
@@ -5373,6 +5387,22 @@ def api_fin_categorias():
     rows = [dict(r) for r in con.execute("SELECT * FROM fin_categorias ORDER BY orden").fetchall()]
     con.close()
     return jsonify({"ok": True, "rows": rows})
+
+
+@app.route("/api/finanzas/categorias", methods=["POST"])
+@login_required
+def api_fin_crear_categoria():
+    data = request.json or {}
+    nombre = (data.get("nombre") or "").strip()
+    color = data.get("color") or "#9CA3AF"
+    presupuesto_mensual = data.get("presupuesto_mensual") or 0
+    if not nombre:
+        return jsonify({"ok": False, "error": "Falta el nombre de la categoría"})
+    try:
+        cat_id = fin.crear_categoria(HIST_DB, nombre, color, float(presupuesto_mensual))
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)})
+    return jsonify({"ok": True, "id": cat_id})
 
 
 @app.route("/api/finanzas/categorias/<cat_id>/presupuesto", methods=["POST"])

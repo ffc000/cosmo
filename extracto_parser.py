@@ -237,14 +237,16 @@ def parse_galicia(paginas_texto: list[str]) -> list[dict]:
                 desc = desc.replace(m_cuota.group(0), "")
             desc = re.sub(NUM_RE, "", desc)
             desc = re.sub(r"\bUSD\b", "", desc, flags=re.IGNORECASE)
-            desc = re.sub(r"\b\d{5,9}\b", "", desc)  # comprobante suelto
+            m_comp = re.search(r"\b(\d{5,9})\b", desc)
+            comprobante = m_comp.group(1) if m_comp else ""
+            desc = re.sub(r"\b\d{5,9}\b", "", desc)  # comprobante suelto (ya capturado arriba)
             desc = re.sub(r"^[*K]\s*", "", desc.strip())
             desc = desc.strip(" -*")
 
             movimientos.append({
                 "fecha": fecha,
                 "descripcion": desc or resto.strip(),
-                "comprobante": "",
+                "comprobante": comprobante,
                 "monto_ars": round(monto_ars, 2),
                 "monto_usd": round(monto_usd, 2),
                 "cuota_actual": cuota_actual,
