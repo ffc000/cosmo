@@ -310,7 +310,7 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
           </div>
           <div style="overflow-x:auto">
             <table class="data-table" style="font-size:.75rem">
-              <thead><tr><th>Fecha</th><th>Tarjeta</th><th>Descripción</th><th>Monto</th><th>Tipo</th><th>Categoría</th></tr></thead>
+              <thead><tr><th>Fecha</th><th>Tarjeta</th><th>Descripción</th><th>Monto</th><th>Tipo</th><th>Categoría</th><th></th></tr></thead>
               <tbody id="mov-body"><tr><td colspan="6" style="text-align:center;color:var(--muted);padding:1.5rem">Cargando...</td></tr></tbody>
             </table>
           </div>
@@ -342,6 +342,16 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
           <div id="cat-resumen-bar" style="margin-bottom:1rem"></div>
           <div id="cat-error" style="display:none" class="alert alert-danger"></div>
           <div id="cat-presu-list"></div>
+        </div>
+
+        <div class="card" style="max-width:480px">
+          <div class="card-title">Nueva categoría</div>
+          <div class="form-row cols2">
+            <div><label>Nombre</label><input type="text" id="ncat-nombre" placeholder="Ej: Educación"></div>
+            <div><label>Color</label><input type="color" id="ncat-color" value="#9CA3AF" style="height:2.4rem;padding:.2rem"></div>
+          </div>
+          <button class="btn btn-fin btn-full" style="margin-top:.6rem" onclick="crearCategoria()">+ Agregar categoría</button>
+          <div id="ncat-estado" style="margin-top:.6rem"></div>
         </div>
       </div>
 
@@ -600,7 +610,7 @@ async function cargarMovimientos() {
   const d = await (await fetch(url)).json();
   const body = document.getElementById('mov-body');
   if (!d.ok || !d.rows.length) {
-    body.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:1.5rem">Sin movimientos.</td></tr>';
+    body.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:1.5rem">Sin movimientos.</td></tr>';
     return;
   }
   body.innerHTML = d.rows.map(m => `
@@ -616,15 +626,27 @@ async function cargarMovimientos() {
            </select>`
         : (m.categoria_nombre || '—')}
       </td>
+      <td><button class="btn btn-outline btn-sm" title="Eliminar" onclick="eliminarMovimiento('${m.id}')">🗑️</button></td>
     </tr>`).join('');
+}
+
+async function eliminarMovimiento(id) {
+  if (!confirm('¿Eliminar este movimiento? No se puede deshacer.')) return;
+  const d = await (await fetch(`/api/finanzas/movimientos/${id}`, { method: 'DELETE' })).json();
+  if (d.ok) {
+    cargarMovimientos();
+  } else {
+    alert(d.error || 'No se pudo eliminar');
+  }
 }
 
 async function recategorizar(id, categoria_id) {
   if (!categoria_id) return;
-  await fetch(`/api/finanzas/movimientos/${id}/categoria`, {
+  const d = await (await fetch(`/api/finanzas/movimientos/${id}/categoria`, {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ categoria_id, aprender: true })
-  });
+  })).json();
+  if (!d.ok) alert('No se pudo actualizar la categoría.');
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -718,6 +740,24 @@ async function guardarPresupuestoCategoria(cat_id) {
   }
   errEl.style.display = 'none';
   cargarCategoriasPresupuesto();
+}
+
+async function crearCategoria() {
+  const nombre = document.getElementById('ncat-nombre').value.trim();
+  const color = document.getElementById('ncat-color').value;
+  const estado = document.getElementById('ncat-estado');
+  if (!nombre) { estado.innerHTML = '<div class="alert alert-danger">Poné un nombre.</div>'; return; }
+  const d = await (await fetch('/api/finanzas/categorias', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ nombre, color })
+  })).json();
+  if (d.ok) {
+    estado.innerHTML = `<div class="alert alert-ok">✓ Categoría "${nombre}" creada.</div>`;
+    document.getElementById('ncat-nombre').value = '';
+    cargarCategoriasPresupuesto();
+  } else {
+    estado.innerHTML = `<div class="alert alert-danger">${d.error}</div>`;
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
