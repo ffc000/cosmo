@@ -1,0 +1,7 @@
+<div class="sidebar-footer">
+  <a href="/" class="back-link">← Inicio</a>
+  {% if session.get('role')=='admin' or 'admin_bd' in session.get('modulos',[]) or 'admin_sistema' in session.get('modulos',[]) %}
+  <a href="/admin" class="back-link" style="margin-bottom:.2rem">⚙ Administración</a>
+  {% endif %}
+  <a href="/logout" class="logout">Salir</a>
+</div>
