@@ -1,0 +1,1669 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CosmoTools — Training</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#F0F4F8;--surface:#FFFFFF;--surface2:#F8FAFC;
+  --sidebar-bg:#1E2A3B;--sidebar-hover:rgba(255,255,255,.06);--sidebar-active:rgba(41,121,200,.15);
+  --border:#E5E7EB;--border-dark:rgba(255,255,255,.08);
+  --accent:#1A56DB;--accent-hover:#1447C0;--accent-light:#EBF5FF;
+  --accent2:#057A55;--accent2-light:#F0FFF4;
+  --warn:#D97706;--warn-light:#FFFBEB;
+  --danger:#DC2626;--danger-light:#FEF2F2;
+  --garmin:#00A0E9;--garmin-light:#E0F4FF;
+  --text:#111928;--text-sub:#374151;--muted:#6B7280;--dim:#9CA3AF;
+  --text-sidebar:#CBD5E1;--text-sidebar-muted:#64748B;
+  --mono:'IBM Plex Mono',monospace;--sans:'IBM Plex Sans',sans-serif;
+  --radius:8px;--radius-sm:4px;
+  --shadow-sm:0 1px 3px rgba(0,0,0,.07);--shadow:0 4px 12px rgba(0,0,0,.08);
+  --sidebar-w:230px;
+  --running:#1A56DB;--cycling:#057A55;--swimming:#0891B2;
+  --triathlon:#7C3AED;--strength:#D97706;--other:#6B7280;
+  --fase1:#1A56DB;--fase2:#7C3AED;--fase3:#D97706;--fase4:#DC2626;
+}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
+.app{display:flex;flex:1;min-height:0}
+
+/* ── Sidebar ── */
+.sidebar{width:var(--sidebar-w);min-width:var(--sidebar-w);background:var(--sidebar-bg);display:flex;flex-direction:column;z-index:50;transition:transform .25s ease}
+.sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:40}
+.sidebar-brand{padding:1.4rem 1.4rem 1rem;border-bottom:1px solid var(--border-dark)}
+.sidebar-brand .name{font-family:var(--mono);font-size:.92rem;font-weight:600;color:#fff}
+.sidebar-brand .sub{font-size:.65rem;color:var(--text-sidebar-muted);margin-top:.2rem}
+.sidebar-nav{flex:1;padding:.6rem 0;overflow-y:auto}
+.nav-section{font-family:var(--mono);font-size:.58rem;color:var(--text-sidebar-muted);letter-spacing:.18em;text-transform:uppercase;padding:.8rem 1.4rem .3rem}
+.nav-item{display:flex;align-items:center;gap:.7rem;padding:.62rem 1.4rem;cursor:pointer;color:var(--text-sidebar-muted);font-size:.82rem;transition:all .15s;border-left:2px solid transparent;user-select:none}
+.nav-item:hover{color:var(--text-sidebar);background:var(--sidebar-hover)}
+.nav-item.active{color:#fff;background:var(--sidebar-active);border-left-color:var(--accent)}
+.nav-item.active-garmin{color:#fff;background:rgba(0,160,233,.15);border-left-color:var(--garmin)}
+.nav-icon{font-size:.9rem;width:18px;text-align:center;flex-shrink:0}
+.sidebar-footer{padding:.9rem 1.4rem;border-top:1px solid var(--border-dark)}
+.back-link{font-size:.72rem;color:var(--text-sidebar-muted);text-decoration:none;display:block;margin-bottom:.4rem;transition:color .15s}
+.back-link:hover{color:var(--text-sidebar)}
+.logout{font-size:.72rem;color:var(--text-sidebar-muted);text-decoration:none}
+
+/* ── Main ── */
+.main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.topbar{background:var(--surface);border-bottom:1px solid var(--border);padding:.75rem 1.75rem;display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-shrink:0;box-shadow:var(--shadow-sm)}
+.topbar-left{display:flex;align-items:center;gap:.75rem}
+.hamburger{display:none;background:none;border:none;color:var(--muted);font-size:1.3rem;cursor:pointer;padding:.25rem;line-height:1;min-width:36px}
+.topbar-title{font-family:var(--mono);font-size:.78rem;color:var(--accent);letter-spacing:.08em;font-weight:600}
+.topbar-actions{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+.topbar-user{font-family:var(--mono);font-size:.7rem;color:var(--muted)}
+.content{flex:1;padding:1.75rem;overflow-y:auto}
+.panel{display:none}.panel.active{display:block}
+
+/* ── Cards & Forms ── */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;margin-bottom:1.25rem;box-shadow:var(--shadow-sm)}
+.card-title{font-family:var(--mono);font-size:.65rem;color:var(--muted);letter-spacing:.14em;text-transform:uppercase;margin-bottom:.9rem;font-weight:600}
+label{display:block;font-size:.7rem;font-weight:600;color:var(--text-sub);letter-spacing:.05em;text-transform:uppercase;margin-bottom:.3rem}
+input[type=text],input[type=date],input[type=number],input[type=password],select,textarea{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:var(--mono);font-size:.85rem;padding:.55rem .8rem;outline:none;transition:border-color .2s}
+input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(26,86,219,.1)}
+textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85rem}
+.form-row{display:grid;gap:.9rem;margin-bottom:.9rem}
+.form-row.cols2{grid-template-columns:1fr 1fr}
+.form-row.cols3{grid-template-columns:1fr 1fr 1fr}
+
+/* ── Buttons ── */
+.btn{display:inline-flex;align-items:center;gap:.5rem;border:none;border-radius:var(--radius-sm);cursor:pointer;font-family:var(--sans);font-weight:600;font-size:.85rem;padding:.6rem 1.2rem;transition:all .15s}
+.btn-primary{background:var(--accent);color:#fff}.btn-primary:hover{background:var(--accent-hover)}
+.btn-primary:disabled{background:var(--dim);cursor:not-allowed}
+.btn-outline{background:var(--surface);color:var(--text-sub);border:1px solid var(--border)}.btn-outline:hover{border-color:var(--accent);color:var(--accent)}
+.btn-danger{background:var(--danger-light);color:var(--danger);border:1px solid rgba(220,38,38,.2)}
+.btn-garmin{background:var(--garmin);color:#fff}.btn-garmin:hover{background:#0088c7}
+.btn-sm{padding:.3rem .75rem;font-size:.75rem}
+.btn-full{width:100%;justify-content:center}
+
+/* ── Alerts ── */
+.alert{padding:.75rem 1rem;border-radius:var(--radius-sm);font-size:.82rem;margin-bottom:.9rem}
+.alert-info{background:var(--accent-light);border:1px solid rgba(26,86,219,.2);color:var(--accent)}
+.alert-ok{background:var(--accent2-light);border:1px solid rgba(5,122,85,.2);color:var(--accent2)}
+.alert-warn{background:var(--warn-light);border:1px solid rgba(217,119,6,.2);color:var(--warn)}
+.alert-danger{background:var(--danger-light);border:1px solid rgba(220,38,38,.2);color:var(--danger)}
+
+/* ── Tables ── */
+.data-table{width:100%;border-collapse:collapse;font-size:.8rem}
+.data-table th{font-family:var(--mono);font-size:.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;padding:.5rem .75rem;text-align:left;border-bottom:2px solid var(--border);background:var(--surface2)}
+.data-table td{padding:.55rem .75rem;border-bottom:1px solid var(--border);vertical-align:middle;color:var(--text-sub)}
+.data-table tr:hover td{background:var(--bg);cursor:pointer}
+
+/* ── Garmin specific ── */
+.tipo-badge{font-family:var(--mono);font-size:.65rem;padding:.18rem .55rem;border-radius:20px;font-weight:600;display:inline-block}
+.tipo-running{background:#EBF5FF;color:var(--running);border:1px solid rgba(26,86,219,.2)}
+.tipo-cycling{background:#F0FFF4;color:var(--cycling);border:1px solid rgba(5,122,85,.2)}
+.tipo-swimming{background:#E0F7FA;color:var(--swimming);border:1px solid rgba(8,145,178,.2)}
+.tipo-triathlon{background:#F5F3FF;color:var(--triathlon);border:1px solid rgba(124,58,237,.2)}
+.tipo-strength{background:#FFFBEB;color:var(--strength);border:1px solid rgba(217,119,6,.2)}
+.tipo-other{background:var(--surface2);color:var(--muted);border:1px solid var(--border)}
+.stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1.25rem}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1rem 1.25rem;box-shadow:var(--shadow-sm)}
+.stat-val{font-family:var(--mono);font-size:1.5rem;font-weight:600;color:var(--text)}
+.stat-lbl{font-size:.72rem;color:var(--muted);margin-top:.2rem}
+.filter-bar{display:flex;gap:.6rem;align-items:center;margin-bottom:1rem;flex-wrap:wrap}
+.filter-bar select{width:auto}
+.sync-progress{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:.75rem 1rem;margin-top:.75rem;display:none}
+.progress-bar{height:6px;background:var(--border);border-radius:3px;overflow:hidden;margin-top:.2rem}
+.progress-fill{height:100%;border-radius:3px;background:var(--accent);transition:width .4s}
+.metric-row{display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:.75rem}
+.metric{display:flex;flex-direction:column}
+.metric-val{font-family:var(--mono);font-size:1.1rem;font-weight:600;color:var(--text)}
+.metric-lbl{font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+
+/* ── Training specific ── */
+.semanas-nav{display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:1.25rem}
+.sem-btn{font-family:var(--mono);font-size:.72rem;padding:.3rem .7rem;border-radius:20px;border:1px solid var(--border);background:var(--surface);color:var(--muted);cursor:pointer;transition:all .15s}
+.sem-btn:hover{border-color:var(--accent);color:var(--accent)}
+.sem-btn.actual{background:var(--accent);color:#fff;border-color:var(--accent)}
+.sem-btn.descarga{border-color:var(--warn);color:var(--warn)}
+.sem-btn.descarga.actual{background:var(--warn);color:#fff}
+.fase-badge{font-family:var(--mono);font-size:.65rem;padding:.2rem .6rem;border-radius:20px;font-weight:600;display:inline-block;margin-bottom:.75rem}
+.fase-1{background:#EBF5FF;color:var(--fase1);border:1px solid rgba(26,86,219,.2)}
+.fase-2{background:#F5F3FF;color:var(--fase2);border:1px solid rgba(124,58,237,.2)}
+.fase-3{background:#FFFBEB;color:var(--fase3);border:1px solid rgba(217,119,6,.2)}
+.fase-4{background:#FEF2F2;color:var(--fase4);border:1px solid rgba(220,38,38,.2)}
+.dia-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:.6rem;margin-bottom:1rem}
+.dia-col{display:flex;flex-direction:column;gap:.4rem}
+.hist-cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:.4rem;margin-top:.8rem}
+.hist-cal-dow{font-family:var(--mono);font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;text-align:center;padding-bottom:.2rem}
+.hist-cal-day{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);min-height:4.2rem;padding:.35rem;font-size:.68rem;cursor:pointer;transition:all .15s}
+.hist-cal-day:hover{border-color:var(--accent)}
+.hist-cal-day.empty{visibility:hidden}
+.hist-cal-day.today{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.hist-cal-day .num{font-family:var(--mono);color:var(--muted)}
+.hist-cal-day .pills{display:flex;flex-wrap:wrap;gap:.2rem;margin-top:.25rem}
+.hist-cal-pill{font-size:.85rem;line-height:1}
+.dia-header{font-family:var(--mono);font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;padding-bottom:.4rem;border-bottom:1px solid var(--border)}
+.sesion-card{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:.6rem .7rem;font-size:.75rem;color:var(--text-sub);line-height:1.45;cursor:pointer;transition:all .15s;position:relative}
+.sesion-card:hover{border-color:var(--accent);background:var(--accent-light)}
+.sesion-turno{font-family:var(--mono);font-size:.6rem;color:var(--muted);text-transform:uppercase;margin-bottom:.2rem}
+.sesion-card.race{border-color:var(--danger);background:var(--danger-light);font-weight:600;color:var(--danger)}
+
+/* ── Claude chat ── */
+.ia-box{background:var(--accent-light);border:1px solid rgba(26,86,219,.2);border-radius:var(--radius-sm);padding:1rem;font-size:.82rem;line-height:1.7;white-space:pre-wrap;display:none}
+.ia-box.visible{display:block}
+.claude-chat{display:flex;flex-direction:column;gap:.6rem}
+.claude-msg{padding:.75rem 1rem;border-radius:var(--radius-sm);font-size:.82rem;line-height:1.65;white-space:pre-wrap}
+.claude-user{background:var(--surface2);border:1px solid var(--border);align-self:flex-end;max-width:85%}
+.claude-resp{background:var(--accent-light);border:1px solid rgba(26,86,219,.2);color:var(--text)}
+.claude-input-row{display:flex;gap:.6rem;margin-top:.75rem}
+.claude-input-row input{flex:1}
+
+/* ── Modals ── */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:200;display:none;align-items:center;justify-content:center;padding:1rem}
+.modal-overlay.visible{display:flex}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.75rem;width:100%;max-width:560px;max-height:90vh;overflow-y:auto;box-shadow:var(--shadow)}
+.modal h3{font-size:.95rem;font-weight:600;color:var(--text);margin-bottom:1.1rem}
+.modal-actions{display:flex;gap:.6rem;justify-content:flex-end;margin-top:1.25rem}
+
+/* ── Animations ── */
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{width:13px;height:13px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;display:inline-block}
+.spinner-dark{border:2px solid rgba(0,0,0,.1);border-top-color:var(--accent)}
+
+/* ── Responsive ── */
+@media(max-width:1024px){.dia-grid{grid-template-columns:repeat(4,1fr)}}
+@media(max-width:768px){
+  .sidebar{position:fixed;top:0;left:0;bottom:0;transform:translateX(-100%)}
+  .sidebar.open{transform:translateX(0)}
+  .sidebar-overlay.visible{display:block}
+  .hamburger{display:block}
+  .topbar-user{display:none}
+  .content{padding:1.1rem}
+  .stat-grid{grid-template-columns:1fr 1fr}
+  .dia-grid{grid-template-columns:1fr 1fr}
+  .form-row.cols2,.form-row.cols3{grid-template-columns:1fr}
+  .data-table{font-size:.73rem}
+  .data-table th,.data-table td{padding:.4rem .5rem}
+  .metric-row{gap:.9rem}
+}
+</style>
+</head>
+<body>
+<div class="sidebar-overlay" id="sidebar-overlay"></div>
+<div class="app">
+
+  <!-- ── SIDEBAR ── -->
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <div class="name">Training</div>
+      <div class="sub">Garmin · Plan · Análisis</div>
+    </div>
+    <nav class="sidebar-nav">
+      {% include '_sidebar_nav.html' %}
+      <div class="nav-section">Garmin</div>
+      <div class="nav-item" id="nav-actividades" onclick="switchModule('garmin','actividades')"><span class="nav-icon">⌚</span><span class="nav-label">Actividades</span></div>
+      <div class="nav-item" id="nav-historial" onclick="switchModule('garmin','historial')"><span class="nav-icon">🗓️</span><span class="nav-label">Historial</span></div>
+      <div class="nav-item" id="nav-tendencias" onclick="switchModule('garmin','tendencias')"><span class="nav-icon">📈</span><span class="nav-label">Tendencias</span></div>
+      <div class="nav-item" id="nav-carga" onclick="switchModule('garmin','carga')"><span class="nav-icon">📊</span><span class="nav-label">Carga semanal</span></div>
+      <div class="nav-item" id="nav-comparar" onclick="switchModule('garmin','comparar')"><span class="nav-icon">🔁</span><span class="nav-label">Comparar sesiones</span></div>
+      <div class="nav-item" id="nav-progresion" onclick="switchModule('garmin','progresion')"><span class="nav-icon">🤖</span><span class="nav-label">Análisis IA</span></div>
+      <div class="nav-item" id="nav-config" onclick="switchModule('garmin','config')"><span class="nav-icon">⚙️</span><span class="nav-label">Configuración</span></div>
+      <div class="nav-section">Plan</div>
+      <div class="nav-item" id="nav-plan" onclick="switchModule('training','plan')"><span class="nav-icon">📅</span><span class="nav-label">Plan semanal</span></div>
+      <div class="nav-item" id="nav-log" onclick="switchModule('training','log')"><span class="nav-icon">📋</span><span class="nav-label">Registro</span></div>
+      <div class="nav-item" id="nav-claude" onclick="switchModule('training','claude')"><span class="nav-icon">💬</span><span class="nav-label">Asistente Claude</span></div>
+    </nav>
+    {% include '_sidebar_footer.html' %}
+  </div>
+
+  <!-- ── MAIN ── -->
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-left">
+        <button class="hamburger" id="hamburger">☰</button>
+        <div class="topbar-title" id="topbar-title">TRAINING / ACTIVIDADES</div>
+      </div>
+      <div class="topbar-actions" id="topbar-actions">
+        <button class="btn btn-garmin btn-sm" id="btn-sync-top" onclick="abrirSync()">🔄 Sync Garmin</button>
+        <span class="topbar-user">{{ username }}</span>
+      </div>
+    </div>
+
+    <div class="content">
+
+      <!-- ══ GARMIN PANELS ══ -->
+
+      <!-- Panel: Actividades -->
+      <div class="panel active" id="panel-actividades">
+        <div class="stat-grid" id="stats-grid">
+          <div class="stat-card"><div class="stat-val" id="st-total">—</div><div class="stat-lbl">Actividades</div></div>
+          <div class="stat-card"><div class="stat-val" id="st-running">—</div><div class="stat-lbl">Running</div></div>
+          <div class="stat-card"><div class="stat-val" id="st-cycling">—</div><div class="stat-lbl">Ciclismo</div></div>
+          <div class="stat-card"><div class="stat-val" id="st-sync">—</div><div class="stat-lbl">Última sync</div></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Actividades sincronizadas</div>
+          <div class="filter-bar">
+            <select id="filtro-tipo" onchange="cargarActividades()">
+              <option value="todas">Todos los tipos</option>
+              <option value="running">Running</option>
+              <option value="cycling">Ciclismo</option>
+              <option value="swimming">Natación</option>
+              <option value="triathlon">Triatlón</option>
+              <option value="strength">Fuerza/HX</option>
+              <option value="other">Otros</option>
+            </select>
+            <select id="filtro-limit" onchange="cargarActividades()">
+              <option value="50" selected>Últimas 50</option>
+              <option value="100">Últimas 100</option>
+              <option value="500">Todas</option>
+            </select>
+            <input type="date" id="filtro-desde" onchange="cargarActividades()" style="width:auto;font-size:.78rem;padding:.4rem .6rem" title="Desde">
+            <input type="date" id="filtro-hasta" onchange="cargarActividades()" style="width:auto;font-size:.78rem;padding:.4rem .6rem" title="Hasta">
+            <button class="btn btn-outline btn-sm" onclick="exportarCSV()" title="Exportar CSV">⬇ CSV</button>
+          </div>
+          <div id="tabla-actividades-wrap">
+            <table class="data-table">
+              <thead><tr><th>Fecha</th><th>Nombre</th><th>Tipo</th><th>Duración</th><th>Distancia</th><th>FC med</th><th>Análisis</th></tr></thead>
+              <tbody id="body-actividades"><tr><td colspan="7" style="color:var(--muted);text-align:center;padding:1.5rem">Cargando...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Panel: Historial (calendario de actividades realizadas) -->
+      <div class="panel" id="panel-historial">
+        <div class="card">
+          <div class="card-title" style="display:flex;align-items:center;gap:.6rem">
+            <button class="btn btn-outline btn-sm" onclick="navMesHist(-1)">‹</button>
+            <span id="hist-mes-label" style="font-family:var(--mono);font-size:.8rem;min-width:11rem;text-align:center">—</span>
+            <button class="btn btn-outline btn-sm" onclick="navMesHist(1)">›</button>
+            <span style="margin-left:auto;font-size:.72rem;color:var(--muted)" id="hist-mes-resumen"></span>
+          </div>
+          <div id="hist-cal-grid" class="hist-cal-grid"></div>
+        </div>
+        <div class="card" id="hist-dia-detalle" style="display:none">
+          <div class="card-title" id="hist-dia-titulo">Día</div>
+          <div id="hist-dia-body"></div>
+        </div>
+      </div>
+
+      <!-- Panel: Tendencias (todos los parámetros en el tiempo) -->
+      <div class="panel" id="panel-tendencias">
+        <div class="card">
+          <div class="card-title">Tendencias — todos los parámetros</div>
+          <div class="form-row cols2" style="margin-bottom:.75rem">
+            <div>
+              <label>Tipo</label>
+              <select id="tend-tipo" onchange="cargarTendencias()">
+                <option value="todas">Todos los tipos</option>
+                <option value="running">Running</option>
+                <option value="cycling">Ciclismo</option>
+                <option value="swimming">Natación</option>
+                <option value="strength">Fuerza/HX</option>
+              </select>
+            </div>
+            <div>
+              <label>Período</label>
+              <select id="tend-periodo" onchange="cargarTendencias()">
+                <option value="7">Última semana</option>
+                <option value="15">Últimos 15 días</option>
+                <option value="30" selected>Último mes</option>
+                <option value="90">Últimos 3 meses</option>
+                <option value="180">Últimos 6 meses</option>
+                <option value="0">Histórico completo</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row" style="margin-bottom:.75rem">
+            <div>
+              <label>Parámetros a graficar</label>
+              <select id="tend-metricas" multiple size="1" onchange="renderTendencias()" style="height:auto">
+                <option value="fc_media" selected>FC media</option>
+                <option value="fc_max">FC máxima</option>
+                <option value="tss">TSS</option>
+                <option value="vo2max">VO2max</option>
+                <option value="aerobic_te">TE Aeróbico</option>
+                <option value="anaerobic_te">TE Anaeróbico</option>
+                <option value="hrv_weekly_avg">HRV semanal</option>
+                <option value="body_battery_drained">Body Battery gastada</option>
+                <option value="stress_durante">Estrés medio</option>
+                <option value="load_primario">Carga</option>
+                <option value="tiempo_recuperacion">Recuperación (h)</option>
+                <option value="cadencia">Cadencia</option>
+                <option value="potencia_media">Potencia media</option>
+                <option value="ground_contact">Contacto suelo</option>
+                <option value="vertical_osc">Osc. vertical</option>
+                <option value="stride_length">Long. zancada</option>
+                <option value="ftp">FTP</option>
+                <option value="swolf">SWOLF</option>
+              </select>
+            </div>
+          </div>
+          <div style="font-size:.68rem;color:var(--muted);margin-bottom:.5rem">Ctrl/Cmd + click para seleccionar varios parámetros a la vez.</div>
+          <div style="width:100%;overflow-x:auto;height:320px"><canvas id="canvas-tendencias"></canvas></div>
+        </div>
+      </div>
+
+      <!-- Panel: Carga semanal -->
+      <div class="panel" id="panel-carga">
+        <div class="card">
+          <div class="card-title">Carga semanal &amp; Forma</div>
+          <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:1rem">
+            <div class="stat-card"><div class="stat-val" id="carga-atl">—</div><div class="stat-lbl">ATL — Fatiga (7d)</div></div>
+            <div class="stat-card"><div class="stat-val" id="carga-ctl">—</div><div class="stat-lbl">CTL — Forma (42d)</div></div>
+            <div class="stat-card"><div class="stat-val" id="carga-tsb">—</div><div class="stat-lbl">TSB — Frescura</div></div>
+          </div>
+          <div style="width:100%;overflow-x:auto;height:280px"><canvas id="canvas-carga"></canvas></div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.5rem">ATL &gt; CTL = fatiga acumulada · TSB positivo = frescura · TSB negativo = bajo forma</div>
+        </div>
+      </div>
+
+      <!-- Panel: Comparar -->
+      <div class="panel" id="panel-comparar">
+        <div class="card">
+          <div class="card-title">Comparación de sesiones</div>
+          <div class="form-row cols2" style="margin-bottom:.75rem">
+            <div>
+              <label>Tipo</label>
+              <select id="comp-tipo" onchange="cargarComparacion()">
+                <option value="running">Running</option>
+                <option value="cycling">Ciclismo</option>
+                <option value="swimming">Natación</option>
+                <option value="strength">Fuerza/HX</option>
+              </select>
+            </div>
+            <div>
+              <label>Métrica principal</label>
+              <select id="comp-metrica" onchange="renderComparacion()">
+                <option value="ritmo">Ritmo (min/km)</option>
+                <option value="fc_media">FC media</option>
+                <option value="distancia_km">Distancia (km)</option>
+                <option value="duracion_min">Duración (min)</option>
+                <option value="tss">TSS</option>
+                <option value="carga">Carga</option>
+              </select>
+            </div>
+          </div>
+          <div style="width:100%;overflow-x:auto;height:280px"><canvas id="canvas-comparar"></canvas></div>
+          <div id="tabla-comparar" style="margin-top:1rem;overflow-x:auto"></div>
+        </div>
+      </div>
+
+      <!-- Panel: Análisis IA -->
+      <div class="panel" id="panel-progresion">
+        <div class="card">
+          <div class="card-title">Análisis de progresión</div>
+          <div class="form-row cols2">
+            <div>
+              <label>Tipo de actividad</label>
+              <select id="prog-tipo">
+                <option value="running">Running</option>
+                <option value="cycling">Ciclismo</option>
+                <option value="swimming">Natación</option>
+                <option value="strength">Fuerza/HX</option>
+              </select>
+            </div>
+            <div style="display:flex;align-items:flex-end">
+              <button class="btn btn-primary btn-full" onclick="analizarProgresion()">🤖 Analizar con Claude</button>
+            </div>
+          </div>
+          <div id="prog-resultado"></div>
+          <div id="prog-ia" class="ia-box"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Análisis anteriores</div>
+          <div id="lista-analisis-prog"><p style="color:var(--muted);font-size:.82rem">Sin análisis guardados.</p></div>
+        </div>
+      </div>
+
+      <!-- Panel: Config Garmin -->
+      <div class="panel" id="panel-config">
+        <div class="card" style="max-width:480px">
+          <div class="card-title">Credenciales Garmin Connect</div>
+          <div id="config-estado" style="margin-bottom:.9rem"></div>
+          <div class="form-row">
+            <div>
+              <label>Email / Usuario Garmin</label>
+              <input type="text" id="cfg-usuario" placeholder="tu@email.com" autocomplete="username">
+            </div>
+          </div>
+          <div class="form-row">
+            <div>
+              <label>Contraseña</label>
+              <input type="password" id="cfg-passwd" placeholder="••••••••" autocomplete="current-password">
+            </div>
+          </div>
+          <div class="alert alert-warn" style="font-size:.76rem;margin-bottom:.9rem">Las credenciales se guardan ofuscadas en la base de datos local. No se transmiten a terceros.</div>
+          <button class="btn btn-primary" onclick="guardarConfig()">💾 Guardar credenciales</button>
+          <div id="config-resultado" style="margin-top:.75rem"></div>
+        </div>
+      </div>
+
+      <!-- ══ TRAINING PANELS ══ -->
+
+      <!-- Panel: Plan semanal (workouts programados en Garmin) -->
+      <div class="panel" id="panel-plan">
+        <div style="display:flex;gap:.75rem;margin-bottom:1rem;flex-wrap:wrap">
+          <div class="alert alert-info" style="margin-bottom:0;flex:1">🏃 <strong>Objetivo 1:</strong> 21K Buenos Aires — 23/08/2026</div>
+          <div class="alert" style="margin-bottom:0;flex:1;background:var(--danger-light);border-color:rgba(220,38,38,.2);color:var(--danger)">💪 <strong>Objetivo 2:</strong> Hybrid Race Individual — 12/09/2026</div>
+        </div>
+        <div style="display:flex;gap:.6rem;align-items:center;margin-bottom:1rem;flex-wrap:wrap">
+          <button class="btn btn-outline btn-sm" id="btn-sem-prev" onclick="navSemana(-1)">← Anterior</button>
+          <div style="font-family:var(--mono);font-size:.8rem;color:var(--text);font-weight:600" id="cal-semana-label">—</div>
+          <button class="btn btn-outline btn-sm" id="btn-sem-next" onclick="navSemana(1)">Siguiente →</button>
+          <button class="btn btn-garmin btn-sm" style="margin-left:auto" onclick="cargarCalendario()">🔄 Actualizar</button>
+        </div>
+        <div id="cal-loading" class="alert alert-info" style="display:none">Cargando workouts desde Garmin Connect...</div>
+        <div id="cal-error" class="alert alert-danger" style="display:none"></div>
+        <div class="card" id="card-semana-cal" style="display:none">
+          <div class="dia-grid" id="dia-grid-cal">
+          </div>
+        </div>
+        <div id="cal-empty" style="display:none;color:var(--muted);font-size:.83rem;padding:2rem;text-align:center">No hay workouts programados para esta semana en Garmin Connect.</div>
+      </div>
+
+      <!-- Panel: Registro -->
+      <div class="panel" id="panel-log">
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.9rem">
+            <div class="card-title" style="margin-bottom:0">Registro de sesiones</div>
+            <button class="btn btn-primary btn-sm" onclick="abrirModalLog()">+ Registrar</button>
+          </div>
+          <table class="data-table">
+            <thead><tr><th>Fecha</th><th>Tipo</th><th>Descripción</th><th>Duración</th><th>Notas</th><th></th></tr></thead>
+            <tbody id="body-log"><tr><td colspan="6" style="color:var(--muted);text-align:center;padding:1.5rem">Sin registros.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Panel: Claude chat -->
+      <div class="panel" id="panel-claude">
+        <div class="card">
+          <div class="card-title">Asistente de entrenamiento</div>
+          <div class="alert alert-info" style="font-size:.78rem">Claude tiene contexto de tu plan completo (14 semanas, objetivos, fases) y la semana actual. Preguntá sobre ajustes, estrategia, dudas de entrenamiento.</div>
+          <div class="claude-chat" id="claude-chat"></div>
+          <div class="claude-input-row">
+            <input type="text" id="claude-input" placeholder="Ej: ¿Cómo manejo la semana de descarga si tengo HX grupal?" onkeydown="if(event.key==='Enter')enviarClaude()">
+            <button class="btn btn-primary" onclick="enviarClaude()" id="btn-claude-send">Enviar</button>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /content -->
+  </div><!-- /main -->
+</div><!-- /app -->
+
+<!-- ── MODALS ── -->
+
+<!-- Modal: Actividad Garmin -->
+<div class="modal-overlay" id="modal-actividad">
+  <div class="modal" style="max-width:820px">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1rem">
+      <h3 id="modal-act-titulo" style="margin-bottom:0;flex:1;padding-right:1rem">Actividad</h3>
+      <button class="btn btn-outline btn-sm" onclick="cerrarModal('modal-actividad')">✕</button>
+    </div>
+    <div id="modal-act-body"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="cerrarModal('modal-actividad')">Cerrar</button>
+      <button class="btn btn-primary" id="btn-analizar-sesion" onclick="analizarSesion()">🤖 Analizar sesión</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Sync Garmin -->
+<div class="modal-overlay" id="modal-sync">
+  <div class="modal" style="max-width:440px">
+    <h3>🔄 Sincronizar Garmin</h3>
+    <p style="font-size:.83rem;color:var(--muted);margin-bottom:1rem">Solo se importan actividades nuevas (las existentes se saltean).</p>
+    <div class="form-row" style="margin-bottom:.75rem">
+      <div>
+        <label>Modo</label>
+        <select id="sync-modo" onchange="toggleSyncModo()">
+          <option value="todo">Histórico completo</option>
+          <option value="semana">Por semana</option>
+        </select>
+      </div>
+    </div>
+    <div id="sync-semana-opts" style="display:none;margin-bottom:.75rem">
+      <label>Semana</label>
+      <select id="sync-semana-offset">
+        <option value="0">Semana actual</option>
+        <option value="1">Semana anterior</option>
+        <option value="2">Hace 2 semanas</option>
+        <option value="3">Hace 3 semanas</option>
+        <option value="4">Hace 4 semanas</option>
+      </select>
+    </div>
+    <div class="alert alert-warn" style="font-size:.76rem;margin-bottom:.75rem" id="sync-warn-todo">⚠ El histórico completo puede tardar varios minutos.</div>
+    <div class="sync-progress" id="sync-progress">
+      <div style="font-family:var(--mono);font-size:.75rem;color:var(--muted)" id="sync-status-txt">Iniciando...</div>
+      <div style="font-family:var(--mono);font-size:.72rem;color:var(--accent);margin-top:.2rem" id="sync-nuevas-txt"></div>
+      <div class="progress-bar" style="margin-top:.5rem"><div class="progress-fill" id="sync-bar" style="width:0%"></div></div>
+    </div>
+    <div id="sync-resultado" style="margin-top:.75rem"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="cerrarModal('modal-sync')">Cancelar</button>
+      <button class="btn btn-garmin" id="btn-sync-ok" onclick="iniciarSync()">🔄 Sincronizar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Editar sesión plan -->
+<div class="modal-overlay" id="modal-sesion">
+  <div class="modal">
+    <h3 id="modal-ses-titulo">Sesión</h3>
+    <input type="hidden" id="ses-id">
+    <div class="form-row">
+      <div><label>Descripción</label><textarea id="ses-desc" rows="3"></textarea></div>
+    </div>
+    <div class="form-row">
+      <div><label>Notas</label><textarea id="ses-notas" rows="2" placeholder="Notas adicionales, variaciones..."></textarea></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-danger btn-sm" onclick="eliminarSesion()">🗑 Eliminar</button>
+      <button class="btn btn-outline" onclick="cerrarModal('modal-sesion')">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarSesion()">Guardar</button>
+    </div>
+    <div style="margin-top:1rem;border-top:1px solid var(--border);padding-top:.9rem">
+      <div style="font-family:var(--mono);font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:.5rem">⌚ Actividades Garmin del día</div>
+      <div id="modal-ses-garmin"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Nueva sesión plan -->
+<div class="modal-overlay" id="modal-nueva-sesion">
+  <div class="modal">
+    <h3>Nueva sesión</h3>
+    <input type="hidden" id="nueva-ses-semana">
+    <div class="form-row cols2">
+      <div>
+        <label>Día</label>
+        <select id="nueva-ses-dia">
+          <option>lunes</option><option>martes</option><option>miércoles</option>
+          <option>jueves</option><option>viernes</option><option>sábado</option><option>domingo</option>
+        </select>
+      </div>
+      <div>
+        <label>Turno</label>
+        <select id="nueva-ses-turno"><option>mañana</option><option>mediodía</option><option>noche</option></select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div><label>Descripción</label><textarea id="nueva-ses-desc" rows="3"></textarea></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="cerrarModal('modal-nueva-sesion')">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarNuevaSesion()">Agregar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Registrar log -->
+<div class="modal-overlay" id="modal-log">
+  <div class="modal">
+    <h3>Registrar sesión</h3>
+    <div class="form-row cols2">
+      <div><label>Fecha</label><input type="date" id="log-fecha"></div>
+      <div>
+        <label>Tipo</label>
+        <select id="log-tipo">
+          <option value="running">Running</option><option value="cycling">Ciclismo</option>
+          <option value="swimming">Natación</option><option value="strength">Fuerza</option>
+          <option value="hyrox">Hyrox</option><option value="movilidad">Movilidad</option><option value="other">Otro</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row cols2">
+      <div><label>Duración (min)</label><input type="number" id="log-duracion" placeholder="45"></div>
+      <div>
+        <label>Completado</label>
+        <select id="log-completado"><option value="1">Sí</option><option value="0">No (parcial/salteado)</option></select>
+      </div>
+    </div>
+    <div class="form-row"><div><label>Descripción</label><textarea id="log-desc" rows="2" placeholder="Ej: Run Z2 45' — cadencia 175, FC media 142"></textarea></div></div>
+    <div class="form-row"><div><label>Notas</label><textarea id="log-notas" rows="2" placeholder="Sensaciones, ajustes..."></textarea></div></div>
+    <div class="form-row"><div><label>ID Garmin (opcional)</label><input type="text" id="log-garmin" placeholder="ID de actividad Garmin vinculada"></div></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="cerrarModal('modal-log')">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarLog()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════════════════════════════
+// NAVIGATION
+// ══════════════════════════════════════════════════════════════════════════════
+const TOPBAR_TITLES = {
+  actividades: 'TRAINING / GARMIN — ACTIVIDADES',
+  historial:   'TRAINING / GARMIN — HISTORIAL',
+  tendencias:  'TRAINING / GARMIN — TENDENCIAS',
+  carga:       'TRAINING / GARMIN — CARGA SEMANAL',
+  comparar:    'TRAINING / GARMIN — COMPARAR',
+  progresion:  'TRAINING / GARMIN — ANÁLISIS IA',
+  config:      'TRAINING / GARMIN — CONFIGURACIÓN',
+  plan:        'TRAINING / PLAN POST-HYROX 2026',
+  log:         'TRAINING / REGISTRO DE SESIONES',
+  claude:      'TRAINING / ASISTENTE CLAUDE',
+};
+const TOPBAR_ACTIONS = {
+  actividades: `<button class="btn btn-garmin btn-sm" id="btn-sync-top" onclick="abrirSync()">🔄 Sync Garmin</button>`,
+  historial:   `<button class="btn btn-garmin btn-sm" id="btn-sync-top" onclick="abrirSync()">🔄 Sync Garmin</button>`,
+  tendencias:  `<button class="btn btn-garmin btn-sm" id="btn-sync-top" onclick="abrirSync()">🔄 Sync Garmin</button>`,
+  carga:       `<button class="btn btn-garmin btn-sm" id="btn-sync-top" onclick="abrirSync()">🔄 Sync Garmin</button>`,
+  comparar:    `<button class="btn btn-garmin btn-sm" id="btn-sync-top" onclick="abrirSync()">🔄 Sync Garmin</button>`,
+  progresion:  `<button class="btn btn-garmin btn-sm" id="btn-sync-top" onclick="abrirSync()">🔄 Sync Garmin</button>`,
+  config:      ``,
+  plan:        `<button class="btn btn-outline btn-sm" onclick="agregarSesion()">+ Sesión</button>`,
+  log:         `<button class="btn btn-primary btn-sm" onclick="abrirModalLog()">+ Registrar</button>`,
+  claude:      ``,
+};
+
+let _currentPanel = 'actividades';
+
+function switchModule(mod, panel) {
+  // Show panel
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('panel-' + panel).classList.add('active');
+  _currentPanel = panel;
+
+  // Update sidebar active state
+  document.querySelectorAll('.nav-item[id]').forEach(el => {
+    el.classList.remove('active', 'active-garmin');
+  });
+  const navEl = document.getElementById('nav-' + panel);
+  if (navEl) navEl.classList.add(mod === 'garmin' ? 'active-garmin' : 'active');
+
+  // Update topbar
+  document.getElementById('topbar-title').textContent = TOPBAR_TITLES[panel] || '';
+  const actionsHtml = (TOPBAR_ACTIONS[panel] || '') + `<span class="topbar-user">{{ username }}</span>`;
+  document.getElementById('topbar-actions').innerHTML = actionsHtml;
+
+  // Lazy load data
+  if (panel === 'historial')  cargarHistorialCalendario();
+  if (panel === 'tendencias') cargarTendencias();
+  if (panel === 'carga')      cargarCargaSemanal();
+  if (panel === 'comparar')   cargarComparacion();
+  if (panel === 'progresion') cargarAnalisisPrev();
+  if (panel === 'config')     cargarConfig();
+  if (panel === 'log')        cargarLog();
+}
+
+// ── Sidebar móvil ─────────────────────────────────────────────────────────────
+document.getElementById('hamburger').onclick = () => {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sidebar-overlay').classList.toggle('visible');
+};
+document.getElementById('sidebar-overlay').onclick = () => {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebar-overlay').classList.remove('visible');
+};
+
+function abrirModal(id) { document.getElementById(id).classList.add('visible'); }
+function cerrarModal(id) { document.getElementById(id).classList.remove('visible'); }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// GARMIN — Helpers
+// ══════════════════════════════════════════════════════════════════════════════
+function fmtDur(seg) {
+  if (!seg) return '—';
+  const h = Math.floor(seg / 3600), m = Math.floor((seg % 3600) / 60), s = seg % 60;
+  return h ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}` : `${m}:${String(s).padStart(2,'0')}`;
+}
+function fmtDist(m) { if (!m) return '—'; return m >= 1000 ? (m/1000).toFixed(2)+' km' : Math.round(m)+' m'; }
+function fmtRitmo(vel) {
+  if (!vel || vel === 0) return '—';
+  const seg = 1000 / vel, mm = Math.floor(seg / 60), ss = Math.round(seg % 60);
+  return `${mm}:${String(ss).padStart(2,'0')} /km`;
+}
+function fmtFecha(s) { return s ? s.substring(0,10) : '—'; }
+function tipoBadge(tipo) {
+  const icons = {running:'🏃',cycling:'🚴',swimming:'🏊',triathlon:'🏅',strength:'💪',other:'🏋️'};
+  return `<span class="tipo-badge tipo-${tipo}">${icons[tipo]||'•'} ${tipo}</span>`;
+}
+function metricBox(val, lbl, unit='') {
+  const v = (val !== null && val !== undefined && val !== '') ? val : '—';
+  return `<div class="metric"><div class="metric-val">${v}${v !== '—' && unit ? ' '+unit : ''}</div><div class="metric-lbl">${lbl}</div></div>`;
+}
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+async function cargarStats() {
+  const d = await (await fetch('/api/garmin/stats')).json();
+  if (!d.ok) return;
+  document.getElementById('st-total').textContent = d.total;
+  const run = (d.por_tipo.find(t => t.tipo === 'running') || {}).n || 0;
+  const cic = (d.por_tipo.find(t => t.tipo === 'cycling') || {}).n || 0;
+  document.getElementById('st-running').textContent = run;
+  document.getElementById('st-cycling').textContent = cic;
+  document.getElementById('st-sync').textContent = d.ultima_sync ? d.ultima_sync.substring(0,10) : '—';
+}
+
+// ── Actividades ───────────────────────────────────────────────────────────────
+async function cargarActividades() {
+  const tipo  = document.getElementById('filtro-tipo').value;
+  const limit = document.getElementById('filtro-limit').value;
+  const desde = document.getElementById('filtro-desde').value;
+  const hasta = document.getElementById('filtro-hasta').value;
+  let url = `/api/garmin/actividades?tipo=${tipo}&limit=${limit}`;
+  if (desde) url += `&desde=${desde}`;
+  if (hasta) url += `&hasta=${hasta}`;
+  const d = await (await fetch(url)).json();
+  const body = document.getElementById('body-actividades');
+  if (!d.ok || !d.rows.length) {
+    body.innerHTML = '<tr><td colspan="7" style="color:var(--muted);text-align:center;padding:1.5rem">Sin actividades. Sincronizá primero.</td></tr>';
+    return;
+  }
+  body.innerHTML = d.rows.map(a => `
+    <tr onclick="verActividad('${a.id}')">
+      <td style="font-family:var(--mono);font-size:.75rem">${fmtFecha(a.fecha)}</td>
+      <td style="max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${a.nombre||'—'}</td>
+      <td>${tipoBadge(a.tipo)}</td>
+      <td style="font-family:var(--mono)">${fmtDur(a.duracion_seg)}</td>
+      <td style="font-family:var(--mono)">${fmtDist(a.distancia_m)}</td>
+      <td style="font-family:var(--mono)">${a.fc_media||'—'}</td>
+      <td><span style="font-size:.7rem;color:${a.analisis?'var(--accent2)':'var(--dim)'}">${a.analisis?'✓':'—'}</span></td>
+    </tr>`).join('');
+}
+
+function exportarCSV() {
+  const tipo = document.getElementById('filtro-tipo').value;
+  const limit = document.getElementById('filtro-limit').value;
+  window.location.href = `/api/garmin/export_csv?tipo=${tipo}&limit=${limit}`;
+}
+
+// ── Detalle actividad ─────────────────────────────────────────────────────────
+let _actividadActual = null;
+
+async function verActividad(id) {
+  const d = await (await fetch(`/api/garmin/actividades/${id}`)).json();
+  if (!d.ok) return;
+  const a = d.actividad;
+  _actividadActual = a;
+  const meta = JSON.parse(a.metadata || '{}');
+  const zonas = JSON.parse(a.zonas_fc || '{}');
+  const splits = meta.splits || [];
+  const ejercicios = meta.ejercicios || [];
+
+  // ── Helpers locales ───────────────────────────────────────────────────────
+  const v = (val, unit='') => (val !== null && val !== undefined && val !== '') ? `${val}${unit ? ' '+unit : ''}` : '—';
+  const mbox = (val, lbl, unit='') => `<div class="metric"><div class="metric-val">${v(val,unit)}</div><div class="metric-lbl">${lbl}</div></div>`;
+  const sec = (title) => `<div style="font-family:var(--mono);font-size:.6rem;color:var(--muted);letter-spacing:.14em;text-transform:uppercase;margin:.9rem 0 .5rem;border-bottom:1px solid var(--border);padding-bottom:.3rem">${title}</div>`;
+  const row = (...boxes) => `<div class="metric-row">${boxes.join('')}</div>`;
+
+  // ── Zona FC bar chart ─────────────────────────────────────────────────────
+  const ZONA_COLORS = {'Z1':'#93C5FD','Z2':'#34D399','Z3':'#FCD34D','Z4':'#F97316','Z5':'#EF4444'};
+  function zonaBar(nombre, data) {
+    const maxSeg = Math.max(...Object.values(zonas).map(z => z.seg || 0));
+    const seg = data.seg || 0;
+    const pct = data.pct != null ? data.pct : (maxSeg > 0 ? Math.round(seg/maxSeg*100) : 0);
+    const min = Math.floor(seg/60);
+    const color = ZONA_COLORS[nombre] || '#6B7280';
+    const fillW = maxSeg > 0 ? Math.round(seg/maxSeg*100) : (pct || 0);
+    return `<div style="display:grid;grid-template-columns:2rem 1fr 3.5rem 2.5rem;align-items:center;gap:.5rem;margin-bottom:.35rem;font-size:.75rem">
+      <span style="font-family:var(--mono);font-size:.7rem;color:var(--muted)">${nombre}</span>
+      <div style="height:8px;background:var(--border);border-radius:4px;overflow:hidden">
+        <div style="height:100%;width:${fillW}%;background:${color};border-radius:4px;transition:width .4s"></div>
+      </div>
+      <span style="font-family:var(--mono);font-size:.7rem;color:var(--text-sub);text-align:right">${min ? min+"'" : '—'}</span>
+      <span style="font-family:var(--mono);font-size:.7rem;color:var(--muted);text-align:right">${data.pct != null ? data.pct+'%' : ''}</span>
+    </div>`;
+  }
+
+  // ── Construir HTML ────────────────────────────────────────────────────────
+  let html = '';
+
+  // Header info
+  html += `<div style="display:flex;gap:.5rem;align-items:center;margin-bottom:.9rem;flex-wrap:wrap">
+    ${tipoBadge(a.tipo)}
+    <span style="font-family:var(--mono);font-size:.75rem;color:var(--muted)">${fmtFecha(a.fecha)}</span>
+    ${meta.ubicacion ? `<span style="font-size:.75rem;color:var(--muted)">📍 ${meta.ubicacion}</span>` : ''}
+    ${meta.dispositivo ? `<span style="font-family:var(--mono);font-size:.68rem;color:var(--dim)">🖥 ${meta.dispositivo}</span>` : ''}
+  </div>`;
+
+  // Métricas principales
+  html += sec('Resumen');
+  html += row(
+    mbox(fmtDur(a.duracion_seg), 'Duración'),
+    mbox(fmtDist(a.distancia_m), 'Distancia'),
+    mbox(v(a.calorias), 'Calorías', 'kcal'),
+    mbox(v(a.tss), 'TSS'),
+  );
+  html += row(
+    mbox(v(a.fc_media), 'FC media', 'bpm'),
+    mbox(v(a.fc_max), 'FC máx', 'bpm'),
+    mbox(v(meta.vo2max), 'VO2max'),
+    mbox(v(meta.load_primario), 'Carga'),
+  );
+  html += row(
+    mbox(v(meta.aerobic_te), 'TE Aeróbico', meta.aerobic_te_label ? `(${meta.aerobic_te_label.replace(/_/g,' ')})` : ''),
+    mbox(v(meta.anaerobic_te), 'TE Anaeróbico'),
+    mbox(meta.tiempo_recuperacion ? meta.tiempo_recuperacion+'h' : '—', 'Recuperación'),
+    mbox(meta.hrv_status || '—', 'HRV Status'),
+  );
+  if (meta.body_battery_delta != null || meta.stress_durante != null) {
+    html += row(
+      mbox(meta.body_battery_drained != null ? '-'+meta.body_battery_drained : '—', 'Body Battery'),
+      mbox(v(meta.stress_durante), 'Estrés medio'),
+      mbox(v(meta.min_vigorosa), 'Min vigorosa'),
+      mbox(v(meta.min_moderada), 'Min moderada'),
+    );
+  }
+
+  // Sección por deporte
+  if (a.tipo === 'running') {
+    html += sec('Running');
+    html += row(
+      mbox(fmtRitmo(a.velocidad_media), 'Ritmo medio'),
+      mbox(fmtRitmo(meta.vel_ajustada_pend), 'Ritmo aj. pendiente'),
+      mbox(v(a.cadencia_media), 'Cadencia', 'spm'),
+      mbox(v(meta.stride_length), 'Long. zancada', 'm'),
+    );
+    html += row(
+      mbox(v(a.desnivel_pos), 'Desnivel +', 'm'),
+      mbox(v(meta.desnivel_neg), 'Desnivel -', 'm'),
+      mbox(v(meta.ground_contact), 'Contacto suelo', 'ms'),
+      mbox(v(meta.vertical_osc), 'Osc. vertical', 'cm'),
+    );
+    html += row(
+      mbox(v(meta.vertical_ratio), 'Ratio vertical', '%'),
+      mbox(v(meta.running_power), 'Running power', 'W'),
+      mbox(meta.faster_split_1k ? meta.faster_split_1k+'s' : '—', 'Split 1k más rápido'),
+      mbox(v(meta.steps), 'Pasos totales'),
+    );
+  } else if (a.tipo === 'cycling') {
+    html += sec('Ciclismo');
+    html += row(
+      mbox(v(a.potencia_media), 'Potencia media', 'W'),
+      mbox(v(a.normalizada_w), 'Potencia norm.', 'W'),
+      mbox(v(meta.potencia_max), 'Potencia máx', 'W'),
+      mbox(v(meta.ftp), 'FTP', 'W'),
+    );
+    html += row(
+      mbox(v(meta.if_factor), 'IF'),
+      mbox(v(a.cadencia_media), 'Cadencia', 'rpm'),
+      mbox(v(a.desnivel_pos), 'Desnivel +', 'm'),
+      mbox(fmtRitmo(a.velocidad_media), 'Velocidad media'),
+    );
+  } else if (a.tipo === 'swimming') {
+    html += sec('Natación');
+    html += row(
+      mbox(v(meta.swolf), 'SWOLF'),
+      mbox(v(meta.brazadas_largo), 'Dist/brazada', 'm'),
+      mbox(v(meta.estilo_nado), 'Estilo'),
+      mbox(v(a.cadencia_media), 'Cadencia', 'spm'),
+    );
+  } else if (a.tipo === 'strength') {
+    html += sec('Fuerza / Hyrox');
+    html += `<div id="fit-rounds-loading" style="font-size:.8rem;color:var(--muted)"><span class="spinner-dark spinner"></span> Cargando rounds desde FIT...</div>`;
+    html += `<div id="fit-rounds-body"></div>`;
+  }
+
+  // Altimetría (si tiene GPS y datos)
+  if (meta.altitud_min != null || meta.altitud_max != null) {
+    html += sec('Altimetría & GPS');
+    html += row(
+      mbox(v(meta.altitud_min), 'Altitud mín', 'm'),
+      mbox(v(meta.altitud_max), 'Altitud máx', 'm'),
+      mbox(v(meta.temp_inicio), 'Temp inicio', '°C'),
+      mbox(v(meta.temp_media), 'Temp media', '°C'),
+    );
+  }
+
+  // Zonas FC — barras horizontales
+  if (Object.keys(zonas).length) {
+    html += sec('Distribución Zonas FC');
+    html += `<div style="padding:.25rem 0">`;
+    for (const [z, data] of Object.entries(zonas)) {
+      html += zonaBar(z, data);
+    }
+    html += `</div>`;
+  }
+
+  // Splits
+  if (splits.length) {
+    html += sec('Splits');
+    html += `<div style="overflow-x:auto"><table class="data-table" style="font-size:.75rem">
+      <thead><tr><th>Tipo</th><th>N</th><th>Duración</th><th>Distancia</th><th>Ritmo</th><th>Vel máx</th></tr></thead>
+      <tbody>${splits.map(s => `<tr>
+        <td style="font-size:.7rem">${(s.tipo||'').replace('RWD_','').replace(/_/g,' ')}</td>
+        <td style="font-family:var(--mono)">${s.n||'—'}</td>
+        <td style="font-family:var(--mono)">${fmtDur(s.duracion_seg)}</td>
+        <td style="font-family:var(--mono)">${s.distancia_m ? (s.distancia_m/1000).toFixed(2)+'km' : '—'}</td>
+        <td style="font-family:var(--mono)">${fmtRitmo(s.vel_media)}</td>
+        <td style="font-family:var(--mono)">${fmtRitmo(s.vel_max)}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>`;
+  }
+
+  // Curvas (FC/ritmo/potencia/altitud) y mapa de ruta — se piden aparte (caro)
+  html += sec('Curvas & Ruta GPS');
+  html += `<div id="curvas-loading" style="font-size:.78rem;color:var(--muted)"><span class="spinner-dark spinner"></span> Cargando series detalladas...</div>
+    <div style="width:100%;overflow-x:auto;height:280px"><canvas id="canvas-curvas" style="display:none"></canvas></div>
+    <div id="map-ruta" style="height:260px;border-radius:var(--radius-sm);margin-top:.6rem;display:none"></div>
+    <div id="curvas-empty" style="display:none;font-size:.78rem;color:var(--dim)">Sin datos detallados disponibles para esta actividad.</div>`;
+
+  // Análisis previo
+  const prev = (d.actividad.analisis || []);
+  if (prev.length) {
+    html += sec('Análisis IA guardado');
+    html += `<div class="ia-box visible" style="display:block">${prev[0].respuesta}</div>`;
+  }
+  html += `<div id="act-ia-box" class="ia-box" style="margin-top:.75rem"></div>`;
+
+  document.getElementById('modal-act-titulo').textContent = a.nombre || 'Actividad';
+  document.getElementById('modal-act-body').innerHTML = html;
+  abrirModal('modal-actividad');
+
+  // Si es fuerza, cargar rounds desde FIT
+  if (a.tipo === 'strength') {
+    cargarFitRounds(a.id);
+  }
+
+  cargarCurvasMapa(a.id);
+}
+
+let _chartCurvas = null;
+let _mapRuta = null;
+
+async function cargarCurvasMapa(act_id) {
+  const loading = document.getElementById('curvas-loading');
+  const canvas  = document.getElementById('canvas-curvas');
+  const mapDiv  = document.getElementById('map-ruta');
+  const empty   = document.getElementById('curvas-empty');
+  if (!loading) return;
+
+  try {
+    const d = await (await fetch(`/api/garmin/actividades/${act_id}/detalle`)).json();
+    loading.style.display = 'none';
+    if (!d.ok || (!d.serie_tiempo?.length && !d.ruta_gps?.length)) {
+      empty.style.display = 'block';
+      return;
+    }
+
+    // Curva FC / ritmo (vel) / potencia / altitud en el tiempo
+    if (d.serie_tiempo && d.serie_tiempo.length) {
+      canvas.style.display = 'block';
+      const labels = d.serie_tiempo.map(p => p.t != null ? fmtDur(Math.round(p.t)) : '');
+      const datasets = [];
+      if (d.serie_tiempo.some(p => p.hr != null))
+        datasets.push({ label:'FC (bpm)', data: d.serie_tiempo.map(p=>p.hr), borderColor:'#EF4444', yAxisID:'y', tension:.2, pointRadius:0 });
+      if (d.serie_tiempo.some(p => p.pot != null))
+        datasets.push({ label:'Potencia (W)', data: d.serie_tiempo.map(p=>p.pot), borderColor:'#F59E0B', yAxisID:'y1', tension:.2, pointRadius:0 });
+      if (d.serie_tiempo.some(p => p.alt != null))
+        datasets.push({ label:'Altitud (m)', data: d.serie_tiempo.map(p=>p.alt), borderColor:'#10B981', yAxisID:'y1', tension:.2, pointRadius:0 });
+      if (_chartCurvas) _chartCurvas.destroy();
+      _chartCurvas = new Chart(canvas.getContext('2d'), {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+          responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
+          scales:{ y:{position:'left',title:{display:true,text:'FC'}}, y1:{position:'right',title:{display:true,text:'Pot/Alt'},grid:{drawOnChartArea:false}} },
+          plugins:{ legend:{position:'bottom'} }
+        }
+      });
+    }
+
+    // Mapa de ruta GPS
+    if (d.ruta_gps && d.ruta_gps.length > 1 && window.L) {
+      mapDiv.style.display = 'block';
+      if (_mapRuta) { _mapRuta.remove(); _mapRuta = null; }
+      _mapRuta = L.map('map-ruta');
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap', maxZoom: 18
+      }).addTo(_mapRuta);
+      const linea = L.polyline(d.ruta_gps, { color: '#3B82F6', weight: 3 }).addTo(_mapRuta);
+      L.circleMarker(d.ruta_gps[0], { radius:5, color:'#10B981', fillOpacity:1 }).addTo(_mapRuta);
+      L.circleMarker(d.ruta_gps[d.ruta_gps.length-1], { radius:5, color:'#EF4444', fillOpacity:1 }).addTo(_mapRuta);
+      _mapRuta.fitBounds(linea.getBounds(), { padding:[16,16] });
+    }
+
+    if (!canvas.style.display.includes('block') && !mapDiv.style.display.includes('block')) {
+      empty.style.display = 'block';
+    }
+  } catch(e) {
+    loading.style.display = 'none';
+    empty.textContent = 'Error cargando series detalladas: ' + e.message;
+    empty.style.display = 'block';
+  }
+}
+
+async function cargarFitRounds(act_id) {
+  const loading = document.getElementById('fit-rounds-loading');
+  const body    = document.getElementById('fit-rounds-body');
+  if (!loading || !body) return;
+
+  try {
+    const d = await (await fetch(`/api/garmin/actividades/${act_id}/sets`)).json();
+    loading.style.display = 'none';
+
+    if (!d.ok) {
+      body.innerHTML = `<div class="alert alert-warn" style="font-size:.78rem">FIT no disponible: ${d.error}</div>`;
+      return;
+    }
+
+    if (!d.rounds.length) {
+      body.innerHTML = `<div style="font-size:.8rem;color:var(--muted)">Sin rounds registrados.</div>`;
+      return;
+    }
+
+    // Agrupar rounds consecutivos del mismo ejercicio como "sets del mismo ejercicio"
+    const grupos = [];
+    let grupo = null;
+    for (const r of d.rounds) {
+      if (grupo && grupo.nombre === r.nombre) {
+        grupo.sets.push(r);
+      } else {
+        grupo = { nombre: r.nombre, sets: [r] };
+        grupos.push(grupo);
+      }
+    }
+
+    let html = `<div style="overflow-x:auto"><table class="data-table" style="font-size:.78rem">
+      <thead><tr>
+        <th>Round</th><th>Ejercicio</th><th>Reps</th>
+        <th>Tiempo</th><th>Descanso</th><th>Peso</th>
+      </tr></thead><tbody>`;
+
+    let roundNum = 0;
+    for (const g of grupos) {
+      roundNum++;
+      const rowspan = g.sets.length;
+      g.sets.forEach((s, i) => {
+        const rest = s.rest_seg ? Math.floor(s.rest_seg) + 's' : '—';
+        const dur  = s.dur_seg  ? Math.floor(s.dur_seg)  + 's' : '—';
+        const peso = s.peso_kg  ? s.peso_kg + ' kg' : '—';
+        if (i === 0) {
+          html += `<tr style="border-top:2px solid var(--border)">
+            <td rowspan="${rowspan}" style="font-family:var(--mono);font-weight:700;font-size:.85rem;vertical-align:middle;text-align:center;background:var(--surface2)">${roundNum}</td>
+            <td rowspan="${rowspan}" style="font-weight:600;vertical-align:middle">${g.nombre}</td>
+            <td style="font-family:var(--mono)">${s.reps ?? '—'}</td>
+            <td style="font-family:var(--mono)">${dur}</td>
+            <td style="font-family:var(--mono);color:var(--muted)">${rest}</td>
+            <td style="font-family:var(--mono)">${peso}</td>
+          </tr>`;
+        } else {
+          html += `<tr>
+            <td style="font-family:var(--mono)">${s.reps ?? '—'}</td>
+            <td style="font-family:var(--mono)">${dur}</td>
+            <td style="font-family:var(--mono);color:var(--muted)">${rest}</td>
+            <td style="font-family:var(--mono)">${peso}</td>
+          </tr>`;
+        }
+      });
+    }
+
+    html += `</tbody></table></div>
+      <div style="font-size:.68rem;color:var(--dim);margin-top:.4rem">${d.total} sets activos · fuente: archivo FIT</div>`;
+    body.innerHTML = html;
+
+  } catch(e) {
+    if (loading) loading.style.display = 'none';
+    if (body) body.innerHTML = `<div class="alert alert-warn" style="font-size:.78rem">Error leyendo FIT: ${e.message}</div>`;
+  }
+}
+
+async function analizarSesion() {
+  if (!_actividadActual) return;
+  const btn = document.getElementById('btn-analizar-sesion');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Analizando...';
+  const iaBox = document.getElementById('act-ia-box');
+  iaBox.className = 'ia-box visible'; iaBox.textContent = 'Pensando...';
+  const d = await (await fetch('/api/garmin/analizar', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ actividad_id: _actividadActual.id, tipo: 'sesion' })
+  })).json();
+  btn.disabled = false; btn.textContent = '🤖 Analizar sesión';
+  iaBox.textContent = d.ok ? d.respuesta : 'Error: ' + d.error;
+}
+
+// ── Sync ──────────────────────────────────────────────────────────────────────
+let _syncInterval = null;
+
+function abrirSync() { abrirModal('modal-sync'); }
+
+function toggleSyncModo() {
+  const modo = document.getElementById('sync-modo').value;
+  document.getElementById('sync-semana-opts').style.display = modo === 'semana' ? 'block' : 'none';
+  document.getElementById('sync-warn-todo').style.display  = modo === 'todo'   ? 'block' : 'none';
+}
+
+async function iniciarSync() {
+  const modo   = document.getElementById('sync-modo').value;
+  const offset = document.getElementById('sync-semana-offset').value;
+  const btn = document.getElementById('btn-sync-ok');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Iniciando...';
+  document.getElementById('sync-progress').style.display = 'block';
+  document.getElementById('sync-resultado').innerHTML = '';
+  const d = await (await fetch('/api/garmin/sync', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ modo, semana_offset: parseInt(offset) })
+  })).json();
+  if (!d.ok) {
+    btn.disabled = false; btn.textContent = '🔄 Sincronizar';
+    document.getElementById('sync-resultado').innerHTML = `<div class="alert alert-danger">Error: ${d.error}</div>`;
+    return;
+  }
+  _syncInterval = setInterval(() => pollSync(d.job_id, btn), 1500);
+}
+
+async function pollSync(job_id, btn) {
+  const s = await (await fetch(`/api/garmin/sync/status/${job_id}`)).json();
+  document.getElementById('sync-status-txt').textContent = `Estado: ${s.estado} | ${s.progreso||0}/${s.total||'?'} actividades`;
+  if (s.nuevas) document.getElementById('sync-nuevas-txt').textContent = `${s.nuevas} nuevas importadas`;
+  if (s.total) document.getElementById('sync-bar').style.width = Math.round((s.progreso||0) / s.total * 100) + '%';
+  if (s.estado === 'ok' || s.estado === 'error') {
+    clearInterval(_syncInterval);
+    btn.disabled = false; btn.textContent = '🔄 Sincronizar';
+    if (s.estado === 'ok') {
+      document.getElementById('sync-resultado').innerHTML = `<div class="alert alert-ok">✓ Sync completo — ${s.nuevas} actividades nuevas importadas.</div>`;
+      cargarStats(); cargarActividades();
+    } else {
+      document.getElementById('sync-resultado').innerHTML = `<div class="alert alert-danger">Error: ${s.error}</div>`;
+    }
+  }
+}
+
+// ── Análisis progresión ───────────────────────────────────────────────────────
+async function analizarProgresion() {
+  const tipo = document.getElementById('prog-tipo').value;
+  const res  = document.getElementById('prog-resultado');
+  const ia   = document.getElementById('prog-ia');
+  res.innerHTML = '<div style="color:var(--muted);font-size:.82rem"><span class="spinner-dark spinner"></span> Analizando...</div>';
+  ia.className = 'ia-box';
+  const d = await (await fetch('/api/garmin/analizar', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ tipo: 'progresion', tipo_actividad: tipo })
+  })).json();
+  res.innerHTML = '';
+  if (d.ok) { ia.className = 'ia-box visible'; ia.textContent = d.respuesta; }
+  else { res.innerHTML = `<div class="alert alert-danger">Error: ${d.error}</div>`; }
+}
+
+async function cargarAnalisisPrev() {
+  const d = await (await fetch('/api/garmin/analisis')).json();
+  const el = document.getElementById('lista-analisis-prog');
+  if (!d.ok || !d.rows.length) { el.innerHTML = '<p style="color:var(--muted);font-size:.82rem">Sin análisis guardados.</p>'; return; }
+  el.innerHTML = d.rows.map(r => `
+    <div style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:.75rem;margin-bottom:.6rem;font-size:.8rem">
+      <div style="display:flex;justify-content:space-between;margin-bottom:.4rem">
+        <strong>${r.tipo_analisis||'sesion'}</strong>
+        <span style="font-family:var(--mono);font-size:.7rem;color:var(--muted)">${(r.fecha||'').substring(0,10)}</span>
+      </div>
+      <div style="color:var(--text-sub);line-height:1.55;white-space:pre-wrap">${r.respuesta}</div>
+    </div>`).join('');
+}
+
+// ── Carga semanal ─────────────────────────────────────────────────────────────
+// ── Historial (calendario de actividades realizadas) ───────────────────────────
+let _histAnio = new Date().getFullYear();
+let _histMes  = new Date().getMonth() + 1; // 1-12
+let _histDiasCache = {};
+const MESES_ES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+
+function navMesHist(dir) {
+  _histMes += dir;
+  if (_histMes > 12) { _histMes = 1; _histAnio++; }
+  if (_histMes < 1)  { _histMes = 12; _histAnio--; }
+  cargarHistorialCalendario();
+}
+
+async function cargarHistorialCalendario() {
+  document.getElementById('hist-mes-label').textContent = `${MESES_ES[_histMes-1]} ${_histAnio}`;
+  document.getElementById('hist-dia-detalle').style.display = 'none';
+  const d = await (await fetch(`/api/garmin/historial_calendario?anio=${_histAnio}&mes=${_histMes}`)).json();
+  if (!d.ok) return;
+  _histDiasCache = d.dias || {};
+  const nDias = Object.keys(_histDiasCache).length;
+  const nActs = Object.values(_histDiasCache).reduce((s,x) => s + x.actividades.length, 0);
+  document.getElementById('hist-mes-resumen').textContent = nActs ? `${nActs} actividades en ${nDias} días` : 'Sin actividades';
+  renderHistCal();
+}
+
+function renderHistCal() {
+  const grid = document.getElementById('hist-cal-grid');
+  const primerDia = new Date(_histAnio, _histMes-1, 1);
+  const ultimoDia = new Date(_histAnio, _histMes, 0).getDate();
+  // Lunes=0 ... Domingo=6
+  let offset = primerDia.getDay() - 1; if (offset < 0) offset = 6;
+  const hoyStr = new Date().toISOString().substring(0,10);
+
+  let html = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'].map(d => `<div class="hist-cal-dow">${d}</div>`).join('');
+  for (let i = 0; i < offset; i++) html += `<div class="hist-cal-day empty"></div>`;
+  for (let dia = 1; dia <= ultimoDia; dia++) {
+    const fecha = `${_histAnio}-${String(_histMes).padStart(2,'0')}-${String(dia).padStart(2,'0')}`;
+    const info = _histDiasCache[fecha];
+    const iconos = (info ? info.actividades : []).map(a => tipoIcon(a.tipo));
+    const esHoy = fecha === hoyStr;
+    html += `<div class="hist-cal-day${esHoy?' today':''}" onclick="abrirHistDia('${fecha}')">
+      <div class="num">${dia}</div>
+      <div class="pills">${iconos.map(p => `<span class="hist-cal-pill">${p}</span>`).join('')}</div>
+    </div>`;
+  }
+  grid.innerHTML = html;
+}
+
+function abrirHistDia(fecha) {
+  const info = _histDiasCache[fecha];
+  const card = document.getElementById('hist-dia-detalle');
+  document.getElementById('hist-dia-titulo').textContent = fecha;
+  if (!info || !info.actividades.length) {
+    document.getElementById('hist-dia-body').innerHTML = `<p style="color:var(--muted);font-size:.8rem">Sin actividades este día.</p>`;
+  } else {
+    document.getElementById('hist-dia-body').innerHTML = info.actividades.map(a => `
+      <div class="sesion-card" onclick="abrirActividad('${a.id}')" style="margin-bottom:.5rem">
+        ${tipoBadge(a.tipo)} <strong>${a.nombre||''}</strong>
+        <div style="font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:.25rem">
+          ${fmtDur(a.duracion_seg)} · ${fmtDist(a.distancia_m)} ${a.fc_media?`· FC ${a.fc_media}bpm`:''} ${a.tss?`· TSS ${a.tss}`:''}
+        </div>
+      </div>`).join('');
+  }
+  card.style.display = 'block';
+}
+
+// ── Tendencias multi-parámetro ──────────────────────────────────────────────────
+let _tendRows = [];
+let _chartTend = null;
+const TEND_COLORS = ['#3B82F6','#EF4444','#10B981','#F59E0B','#8B5CF6','#EC4899','#06B6D4','#84CC16'];
+
+async function cargarTendencias() {
+  const tipo = document.getElementById('tend-tipo').value;
+  const dias = parseInt(document.getElementById('tend-periodo').value, 10);
+  let qs = `tipo=${tipo}`;
+  if (dias > 0) {
+    const hasta = new Date();
+    const desde = new Date(); desde.setDate(desde.getDate() - dias);
+    qs += `&desde=${desde.toISOString().substring(0,10)}&hasta=${hasta.toISOString().substring(0,10)}&limit=500`;
+  } else {
+    qs += `&limit=2000`; // histórico completo
+  }
+  const d = await (await fetch(`/api/garmin/tendencias?${qs}`)).json();
+  if (!d.ok) return;
+  _tendRows = d.rows || [];
+  renderTendencias();
+}
+
+function renderTendencias() {
+  const sel = document.getElementById('tend-metricas');
+  const metricas = Array.from(sel.selectedOptions).map(o => o.value);
+  const labels = _tendRows.map(r => r.fecha);
+  const datasets = metricas.map((m, i) => ({
+    label: sel.querySelector(`option[value="${m}"]`).textContent,
+    data: _tendRows.map(r => r[m]),
+    borderColor: TEND_COLORS[i % TEND_COLORS.length],
+    backgroundColor: TEND_COLORS[i % TEND_COLORS.length],
+    spanGaps: true,
+    tension: .25,
+    yAxisID: i === 0 ? 'y' : 'y' + i,
+  }));
+
+  const scales = { x: { ticks: { maxTicksLimit: 12 } } };
+  metricas.forEach((m, i) => {
+    scales['y'+(i===0?'':i)] = { position: i % 2 === 0 ? 'left' : 'right', display: i < 2, grid: { drawOnChartArea: i===0 } };
+  });
+
+  const ctx = document.getElementById('canvas-tendencias').getContext('2d');
+  if (_chartTend) _chartTend.destroy();
+  _chartTend = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets },
+    options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, scales, plugins: { legend: { position: 'bottom' } } }
+  });
+}
+
+let _chartCarga = null;
+let _chartComp  = null;
+let _compData   = [];
+
+async function cargarCargaSemanal() {
+  const d = await (await fetch('/api/garmin/carga_semanal')).json();
+  if (!d.ok) return;
+  document.getElementById('carga-atl').textContent = d.atl;
+  document.getElementById('carga-ctl').textContent = d.ctl;
+  const tsb = d.tsb;
+  const tsbEl = document.getElementById('carga-tsb');
+  tsbEl.textContent = tsb > 0 ? '+'+tsb : tsb;
+  tsbEl.style.color = tsb > 5 ? 'var(--accent2)' : tsb < -10 ? 'var(--danger)' : 'var(--text)';
+  const labels = d.semanas.map(s => s.semana.substring(5));
+  const cargas = d.semanas.map(s => s.carga);
+  const sesions= d.semanas.map(s => s.sesiones);
+  const ctx = document.getElementById('canvas-carga').getContext('2d');
+  if (_chartCarga) _chartCarga.destroy();
+  _chartCarga = new Chart(ctx, {
+    type:'bar',
+    data:{ labels, datasets:[
+      { label:'Carga semanal', data:cargas, backgroundColor:'rgba(26,86,219,.65)', borderColor:'rgba(26,86,219,1)', borderWidth:1, yAxisID:'y' },
+      { label:'Sesiones', data:sesions, type:'line', borderColor:'rgba(217,119,6,1)', backgroundColor:'rgba(217,119,6,.1)', pointRadius:4, tension:0.3, yAxisID:'y2' }
+    ]},
+    options:{ responsive:true, maintainAspectRatio:false, interaction:{mode:'index'}, scales:{ y:{position:'left',title:{display:true,text:'Carga'}}, y2:{position:'right',title:{display:true,text:'Sesiones'},grid:{drawOnChartArea:false}} }, plugins:{legend:{position:'bottom'}} }
+  });
+}
+
+// ── Comparación ───────────────────────────────────────────────────────────────
+async function cargarComparacion() {
+  const tipo = document.getElementById('comp-tipo').value;
+  const d = await (await fetch(`/api/garmin/comparar?tipo=${tipo}&limit=10`)).json();
+  if (!d.ok) return;
+  _compData = d.rows;
+  renderComparacion();
+}
+
+function renderComparacion() {
+  if (!_compData.length) return;
+  const metrica = document.getElementById('comp-metrica').value;
+  const labels  = _compData.map(r => r.fecha);
+  const valores = _compData.map(r => r[metrica]);
+  const lmap = { ritmo:'Ritmo (s/km)', fc_media:'FC media (bpm)', distancia_km:'Distancia (km)', duracion_min:'Duración (min)', tss:'TSS', carga:'Carga' };
+  const ctx = document.getElementById('canvas-comparar').getContext('2d');
+  if (_chartComp) _chartComp.destroy();
+  _chartComp = new Chart(ctx, {
+    type:'line',
+    data:{ labels, datasets:[{ label:lmap[metrica]||metrica, data:valores, borderColor:'rgba(26,86,219,1)', backgroundColor:'rgba(26,86,219,.1)', pointRadius:5, tension:0.3, fill:true }] },
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}}, scales:{y:{reverse:metrica==='ritmo'}} }
+  });
+  document.getElementById('tabla-comparar').innerHTML = `<table class="data-table">
+    <thead><tr><th>Fecha</th><th>Nombre</th><th>Dist km</th><th>Ritmo</th><th>FC media</th><th>Duración</th><th>TSS</th><th>Carga</th></tr></thead>
+    <tbody>${_compData.map(r => `<tr>
+      <td style="font-family:var(--mono);font-size:.75rem">${r.fecha}</td>
+      <td>${r.nombre||'—'}</td>
+      <td style="font-family:var(--mono)">${r.distancia_km||'—'}</td>
+      <td style="font-family:var(--mono)">${r.ritmo ? Math.floor(r.ritmo/60)+':'+(r.ritmo%60).toFixed(0).padStart(2,'0') : '—'}</td>
+      <td style="font-family:var(--mono)">${r.fc_media||'—'}</td>
+      <td style="font-family:var(--mono)">${r.duracion_min||'—'}'</td>
+      <td style="font-family:var(--mono)">${r.tss||'—'}</td>
+      <td style="font-family:var(--mono)">${r.carga||'—'}</td>
+    </tr>`).join('')}</tbody>
+  </table>`;
+}
+
+// ── Config Garmin ─────────────────────────────────────────────────────────────
+async function cargarConfig() {
+  const d = await (await fetch('/api/garmin/config')).json();
+  const el = document.getElementById('config-estado');
+  if (d.ok && d.usuario) {
+    el.innerHTML = `<div class="alert alert-ok">✓ Credenciales configuradas para <strong>${d.usuario}</strong></div>`;
+    document.getElementById('cfg-usuario').value = d.usuario;
+  } else if (d.error) {
+    el.innerHTML = `<div class="alert alert-danger">⚠ ${d.error}</div>`;
+  } else {
+    el.innerHTML = `<div class="alert alert-warn">⚠ No hay credenciales configuradas.</div>`;
+  }
+}
+
+async function guardarConfig() {
+  const usuario = document.getElementById('cfg-usuario').value.trim();
+  const passwd  = document.getElementById('cfg-passwd').value;
+  const res = document.getElementById('config-resultado');
+  if (!usuario || !passwd) { res.innerHTML = '<div class="alert alert-danger">Completá ambos campos.</div>'; return; }
+  const d = await (await fetch('/api/garmin/config', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ usuario, passwd })
+  })).json();
+  if (d.ok) {
+    res.innerHTML = '<div class="alert alert-ok">✓ Credenciales guardadas correctamente.</div>';
+    document.getElementById('cfg-passwd').value = '';
+    cargarConfig(); cargarStats();
+  } else {
+    res.innerHTML = `<div class="alert alert-danger">Error: ${d.error}</div>`;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// TRAINING PLAN — Calendario Garmin
+// ══════════════════════════════════════════════════════════════════════════════
+let _calSemanas  = [];   // lista de objetos {semana, domingo, dias, total}
+let _calIdx      = 0;    // índice de semana actual en _calSemanas
+let _semanaActual = 1;   // mantener para Claude chat
+
+const DIAS_ES = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
+const DIAS_HEADER = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
+
+function tipoIcon(tipo) {
+  const map = { running:'🏃', cycling:'🚴', swimming:'🏊', strength:'💪', hiking:'🥾', yoga:'🧘', other:'🏋️' };
+  for (const [k, v] of Object.entries(map)) { if (tipo.includes(k)) return v; }
+  return '📅';
+}
+
+function fmtDurCal(seg) {
+  if (!seg) return '';
+  const h = Math.floor(seg / 3600), m = Math.floor((seg % 3600) / 60);
+  return h ? `${h}h ${m}m` : `${m}m`;
+}
+
+async function cargarCalendario() {
+  const loading = document.getElementById('cal-loading');
+  const error   = document.getElementById('cal-error');
+  const card    = document.getElementById('card-semana-cal');
+  const empty   = document.getElementById('cal-empty');
+  loading.style.display = 'block';
+  error.style.display = 'none';
+  card.style.display = 'none';
+  empty.style.display = 'none';
+  document.getElementById('dia-grid-cal').innerHTML = '';
+  document.getElementById('cal-semana-label').textContent = '—';
+
+  try {
+    const d = await (await fetch('/api/training/calendario')).json();
+    loading.style.display = 'none';
+    if (!d.ok) { error.textContent = 'Error: ' + d.error; error.style.display = 'block'; return; }
+    _calSemanas = d.semanas || [];
+    if (!_calSemanas.length) { empty.style.display = 'block'; return; }
+
+    // Posicionarse en la semana más cercana a hoy
+    const hoy = new Date().toISOString().substring(0,10);
+    _calIdx = 0;
+    for (let i = 0; i < _calSemanas.length; i++) {
+      if (_calSemanas[i].domingo >= hoy) { _calIdx = i; break; }
+    }
+    renderCalSemana();
+  } catch(e) {
+    loading.style.display = 'none';
+    error.textContent = 'Error de conexión: ' + e.message;
+    error.style.display = 'block';
+  }
+}
+
+function navSemana(dir) {
+  _calIdx = Math.max(0, Math.min(_calSemanas.length - 1, _calIdx + dir));
+  renderCalSemana();
+}
+
+function renderCalSemana() {
+  const card  = document.getElementById('card-semana-cal');
+  const empty = document.getElementById('cal-empty');
+  const label = document.getElementById('cal-semana-label');
+  const prevBtn = document.getElementById('btn-sem-prev');
+  const nextBtn = document.getElementById('btn-sem-next');
+
+  if (!_calSemanas.length) { empty.style.display = 'block'; card.style.display = 'none'; return; }
+
+  const sem = _calSemanas[_calIdx];
+  label.textContent = `${sem.semana} → ${sem.domingo}  (${sem.total} workout${sem.total !== 1 ? 's' : ''})`;
+  prevBtn.disabled = _calIdx === 0;
+  nextBtn.disabled = _calIdx === _calSemanas.length - 1;
+
+  // Construir grilla lun→dom
+  const lunes = new Date(sem.semana + 'T12:00:00');
+  const grid = document.getElementById('dia-grid-cal');
+  grid.innerHTML = DIAS_HEADER.map((hdr, i) => {
+    const d = new Date(lunes); d.setDate(d.getDate() + i);
+    const fecha = d.toISOString().substring(0,10);
+    const workouts = sem.dias[fecha] || [];
+    const cards = workouts.map(w => {
+      const isRace = w.nombre.toLowerCase().includes('21k') || w.nombre.toLowerCase().includes('hybrid') || w.nombre.toLowerCase().includes('race');
+      const dur = fmtDurCal(w.duracion);
+      return `<div class="sesion-card${isRace?' race':''}">
+        <div class="sesion-turno">${tipoIcon(w.tipo)} ${w.tipo || ''}</div>
+        <div style="font-weight:500;line-height:1.3">${w.nombre}</div>
+        ${dur ? `<div style="font-family:var(--mono);font-size:.65rem;color:var(--muted);margin-top:.2rem">${dur}</div>` : ''}
+      </div>`;
+    }).join('');
+    const hoy = new Date().toISOString().substring(0,10);
+    const esHoy = fecha === hoy;
+    return `<div class="dia-col">
+      <div class="dia-header" style="${esHoy ? 'color:var(--accent);font-weight:700' : ''}">${hdr} <span style="font-size:.58rem;font-weight:400">${fecha.substring(5)}</span></div>
+      ${cards || '<div style="font-size:.72rem;color:var(--dim);padding:.3rem 0">Libre</div>'}
+    </div>`;
+  }).join('');
+
+  card.style.display = 'block';
+  empty.style.display = 'none';
+}
+
+// Stub para que Claude chat siga funcionando
+async function cargarSemanas() { cargarCalendario(); }
+
+function esc(s) { return (s||'').replace(/'/g,"\\'").replace(/\n/g,' '); }
+
+function editarSesion(id, desc, notas, dia, turno, fechaInicio) {
+  document.getElementById('ses-id').value = id;
+  document.getElementById('ses-desc').value = desc;
+  document.getElementById('ses-notas').value = notas;
+  document.getElementById('modal-ses-titulo').textContent = `${dia} — ${turno}`;
+  if (fechaInicio) {
+    const dias = ['lunes','martes','miércoles','jueves','viernes','sábado','domingo'];
+    const offset = dias.indexOf(dia);
+    if (offset >= 0) {
+      const base = new Date(fechaInicio + 'T12:00:00');
+      base.setDate(base.getDate() + offset);
+      cargarGarminDia(base.toISOString().substring(0,10));
+    }
+  }
+  abrirModal('modal-sesion');
+}
+
+async function cargarGarminDia(fecha) {
+  const cont = document.getElementById('modal-ses-garmin');
+  if (!cont) return;
+  cont.innerHTML = '<div style="font-size:.75rem;color:var(--muted)">Buscando actividades Garmin...</div>';
+  const d = await (await fetch(`/api/training/garmin_dia?fecha=${fecha}`)).json();
+  if (!d.ok || !d.rows.length) {
+    cont.innerHTML = '<div style="font-size:.75rem;color:var(--dim)">Sin actividades Garmin este día.</div>'; return;
+  }
+  cont.innerHTML = d.rows.map(a => {
+    const dur = a.duracion_seg ? Math.floor(a.duracion_seg/60)+"'" : '—';
+    const dist = a.distancia_m ? (a.distancia_m/1000).toFixed(2)+'km' : '';
+    return `<div style="display:flex;gap:.5rem;align-items:center;padding:.4rem .6rem;background:var(--accent-light);border-radius:4px;margin-bottom:.3rem;font-size:.78rem">
+      <span>⌚</span><span style="font-weight:500">${a.nombre||a.tipo}</span>
+      <span style="color:var(--muted)">${dur} ${dist} ${a.fc_media ? '· FC '+a.fc_media : ''}</span>
+      <button class="btn btn-outline btn-sm" style="margin-left:auto;font-size:.7rem" onclick="switchModule('garmin','actividades')">Ver →</button>
+    </div>`;
+  }).join('');
+}
+
+async function guardarSesion() {
+  const id   = document.getElementById('ses-id').value;
+  const desc = document.getElementById('ses-desc').value;
+  const notas= document.getElementById('ses-notas').value;
+  await fetch(`/api/training/sesion/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ descripcion:desc, notas }) });
+  cerrarModal('modal-sesion');
+  irSemana(_semanaActual);
+}
+
+async function eliminarSesion() {
+  if (!confirm('¿Eliminar esta sesión del plan?')) return;
+  const id = document.getElementById('ses-id').value;
+  await fetch(`/api/training/sesion/${id}`, { method:'DELETE' });
+  cerrarModal('modal-sesion');
+  irSemana(_semanaActual);
+}
+
+function agregarSesion() {
+  document.getElementById('nueva-ses-semana').value = _semanaActual;
+  document.getElementById('nueva-ses-desc').value = '';
+  abrirModal('modal-nueva-sesion');
+}
+
+async function guardarNuevaSesion() {
+  const data = {
+    semana_num:  parseInt(document.getElementById('nueva-ses-semana').value),
+    dia_semana:  document.getElementById('nueva-ses-dia').value,
+    turno:       document.getElementById('nueva-ses-turno').value,
+    descripcion: document.getElementById('nueva-ses-desc').value,
+  };
+  await fetch('/api/training/sesion', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) });
+  cerrarModal('modal-nueva-sesion');
+  irSemana(_semanaActual);
+}
+
+// ── Log ───────────────────────────────────────────────────────────────────────
+function abrirModalLog() {
+  document.getElementById('log-fecha').value = new Date().toISOString().substring(0,10);
+  document.getElementById('log-desc').value = '';
+  document.getElementById('log-notas').value = '';
+  document.getElementById('log-garmin').value = '';
+  abrirModal('modal-log');
+}
+
+async function guardarLog() {
+  const data = {
+    fecha:       document.getElementById('log-fecha').value,
+    tipo:        document.getElementById('log-tipo').value,
+    descripcion: document.getElementById('log-desc').value,
+    duracion_min:parseInt(document.getElementById('log-duracion').value) || null,
+    notas:       document.getElementById('log-notas').value,
+    completado:  parseInt(document.getElementById('log-completado').value),
+    garmin_id:   document.getElementById('log-garmin').value || null,
+  };
+  await fetch('/api/training/log', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) });
+  cerrarModal('modal-log');
+  cargarLog();
+}
+
+async function cargarLog() {
+  const d = await (await fetch('/api/training/log')).json();
+  const body = document.getElementById('body-log');
+  if (!d.rows || !d.rows.length) {
+    body.innerHTML = '<tr><td colspan="6" style="color:var(--muted);text-align:center;padding:1.5rem">Sin registros aún.</td></tr>'; return;
+  }
+  body.innerHTML = d.rows.map(l => `<tr>
+    <td style="font-family:var(--mono);font-size:.75rem">${l.fecha}</td>
+    <td>${l.tipo}</td>
+    <td style="max-width:250px">${l.descripcion||'—'}</td>
+    <td style="font-family:var(--mono)">${l.duracion_min ? l.duracion_min+"'" : '—'}</td>
+    <td style="max-width:180px;font-size:.75rem;color:var(--muted)">${l.notas||'—'}</td>
+    <td><button class="btn btn-danger btn-sm" onclick="eliminarLog('${l.id}')">🗑</button></td>
+  </tr>`).join('');
+}
+
+async function eliminarLog(id) {
+  if (!confirm('¿Eliminar este registro?')) return;
+  await fetch(`/api/training/log/${id}`, { method:'DELETE' });
+  cargarLog();
+}
+
+// ── Claude chat ───────────────────────────────────────────────────────────────
+async function enviarClaude() {
+  const input = document.getElementById('claude-input');
+  const pregunta = input.value.trim();
+  if (!pregunta) return;
+  input.value = '';
+  const chat = document.getElementById('claude-chat');
+  chat.innerHTML += `<div class="claude-msg claude-user">${pregunta}</div>`;
+  chat.innerHTML += `<div class="claude-msg claude-resp" id="claude-loading"><span class="spinner spinner-dark"></span> Pensando...</div>`;
+  chat.scrollTop = chat.scrollHeight;
+  const btn = document.getElementById('btn-claude-send');
+  btn.disabled = true;
+  const d = await (await fetch('/api/training/claude', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ pregunta, semana_num: _semanaActual })
+  })).json();
+  document.getElementById('claude-loading').remove();
+  btn.disabled = false;
+  chat.innerHTML += d.ok
+    ? `<div class="claude-msg claude-resp">${d.respuesta}</div>`
+    : `<div class="claude-msg" style="background:var(--danger-light);color:var(--danger)">Error: ${d.error}</div>`;
+  chat.scrollTop = chat.scrollHeight;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('nav-actividades').classList.add('active-garmin');
+  cargarStats();
+  cargarActividades();
+  cargarCalendario();
+});
+</script>
+</body>
+</html>
