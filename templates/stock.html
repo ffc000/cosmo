@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<script>
+(function(){
+  var meta = document.querySelector('meta[name="csrf-token"]');
+  var token = meta ? meta.content : '';
+  var originalFetch = window.fetch;
+  window.fetch = function(input, init){
+    init = init || {};
+    var method = (init.method || 'GET').toUpperCase();
+    if (method !== 'GET' && method !== 'HEAD') {
+      init.headers = new Headers(init.headers || {});
+      if (!init.headers.has('X-CSRFToken')) init.headers.set('X-CSRFToken', token);
+    }
+    return originalFetch(input, init);
+  };
+})();
+</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CosmoTools — Stock Depósitos</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#F0F4F8;--surface:#FFFFFF;--surface2:#F8FAFC;
+  --sidebar-bg:#1E2A3B;--sidebar-hover:rgba(255,255,255,.06);--sidebar-active:rgba(41,121,200,.15);
+  --border:#E5E7EB;--border-dark:rgba(255,255,255,.08);
+  --accent:#1A56DB;--accent-hover:#1447C0;--accent-light:#EBF5FF;
+  --accent2:#057A55;--accent2-light:#F0FFF4;
+  --warn:#D97706;--warn-light:#FFFBEB;
+  --text:#111928;--text-sub:#374151;--muted:#6B7280;--dim:#9CA3AF;
+  --text-sidebar:#CBD5E1;--text-sidebar-muted:#64748B;
+  --mono:'IBM Plex Mono',monospace;--sans:'IBM Plex Sans',sans-serif;
+  --radius:8px;--radius-sm:4px;
+  --shadow-sm:0 1px 3px rgba(0,0,0,.08);
+  --shadow:0 4px 12px rgba(0,0,0,.08);
+  --sidebar-w:230px;
+}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
+.app{display:flex;flex:1;min-height:0}
+.sidebar{width:var(--sidebar-w);min-width:var(--sidebar-w);background:var(--sidebar-bg);display:flex;flex-direction:column;z-index:50}
+.sidebar-brand{padding:1.4rem 1.4rem 1rem;border-bottom:1px solid var(--border-dark)}
+.sidebar-brand .name{font-family:var(--mono);font-size:.92rem;font-weight:600;color:#fff;letter-spacing:.03em}
+.sidebar-brand .sub{font-size:.65rem;color:var(--text-sidebar-muted);margin-top:.2rem}
+.sidebar-nav{flex:1;padding:.6rem 0;overflow-y:auto}
+.nav-section{font-family:var(--mono);font-size:.58rem;color:var(--text-sidebar-muted);letter-spacing:.18em;text-transform:uppercase;padding:.8rem 1.4rem .3rem}
+.nav-item{display:flex;align-items:center;gap:.7rem;padding:.62rem 1.4rem;cursor:pointer;color:var(--text-sidebar-muted);font-size:.82rem;transition:all .15s;border-left:2px solid transparent;user-select:none}
+.nav-item:hover{color:var(--text-sidebar);background:var(--sidebar-hover)}
+.nav-item.active{color:#fff;background:var(--sidebar-active);border-left-color:var(--accent)}
+.nav-icon{font-size:.9rem;width:18px;text-align:center;flex-shrink:0}
+.sidebar-footer{padding:.9rem 1.4rem;border-top:1px solid var(--border-dark)}
+.back-link{font-size:.72rem;color:var(--text-sidebar-muted);text-decoration:none;display:block;margin-bottom:.4rem;transition:color .15s}
+.back-link:hover{color:var(--text-sidebar)}
+.logout{font-size:.72rem;color:var(--text-sidebar-muted);text-decoration:none;display:block;transition:color .15s}
+.logout:hover{color:var(--text-sidebar)}
+.main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.topbar{background:var(--surface);border-bottom:1px solid var(--border);padding:.75rem 1.75rem;display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-shrink:0;box-shadow:var(--shadow-sm)}
+.topbar-left{display:flex;align-items:center;gap:.75rem}
+.hamburger{display:none;background:none;border:none;color:var(--muted);font-size:1.3rem;cursor:pointer;padding:.25rem;line-height:1;min-width:36px}
+.topbar-title{font-family:var(--mono);font-size:.78rem;color:var(--accent);letter-spacing:.08em;font-weight:600}
+.topbar-user{font-family:var(--mono);font-size:.7rem;color:var(--muted)}
+.content{flex:1;padding:1.75rem;overflow-y:auto}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;margin-bottom:1.25rem;box-shadow:var(--shadow-sm)}
+.card-title{font-family:var(--mono);font-size:.65rem;color:var(--muted);letter-spacing:.14em;text-transform:uppercase;margin-bottom:.9rem;font-weight:600}
+label{display:block;font-size:.7rem;font-weight:600;color:var(--text-sub);letter-spacing:.05em;text-transform:uppercase;margin-bottom:.3rem}
+input[type=text],input[type=date],input[type=number],select{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:var(--mono);font-size:.85rem;padding:.55rem .8rem;outline:none;transition:border-color .2s,box-shadow .2s}
+input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(26,86,219,.12)}
+.form-row{display:grid;gap:.9rem;margin-bottom:.9rem}
+.form-row.cols2{grid-template-columns:1fr 1fr}
+.form-row.cols3{grid-template-columns:1fr 1fr 1fr}
+.btn{display:inline-flex;align-items:center;gap:.5rem;border:none;border-radius:var(--radius-sm);cursor:pointer;font-family:var(--sans);font-weight:600;font-size:.85rem;padding:.6rem 1.2rem;transition:all .15s}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{background:var(--accent-hover)}
+.btn-primary:disabled{background:var(--dim);cursor:not-allowed}
+.btn-full{width:100%;justify-content:center}
+.upload-zone{border:2px dashed var(--border);border-radius:var(--radius);padding:1.2rem;text-align:center;cursor:pointer;transition:border-color .2s;background:var(--surface2)}
+.upload-zone:hover,.upload-zone.drag{border-color:var(--accent);background:var(--accent-light)}
+.upload-zone input[type=file]{display:none}
+.upload-zone .icon{font-size:1.5rem;margin-bottom:.4rem}
+.upload-zone .label{font-size:.78rem;color:var(--muted)}
+.upload-zone .loaded{font-size:.78rem;color:var(--accent2);font-weight:600;margin-top:.3rem}
+.log-box{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);font-family:var(--mono);font-size:.72rem;color:var(--text-sub);padding:.9rem;height:120px;overflow-y:auto;margin-top:.9rem;display:none}
+.log-box.visible{display:block}
+.log-line{margin-bottom:.2rem}
+.log-line.ok{color:var(--accent2)}
+.log-line.err{color:#b91c1c}
+.download-area{display:none;margin-top:.9rem}.download-area.visible{display:flex;gap:.6rem;flex-wrap:wrap}
+.download-btn{display:inline-flex;align-items:center;gap:.4rem;background:var(--accent2-light);border:1px solid rgba(5,122,85,.25);border-radius:var(--radius-sm);color:var(--accent2);font-family:var(--mono);font-size:.72rem;padding:.45rem .9rem;text-decoration:none;transition:all .15s;font-weight:600;cursor:pointer}
+.download-btn:hover{background:#D1FAE5}
+.sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:40}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{width:13px;height:13px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;display:inline-block}
+@media(max-width:768px){
+  .sidebar{position:fixed;top:0;left:0;bottom:0;transform:translateX(-100%)}
+  .sidebar.open{transform:translateX(0)}
+  .sidebar-overlay.visible{display:block}
+  .hamburger{display:block}
+  .topbar-user{display:none}
+  .content{padding:1.1rem}
+  .form-row.cols2,.form-row.cols3{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<div class="sidebar-overlay" id="sidebar-overlay"></div>
+<div class="app">
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <div class="name">Stock Depósitos</div>
+      <div class="sub">Reporte de transmisión</div>
+    </div>
+    <nav class="sidebar-nav">
+      {% include '_sidebar_nav.html' %}
+      <div class="nav-section">Módulo</div>
+      <div class="nav-item active" id="nav-generar" onclick="mostrarPanel('generar')"><span class="nav-icon">🏭</span><span class="nav-label">Generar reporte</span></div>
+      <div class="nav-item" id="nav-historial" onclick="mostrarPanel('historial')"><span class="nav-icon">🗂</span><span class="nav-label">Historial</span></div>
+    </nav>
+    {% include '_sidebar_footer.html' %}
+  </div>
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-left">
+        <button class="hamburger" id="hamburger">&#9776;</button>
+        <div class="topbar-title" id="topbar-title">STOCK DEPÓSITOS — Generar reporte</div>
+      </div>
+      <div class="topbar-user">{{ username }}</div>
+    </div>
+    <div class="content">
+
+      <!-- ── Panel: Generar reporte ── -->
+      <div id="panel-generar">
+      <div class="card">
+        <div class="card-title">Parámetros</div>
+        <div class="form-row cols3">
+          <div>
+            <label>Fecha máxima</label>
+            <input type="date" id="fecha_max">
+          </div>
+          <div>
+            <label>Días tolerancia incumplimiento</label>
+            <select id="dias_tol">
+              {% for i in range(16) %}
+              <option value="{{ i }}" {% if i==0 %}selected{% endif %}>{{ i }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="form-row cols2">
+          <div>
+            <label>Archivo de Stock (TXT)</label>
+            <div class="upload-zone" id="zone-stock" onclick="document.getElementById('inp-stock').click()">
+              <input type="file" id="inp-stock" accept=".txt">
+              <div class="icon">📂</div>
+              <div class="label">Hacer clic o arrastrar el TXT de stock</div>
+              <div class="loaded" id="lbl-stock" style="display:none"></div>
+            </div>
+          </div>
+          <div>
+            <label>Maestro de Depósitos (TXT)</label>
+            <div class="upload-zone" id="zone-depo" onclick="document.getElementById('inp-depo').click()">
+              <input type="file" id="inp-depo" accept=".txt">
+              <div class="icon">📂</div>
+              <div class="label">Hacer clic o arrastrar el TXT de depósitos</div>
+              <div class="loaded" id="lbl-depo" style="display:none"></div>
+            </div>
+          </div>
+        </div>
+        <button class="btn btn-primary btn-full" id="btn-generar" disabled>Generar reporte</button>
+      </div>
+      <div class="log-box" id="log-box"></div>
+      <div class="download-area" id="download-area"></div>
+      </div><!-- /panel-generar -->
+
+      <!-- ── Panel: Historial ── -->
+      <div id="panel-historial" style="display:none">
+        <div class="card">
+          <div class="card-title">Reportes generados</div>
+          <div id="hist-loading" style="font-size:.8rem;color:var(--muted);padding:.5rem 0">Cargando…</div>
+          <div id="hist-empty"   style="display:none;font-size:.8rem;color:var(--muted);padding:.5rem 0">No hay reportes guardados todavía.</div>
+          <table id="hist-table" style="display:none;width:100%;border-collapse:collapse;font-size:.8rem">
+            <thead>
+              <tr style="background:var(--surface2);border-bottom:2px solid var(--border)">
+                <th style="padding:.55rem .75rem;text-align:left;font-size:.7rem;color:var(--muted);font-weight:600;white-space:nowrap">Fecha corte</th>
+                <th style="padding:.55rem .75rem;text-align:left;font-size:.7rem;color:var(--muted);font-weight:600">Generado</th>
+                <th style="padding:.55rem .75rem;text-align:left;font-size:.7rem;color:var(--muted);font-weight:600">Usuario</th>
+                <th style="padding:.55rem .75rem;text-align:center;font-size:.7rem;color:var(--muted);font-weight:600">Tol.</th>
+                <th style="padding:.55rem .75rem;text-align:center;font-size:.7rem;color:var(--muted);font-weight:600">Total</th>
+                <th style="padding:.55rem .75rem;text-align:center;font-size:.7rem;color:#057A55;font-weight:600">Verde</th>
+                <th style="padding:.55rem .75rem;text-align:center;font-size:.7rem;color:#1A56DB;font-weight:600">Azul</th>
+                <th style="padding:.55rem .75rem;text-align:center;font-size:.7rem;color:#D97706;font-weight:600">Amarillo</th>
+                <th style="padding:.55rem .75rem;text-align:center;font-size:.7rem;color:#b91c1c;font-weight:600">Rojo</th>
+                <th style="padding:.55rem .75rem;text-align:center;font-size:.7rem;color:#374151;font-weight:600">Negro</th>
+                <th style="padding:.55rem .75rem;text-align:center;font-size:.7rem;color:var(--muted);font-weight:600">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="hist-tbody"></tbody>
+          </table>
+        </div>
+      </div><!-- /panel-historial -->
+
+    </div>
+  </div>
+</div>
+
+<!-- Modal confirmación eliminar -->
+<div id="modal-delete" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:200;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:10px;padding:1.75rem;max-width:420px;width:90vw;box-shadow:0 8px 32px rgba(0,0,0,.18)">
+    <div style="font-size:.95rem;font-weight:700;margin-bottom:.5rem;color:#111928">Eliminar reporte</div>
+    <div style="font-size:.82rem;color:#6B7280;margin-bottom:1.25rem" id="modal-delete-txt"></div>
+    <div style="display:flex;gap:.75rem;justify-content:flex-end">
+      <button onclick="cerrarModalDelete()" style="border:1px solid #d1d5db;border-radius:5px;padding:.5rem 1.1rem;font-size:.82rem;background:#fff;cursor:pointer;font-weight:600">Cancelar</button>
+      <button id="btn-confirm-delete" style="border:none;border-radius:5px;padding:.5rem 1.1rem;font-size:.82rem;background:#b91c1c;color:#fff;cursor:pointer;font-weight:600">Eliminar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Sidebar ──
+const sidebar = document.getElementById('sidebar');
+const overlay = document.getElementById('sidebar-overlay');
+document.getElementById('hamburger').addEventListener('click', () => {
+  sidebar.classList.toggle('open');
+  overlay.classList.toggle('visible');
+});
+overlay.addEventListener('click', () => {
+  sidebar.classList.remove('open');
+  overlay.classList.remove('visible');
+});
+
+// ── Fecha por defecto: ayer ──
+(function() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  document.getElementById('fecha_max').value = d.toISOString().slice(0, 10);
+})();
+
+// ── Upload zones ──
+let stockFile = null, depoFile = null;
+
+function setupZone(zoneId, inputId, lblId, varSetter) {
+  const zone  = document.getElementById(zoneId);
+  const input = document.getElementById(inputId);
+  const lbl   = document.getElementById(lblId);
+
+  input.addEventListener('change', () => {
+    if (input.files[0]) {
+      varSetter(input.files[0]);
+      lbl.textContent = input.files[0].name + ' (' + (input.files[0].size/1024).toFixed(0) + ' KB)';
+      lbl.style.display = 'block';
+      zone.style.borderColor = 'var(--accent2)';
+      checkReady();
+    }
+  });
+
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.classList.remove('drag');
+    const f = e.dataTransfer.files[0];
+    if (f) {
+      input.files; // can't set, but we handle via DataTransfer
+      varSetter(f);
+      lbl.textContent = f.name + ' (' + (f.size/1024).toFixed(0) + ' KB)';
+      lbl.style.display = 'block';
+      zone.style.borderColor = 'var(--accent2)';
+      checkReady();
+    }
+  });
+}
+
+setupZone('zone-stock', 'inp-stock', 'lbl-stock', f => { stockFile = f; });
+setupZone('zone-depo',  'inp-depo',  'lbl-depo',  f => { depoFile  = f; });
+
+function checkReady() {
+  document.getElementById('btn-generar').disabled = !(stockFile && depoFile);
+}
+
+// ── Generar ──
+document.getElementById('btn-generar').addEventListener('click', async () => {
+  const logBox = document.getElementById('log-box');
+  const dlArea = document.getElementById('download-area');
+  const btn    = document.getElementById('btn-generar');
+
+  logBox.classList.add('visible');
+  logBox.innerHTML = '';
+  dlArea.classList.remove('visible');
+  dlArea.innerHTML = '';
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Procesando…';
+
+  addLog(logBox, 'Leyendo archivos…');
+
+  const fecha    = document.getElementById('fecha_max').value;  // YYYY-MM-DD
+  const dias_tol = document.getElementById('dias_tol').value;
+
+  const fd = new FormData();
+  fd.append('stock',    stockFile);
+  fd.append('depositos', depoFile);
+  fd.append('fecha_max', fecha);
+  fd.append('dias_tol',  dias_tol);
+
+  try {
+    addLog(logBox, 'Enviando al servidor…');
+    const resp = await fetch('/api/stock/generar', { method: 'POST', body: fd });
+    const data = await resp.json();
+
+    if (!data.ok) {
+      addLog(logBox, '✗ ' + data.error, 'err');
+      resetBtn(btn);
+      return;
+    }
+
+    addLog(logBox, '✓ Procesamiento completado — ' + data.total + ' depósitos', 'ok');
+    addLog(logBox, '  Verde: ' + data.conteo.VERDE + '  |  Azul: ' + data.conteo.AZUL +
+                   '  |  Amarillo: ' + data.conteo.AMARILLO +
+                   '  |  Rojo: ' + data.conteo.ROJO + '  |  Negro: ' + data.conteo.NEGRO, 'ok');
+
+    // Botón de descarga
+    const a = document.createElement('a');
+    a.href = '/api/stock/download/' + data.job_id;
+    a.className = 'download-btn';
+    a.textContent = '🌐 Descargar HTML';
+    dlArea.appendChild(a);
+    dlArea.classList.add('visible');
+    resetBtn(btn);
+
+  } catch (e) {
+    addLog(logBox, '✗ Error: ' + e.message, 'err');
+    resetBtn(btn);
+  }
+});
+
+function addLog(box, msg, cls) {
+  const div = document.createElement('div');
+  div.className = 'log-line' + (cls ? ' ' + cls : msg.includes('✓') ? ' ok' : msg.includes('✗') ? ' err' : '');
+  div.textContent = msg;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
+function resetBtn(btn) {
+  btn.disabled = false;
+  btn.innerHTML = 'Generar reporte';
+}
+
+// ── Navegación entre paneles ─────────────────────────────────────────────────
+function mostrarPanel(panel) {
+  document.getElementById('panel-generar').style.display   = panel === 'generar'   ? '' : 'none';
+  document.getElementById('panel-historial').style.display = panel === 'historial' ? '' : 'none';
+  document.getElementById('nav-generar').classList.toggle('active',   panel === 'generar');
+  document.getElementById('nav-historial').classList.toggle('active', panel === 'historial');
+  document.getElementById('topbar-title').textContent =
+    panel === 'generar' ? 'STOCK DEPÓSITOS — Generar reporte' : 'STOCK DEPÓSITOS — Historial';
+  if (panel === 'historial') cargarHistorial();
+}
+
+// ── Historial ────────────────────────────────────────────────────────────────
+const SEM_COLOR = { VERDE:'#057A55', AZUL:'#1A56DB', AMARILLO:'#D97706', ROJO:'#b91c1c', NEGRO:'#374151' };
+
+function cargarHistorial() {
+  document.getElementById('hist-loading').style.display = 'block';
+  document.getElementById('hist-empty').style.display   = 'none';
+  document.getElementById('hist-table').style.display   = 'none';
+
+  fetch('/api/stock/historial?limit=50')
+    .then(r => r.json())
+    .then(data => {
+      document.getElementById('hist-loading').style.display = 'none';
+      if (!data.ok || !data.rows.length) {
+        document.getElementById('hist-empty').style.display = 'block';
+        return;
+      }
+      renderHistorial(data.rows);
+    })
+    .catch(e => {
+      document.getElementById('hist-loading').textContent = 'Error: ' + e.message;
+    });
+}
+
+function renderHistorial(rows) {
+  const tbody = document.getElementById('hist-tbody');
+  tbody.innerHTML = '';
+
+  rows.forEach(r => {
+    const fechaGen = r.fecha_gen ? r.fecha_gen.replace('T', ' ').slice(0, 16) : '—';
+    const canDl    = r.file_ok;
+
+    const tr = document.createElement('tr');
+    tr.style.borderBottom = '1px solid var(--border)';
+    tr.innerHTML = `
+      <td style="padding:.5rem .75rem;font-weight:600;white-space:nowrap">${r.fecha_corte}</td>
+      <td style="padding:.5rem .75rem;white-space:nowrap;color:var(--muted)">${fechaGen}</td>
+      <td style="padding:.5rem .75rem">${r.usuario || '—'}</td>
+      <td style="padding:.5rem .75rem;text-align:center">${r.dias_tol}</td>
+      <td style="padding:.5rem .75rem;text-align:center;font-weight:600">${r.total}</td>
+      <td style="padding:.5rem .75rem;text-align:center;color:${SEM_COLOR.VERDE};font-weight:600">${r.verde}</td>
+      <td style="padding:.5rem .75rem;text-align:center;color:${SEM_COLOR.AZUL};font-weight:600">${r.azul}</td>
+      <td style="padding:.5rem .75rem;text-align:center;color:${SEM_COLOR.AMARILLO};font-weight:600">${r.amarillo}</td>
+      <td style="padding:.5rem .75rem;text-align:center;color:${SEM_COLOR.ROJO};font-weight:600">${r.rojo}</td>
+      <td style="padding:.5rem .75rem;text-align:center;color:${SEM_COLOR.NEGRO};font-weight:600">${r.negro}</td>
+      <td style="padding:.5rem .75rem;text-align:center;white-space:nowrap">
+        ${canDl
+          ? `<a href="/api/stock/download/${r.id}" class="download-btn" style="margin-right:.4rem">⬇ Descargar</a>`
+          : `<span style="font-size:.7rem;color:var(--dim)">Sin archivo</span>`
+        }
+        <button onclick="pedirEliminar('${r.id}','${r.fecha_corte}')"
+          style="border:1px solid #fca5a5;border-radius:4px;padding:.3rem .65rem;font-size:.72rem;
+                 background:#FEF2F2;color:#b91c1c;cursor:pointer;font-weight:600">🗑 Eliminar</button>
+      </td>`;
+    tbody.appendChild(tr);
+  });
+
+  document.getElementById('hist-table').style.display = 'table';
+}
+
+// ── Modal eliminar ────────────────────────────────────────────────────────────
+let _deleteId = null;
+
+function pedirEliminar(id, fecha) {
+  _deleteId = id;
+  document.getElementById('modal-delete-txt').textContent =
+    `¿Eliminar el reporte del ${fecha}? Se borrarán el archivo HTML y todos los registros de depósitos asociados. Esta acción no se puede deshacer.`;
+  const modal = document.getElementById('modal-delete');
+  modal.style.display = 'flex';
+}
+
+function cerrarModalDelete() {
+  document.getElementById('modal-delete').style.display = 'none';
+  _deleteId = null;
+}
+
+document.getElementById('btn-confirm-delete').addEventListener('click', async () => {
+  if (!_deleteId) return;
+  const btn = document.getElementById('btn-confirm-delete');
+  btn.disabled = true;
+  btn.textContent = 'Eliminando…';
+
+  try {
+    const resp = await fetch(`/api/stock/historial/${_deleteId}`, { method: 'DELETE' });
+    const data = await resp.json();
+    cerrarModalDelete();
+    if (data.ok) {
+      cargarHistorial();
+    } else {
+      alert('Error al eliminar: ' + (data.error || 'desconocido'));
+    }
+  } catch (e) {
+    alert('Error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Eliminar';
+  }
+});
+
+document.getElementById('modal-delete').addEventListener('click', function(e) {
+  if (e.target === this) cerrarModalDelete();
+});
+</script>
+</body>
+</html>
