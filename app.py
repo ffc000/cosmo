@@ -85,6 +85,89 @@ def inject_session_vars():
 # ── Job queue ──────────────────────────────────────────────────────────────────
 job_status = {}
 import threading as _threading
+
+# ── Repositorio de documentos por módulo (contexto para la IA) ─────────────────
+MODULOS_REPOSITORIO = ("vua", "senasa", "sintia")
+
+def _extraer_texto_docx(file_storage):
+    """Extrae texto plano (párrafos + tablas) de un .docx subido."""
+    from docx import Document
+    doc = Document(file_storage)
+    partes = [p.text for p in doc.paragraphs if p.text.strip()]
+    for tabla in doc.tables:
+        for fila in tabla.rows:
+            celdas = [c.text.strip() for c in fila.cells]
+            if any(celdas):
+                partes.append(" | ".join(celdas))
+    return "\n".join(partes)
+
+def contexto_repositorio(modulo):
+    """Concatena el texto completo de todos los documentos subidos para ese
+    módulo, para inyectarlo como contexto adicional en los prompts de IA."""
+    if modulo not in MODULOS_REPOSITORIO:
+        return ""
+    try:
+        con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
+        rows = con.execute(
+            "SELECT nombre_archivo, contenido FROM doc_repositorio WHERE modulo=? ORDER BY creado",
+            (modulo,)).fetchall()
+        con.close()
+    except Exception:
+        return ""
+    if not rows:
+        return ""
+    bloques = [f"--- Documento: {r['nombre_archivo']} ---\n{r['contenido']}" for r in rows]
+    return ("\n\nContexto adicional: documentos de referencia subidos por el equipo "
+            "(pueden incluir informes, antecedentes u otro material no estructurado). "
+            "Usalos como información de fondo si son relevantes para la consulta:\n\n"
+            + "\n\n".join(bloques))
+
+@app.route("/api/repositorio/<modulo>", methods=["GET"])
+@login_required
+def repositorio_list(modulo):
+    if modulo not in MODULOS_REPOSITORIO or modulo not in session.get("modulos", []):
+        return jsonify({"ok": False, "error": "Módulo no habilitado"}), 403
+    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
+    rows = [dict(r) for r in con.execute(
+        "SELECT id, nombre_archivo, subido_por, creado, length(contenido) as tamano "
+        "FROM doc_repositorio WHERE modulo=? ORDER BY creado DESC", (modulo,)).fetchall()]
+    con.close()
+    return jsonify({"ok": True, "rows": rows})
+
+@app.route("/api/repositorio/<modulo>", methods=["POST"])
+@login_required
+def repositorio_upload(modulo):
+    if modulo not in MODULOS_REPOSITORIO or modulo not in session.get("modulos", []):
+        return jsonify({"ok": False, "error": "Módulo no habilitado"}), 403
+    if "archivo" not in request.files:
+        return jsonify({"ok": False, "error": "No se recibió archivo"})
+    f = request.files["archivo"]
+    if not f.filename.lower().endswith(".docx"):
+        return jsonify({"ok": False, "error": "Por ahora solo se aceptan archivos Word (.docx)"})
+    try:
+        texto = _extraer_texto_docx(f)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"No se pudo leer el documento: {e}"})
+    if not texto.strip():
+        return jsonify({"ok": False, "error": "El documento no tiene texto extraíble"})
+    con = sqlite3.connect(HIST_DB)
+    con.execute("INSERT INTO doc_repositorio (modulo, nombre_archivo, contenido, subido_por) VALUES (?,?,?,?)",
+        (modulo, f.filename, texto, session.get("username", "?")))
+    con.commit(); con.close()
+    logging.info(f"REPOSITORIO UPLOAD | modulo={modulo} | user={session.get('username')} | archivo={f.filename}")
+    notificar_telegram(f"📁 Documento '{f.filename}' agregado al repositorio de {modulo} por {session.get('username')}")
+    return jsonify({"ok": True})
+
+@app.route("/api/repositorio/<modulo>/<int:doc_id>", methods=["DELETE"])
+@login_required
+def repositorio_delete(modulo, doc_id):
+    if modulo not in MODULOS_REPOSITORIO or modulo not in session.get("modulos", []):
+        return jsonify({"ok": False, "error": "Módulo no habilitado"}), 403
+    con = sqlite3.connect(HIST_DB)
+    con.execute("DELETE FROM doc_repositorio WHERE id=? AND modulo=?", (doc_id, modulo))
+    con.commit(); con.close()
+    return jsonify({"ok": True})
+
 def _limpiar_jobs_viejos():
     """Elimina jobs de más de 2 horas para evitar memory leak."""
     import time
@@ -426,6 +509,11 @@ def init_historial():
     con.execute("""CREATE TABLE IF NOT EXISTS vua_consultas_frecuentes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         pregunta TEXT, respuesta TEXT, activo INTEGER DEFAULT 1, orden INTEGER DEFAULT 0
+    )""")
+    con.execute("""CREATE TABLE IF NOT EXISTS doc_repositorio (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        modulo TEXT NOT NULL, nombre_archivo TEXT, contenido TEXT,
+        subido_por TEXT, creado TEXT DEFAULT (datetime('now'))
     )""")
     # Seed vua_config con claves mínimas si está vacía
     cur.execute("SELECT COUNT(*) FROM vua_config")
@@ -950,7 +1038,7 @@ def run_job(job_id, pais, anio, mes_d, mes_h, usar_ia, username):
         archivos = generar_informe(
             ruta_db=DB_PATH, pais=pais, anio=anio, mes_d=mes_d, mes_h=mes_h,
             usar_ia=usar_ia, api_key=get_api_key(), carpeta=OUTPUT_FOLDER,
-            log_fn=lambda msg: log.append(msg))
+            log_fn=lambda msg: log.append(msg), contexto_extra=contexto_repositorio("sintia"))
         # Guardar en historial
         hist_id = str(uuid.uuid4())[:8]
         word  = next((a for a in archivos if a.endswith(".docx")),"")
@@ -1312,7 +1400,7 @@ def vua_correo():
         import anthropic, httpx
         client = anthropic.Anthropic(api_key=get_api_key(), http_client=httpx.Client(follow_redirects=True))
         msg = client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=1000,
-            system=SYSTEM_CORREOS, messages=[{"role":"user","content":instruccion}])
+            system=SYSTEM_CORREOS + contexto_repositorio("vua"), messages=[{"role":"user","content":instruccion}])
         return jsonify({"ok":True,"texto":msg.content[0].text})
     except Exception as e:
         return jsonify({"ok":False,"error":str(e)})
@@ -1328,7 +1416,7 @@ def vua_normativa():
         import anthropic, httpx
         client = anthropic.Anthropic(api_key=get_api_key(), http_client=httpx.Client(follow_redirects=True))
         msg = client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=1200,
-            system=SYSTEM_NORMATIVA, messages=[{"role":"user","content":pregunta}])
+            system=SYSTEM_NORMATIVA + contexto_repositorio("vua"), messages=[{"role":"user","content":pregunta}])
         return jsonify({"ok":True,"respuesta":msg.content[0].text})
     except Exception as e:
         return jsonify({"ok":False,"error":str(e)})
@@ -1624,7 +1712,7 @@ def vua_config_mejorar(clave):
         prompt = (f"Mejorar la redacción de la sección '{titulo}' del informe de estado de situación del proyecto VUA. "
                   f"Conservá todos los datos y hechos del original. Devolvé solo el texto mejorado, sin encabezados ni explicaciones:\n\n{contenido_actual}")
         msg = client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=1500,
-            system=system_informe,
+            system=system_informe + contexto_repositorio("vua"),
             messages=[{"role": "user", "content": prompt}])
         return jsonify({"ok": True, "texto": msg.content[0].text.strip()})
     except Exception as e:
@@ -2006,7 +2094,7 @@ def vua_minuta_ia():
         )
         msg = client.messages.create(
             model="claude-haiku-4-5-20251001", max_tokens=1800,
-            system="Sos un asistente experto en gestión de proyectos aduaneros para ARCA Argentina. Respondés solo con JSON válido, sin texto adicional.",
+            system="Sos un asistente experto en gestión de proyectos aduaneros para ARCA Argentina. Respondés solo con JSON válido, sin texto adicional." + contexto_repositorio("vua"),
             messages=[{"role": "user", "content": prompt}])
         texto = msg.content[0].text.strip().replace("```json","").replace("```","").strip()
         resultado = json.loads(texto)
@@ -2084,7 +2172,7 @@ def vua_minuta_importar():
 
         msg = client.messages.create(
             model="claude-haiku-4-5-20251001", max_tokens=2000,
-            system="Sos un asistente experto en gestión de proyectos aduaneros para ARCA Argentina. Extraés información estructurada de minutas institucionales. Respondés solo con JSON válido.",
+            system="Sos un asistente experto en gestión de proyectos aduaneros para ARCA Argentina. Extraés información estructurada de minutas institucionales. Respondés solo con JSON válido." + contexto_repositorio("vua"),
             messages=[{"role": "user", "content": prompt}]
         )
         texto_resp = msg.content[0].text.strip().replace("```json","").replace("```","").strip()
@@ -2299,7 +2387,7 @@ def senasa_minuta_ia():
         client = anthropic.Anthropic(api_key=api_key, http_client=httpx.Client(follow_redirects=True))
         msg = client.messages.create(
             model="claude-haiku-4-5-20251001", max_tokens=1500,
-            system="Sos asistente de DI REPA (ARCA Argentina). Estructurás minutas de reuniones con SENASA. Respondés solo con JSON válido.",
+            system="Sos asistente de DI REPA (ARCA Argentina). Estructurás minutas de reuniones con SENASA. Respondés solo con JSON válido." + contexto_repositorio("senasa"),
             messages=[{"role":"user","content":(
                 f"Estructurá estas notas de reunión SENASA-ARCA en JSON:\n{notas}\n\n"
                 'Devolvé: {"asunto":"...","temas":["..."],"conclusiones":["..."],"compromisos":["ORG — compromiso..."],"proximos":["..."]}'
@@ -2573,7 +2661,7 @@ def vua_resumen_generar():
         client = anthropic.Anthropic(api_key=api_key, http_client=httpx.Client(follow_redirects=True))
         msg = client.messages.create(
             model="claude-haiku-4-5-20251001", max_tokens=1200,
-            system="Sos redactor de informes institucionales de ARCA Argentina. Redactás en prosa formal, español rioplatense, sin markdown.",
+            system="Sos redactor de informes institucionales de ARCA Argentina. Redactás en prosa formal, español rioplatense, sin markdown." + contexto_repositorio("vua"),
             messages=[{"role": "user", "content": prompt}])
         return jsonify({"ok": True, "texto": msg.content[0].text.strip()})
     except Exception as e:
@@ -2642,7 +2730,7 @@ def vua_bpmn_ia():
         )
         msg = client.messages.create(
             model="claude-haiku-4-5-20251001", max_tokens=2000,
-            system=SYSTEM_NORMATIVA + "\nRespondés solo con JSON válido, sin texto adicional.",
+            system=SYSTEM_NORMATIVA + "\nRespondés solo con JSON válido, sin texto adicional." + contexto_repositorio("vua"),
             messages=[{"role": "user", "content": prompt}])
         texto = msg.content[0].text.strip().replace("```json","").replace("```","").strip()
         resultado_ia = json.loads(texto)
@@ -2699,7 +2787,7 @@ def vua_acuerdos_pendientes():
         client = anthropic.Anthropic(api_key=api_key, http_client=httpx.Client(follow_redirects=True))
         msg = client.messages.create(
             model="claude-haiku-4-5-20251001", max_tokens=2000,
-            system="Sos analista de seguimiento de proyectos. Identificás compromisos y verificás su cumplimiento. Respondés solo con JSON válido.",
+            system="Sos analista de seguimiento de proyectos. Identificás compromisos y verificás su cumplimiento. Respondés solo con JSON válido." + contexto_repositorio("vua"),
             messages=[{"role": "user", "content": prompt}])
         texto = msg.content[0].text.strip().replace("```json","").replace("```","").strip()
         resultado = json.loads(texto)
@@ -2741,7 +2829,7 @@ def vua_riesgo_mitigacion_ia(rid):
         client = anthropic.Anthropic(api_key=api_key, http_client=httpx.Client(follow_redirects=True))
         msg = client.messages.create(
             model="claude-haiku-4-5-20251001", max_tokens=800,
-            system=SYSTEM_NORMATIVA,
+            system=SYSTEM_NORMATIVA + contexto_repositorio("vua"),
             messages=[{"role": "user", "content": prompt}])
         return jsonify({"ok": True, "sugerencias": msg.content[0].text.strip()})
     except Exception as e:

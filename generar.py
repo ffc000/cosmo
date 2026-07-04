@@ -421,7 +421,7 @@ def kpi_box(doc, kpis):
     doc.add_paragraph()
 
 # ── Narrativa IA ─────────────────────────────────────────────────────────────────
-def generar_narrativa_ia(datos, api_key):
+def generar_narrativa_ia(datos, api_key, contexto_extra=""):
     try:
         client = anthropic.Anthropic(api_key=api_key, http_client=httpx.Client(follow_redirects=True))
         prompt = f"""ADVERTENCIA: los datos numéricos de este prompt son los ÚNICOS válidos. Si tu memoria de entrenamiento tiene números distintos para este informe, ignoralos completamente.\nSos un analista de comercio exterior de ARCA (Aduana Argentina).
@@ -477,6 +477,8 @@ Estilo: formal, t\u00e9cnico, espa\u00f1ol rioplatense, tono mesurado y profesio
 - Usá EXACTAMENTE los porcentajes y números que te di. No recalcules ni redondees diferente.
 - Cuando menciones un porcentaje, siempre aclará el denominador: "X% de los cargados" o "X% del total de operaciones" — nunca digas solo "X% del total" si el denominador real es un subconjunto (como cargados o lastre).
 - Revisá la ortografía antes de responder. No uses gerundios mal formados ni palabras inventadas."""
+        if contexto_extra:
+            prompt += contexto_extra
         msg = client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=1800,
             messages=[{"role":"user","content":prompt}])
         raw_text = msg.content[0].text
@@ -702,7 +704,7 @@ def limpiar_salida_ia(texto):
     texto = re.sub(r"\n{3,}", "\n\n", texto)
     return texto.strip()
 
-def generar_conclusion_ia(datos, api_key):
+def generar_conclusion_ia(datos, api_key, contexto_extra=""):
     try:
         client = anthropic.Anthropic(api_key=api_key, http_client=httpx.Client(follow_redirects=True))
         interanual = ""
@@ -744,6 +746,8 @@ Total: {datos['g_total']} | Trans: {datos['g_trans']} ({datos['pct_trans']}) | N
 {interanual}
 
 REGLAS PARA LAS CALIFICACIONES EN SUBTÍTULOS:\n- Transmisión anticipada: basá la calificación EXCLUSIVAMENTE en la variación del % de transmitidos vs mes anterior.\n  {datos['var_trans_pp']} pp = la diferencia. Regla:\n  * más de +5pp: \"mejora significativa\"\n  * +1 a +5pp: \"leve mejora\"\n  * -1 a +1pp: \"nivel estable\" (si ambos meses tienen 0,0% de transmisión, usá \"sin transmisión en el período\" en lugar de cualquier calificación de mejora/retroceso)\n  * -1 a -5pp: \"leve retroceso\"\n  * menos de -5pp: \"retroceso\"\n  CASO ESPECIAL: si ult_pct_trans es \"0,0%\" no uses frases como \"mejora\" si no hubo variación real. Describí la situación en términos neutrales, sin calificarla de crítica o de fallo — puede responder a la dinámica propia del circuito en ese período. Tampoco uses \"cayeron al 100%\" ni \"subieron al 0%\" — decí directamente los valores absolutos.\n- Rechazos: si bajaron vs mes anterior → mejora; si subieron → variación a revisar; siempre mencionar los duplicados.\n- La dirección del texto debe coincidir con la dirección de los números: si un indicador bajó, no uses \"repunte\" ni \"aumento\"; si subió, no uses \"baja\" ni \"caída\".\n- Para rechazos: si subieron de un mes a otro, descríbelo como un aumento que conviene revisar, sin necesidad de calificarlo como grave. Si bajaron los operativos reales, es una mejora.\n- Porcentajes mes-mes: si el % actual es mayor al del mes anterior, es una mejora; si es menor, es un retroceso. Verificá la dirección antes de escribir.\n\nEstilo general: mantené un tono profesional, mesurado y descriptivo, sin adjetivos alarmistas (evitá palabras como \"crítico\", \"grave\", \"alarmante\", \"fallo sistémico\", \"preocupante\"). Describí los hechos y, cuando corresponda, sugerí seguimiento con un lenguaje constructivo.\n\nRedactá la sección con esta estructura EXACTA (usá estos títulos en negrita):\n\n**Impacto del mes de {datos['mes_ult_nombre']} — {datos['pais_nombre']}/Argentina (SINTIA)**\n\n**Volumen operativo**\n[Párrafo: total operaciones, desglose impo/expo, comparación con mes anterior. Si junio tiene volumen notoriamente menor, aclará que es mes parcial.]\n\n**Transmisión anticipada — [calificación según regla arriba, en minúsculas]**\nESCRIBI el siguiente parrafo usando EXACTAMENTE estas frases del sistema (no las reformules). Los datos entre [corchetes] son FIJOS y deben aparecer textualmente:\nLa transmision en {datos["mes_ult_nombre"]} alcanzo {datos["ult_pct_trans"]} ({datos["ult_trans"]} de {datos["ult_total"]} operaciones), {datos["frase_trans_var"]}. Cargados: {datos["frase_carg_detalle"]}. Lastre: {datos["frase_lastre_detalle"]}. {datos["frase_lastre_trans_var"]}. {datos["frase_lastre_notrans_var"]}. Acumulado semestral: {datos["pct_trans"]}.\nPodes agregar 1-2 oraciones de contexto analitico pero SIN modificar los datos anteriores.\n\n**Rechazos — [calificación breve en minúsculas]**\n[Párrafo: total, duplicados vs operativos reales, top categorías]\n\n**Conclusión**\n[2-3 observaciones priorizadas con recomendaciones en forma impersonal o infinitivo, en tono constructivo. PROHIBIDO el imperativo voseante: NO uses "Coordiná", "Recomendá", "Implementá" ni similares. Usá infinitivo ("Coordinar con...", "Se recomienda...", "Conviene dar seguimiento a...") o forma impersonal.]\n\nEstilo: formal, técnico, español rioplatense, tono mesurado y profesional. Sin markdown extra, solo títulos en negrita. Evitar anglicismos. Revisá la ortografía y la gramática antes de responder. Palabras comunes mal escritas a evitar: "ingressadas" (correcto: "ingresadas"), "campña" (correcto: "campaña"), "sosteniéndose" (no "sosteniene"). Verificá la concordancia de número: sujetos plurales requieren verbos plurales (ej: "los despachantes dispongan", no "disponga"). Los meses se escriben en minúscula en español (enero, febrero... no Enero, Febrero). El período analizado es {datos['periodo']} — NO menciones meses fuera de ese rango. "trimestre final" no tiene sentido en un informe semestral — no lo uses. PROHIBIDO hacer proyecciones temporales con años futuros ("junio 2027", "primer trimestre 2027", etc.) — si mencionás seguimiento futuro, usá frases como "en los próximos meses" o "durante el segundo semestre de {datos['anio']}". PROHIBIDO usar frases como "un aumento de -N" o "una disminución de +N" — si el valor bajó usá "disminución de N" (positivo), si subió usá "aumento de N" (positivo). DISTINGUIR interanual de intermensual: "interanual" = comparación con el mismo período del año anterior (solo si tiene_interanual=True); "intermensual" o "respecto al mes anterior" = comparación con el mes inmediatamente anterior. PROHIBIDO usar "interanual" para comparaciones mes-a-mes."""
+        if contexto_extra:
+            prompt += contexto_extra
         msg = client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=1600,
             messages=[{"role":"user","content":prompt}])
         return msg.content[0].text.strip()
@@ -1300,7 +1304,7 @@ def _generar_excel(pais, anio, mes_d, mes_h, version,
     return ruta
 
 # ── Punto de entrada principal ─────────────────────────────────────────────────
-def generar_informe(ruta_db, pais, anio, mes_d, mes_h, usar_ia, api_key, carpeta, log_fn):
+def generar_informe(ruta_db, pais, anio, mes_d, mes_h, usar_ia, api_key, carpeta, log_fn, contexto_extra=""):
     nombre_base=f"Informe_SINTIA_{pais}_{anio}_{mes_d}-{mes_h}"
     version=1
     while os.path.exists(os.path.join(carpeta,f"{nombre_base}_v{version}.docx")): version+=1
@@ -1329,7 +1333,7 @@ def generar_informe(ruta_db, pais, anio, mes_d, mes_h, usar_ia, api_key, carpeta
             "l_trans":fmt(lT),"l_no_trans":fmt(lN),"l_tardio":fmt(lTd),"l_total":fmt(lTot),
             "pct_l_trans":pct(lT,lTot),"pct_l_no_trans":pct(lN,lTot),"pct_l_tardio":pct(lTd,lTot),
             "total_rechazos":fmt(total_rechazos),"ev_mensual_texto":ev_txt,
-        }, api_key)
+        }, api_key, contexto_extra)
         if narrativa_ia: log_fn("✓ Narrativa generada")
         else: log_fn("  Narrativa no disponible, usando texto est\u00e1ndar")
 
@@ -1454,7 +1458,7 @@ def generar_informe(ruta_db, pais, anio, mes_d, mes_h, usar_ia, api_key, carpeta
             "frase_lastre_trans_var":_frases_conc.get("frase_lastre_trans_var",""),
             "frase_lastre_notrans_var":_frases_conc.get("frase_lastre_notrans_var",""),
             "frase_rech_var":_frases_conc.get("frase_rech_var",""),
-        }, api_key)
+        }, api_key, contexto_extra)
         if conclusion_ia:
             conclusion_ia, _hay_err = verificar_conclusion(conclusion_ia, {
                 "ult_last_notrans_n": fmt(ult_last_notrans_n),
