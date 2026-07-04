@@ -20,6 +20,20 @@ app = Flask(__name__)
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
+def notificar_telegram(msg: str):
+    """Envía un mensaje al bot de Telegram. No rompe el flujo si falla."""
+    if not TELEGRAM_TOKEN:
+        return
+    try:
+        urllib.request.urlopen(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+            f"?chat_id={TELEGRAM_CHAT_ID}&text=" + urllib.parse.quote(msg),
+            timeout=3
+        )
+    except Exception:
+        pass
+
+
 # Confía en 1 proxy (nginx) para X-Forwarded-For: reescribe request.remote_addr
 # de forma segura y evita que el cliente falsee su IP con headers propios.
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -620,15 +634,7 @@ def login():
                 con.commit(); con.close()
             except: pass
             logging.info("LOGIN OK | user=" + u + " | ip=" + ip)
-            try:
-                if TELEGRAM_TOKEN:
-                    urllib.request.urlopen(
-                        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-                        f"?chat_id={TELEGRAM_CHAT_ID}&text=" + urllib.parse.quote(f"🔓 Login: {u} ({ip})"),
-                        timeout=3
-                    )
-            except Exception:
-                pass
+            notificar_telegram(f"🔓 Login: {u} ({ip})")
             return redirect(url_for("index"))
         else:
             logging.warning("LOGIN FAIL | user=" + u + " | ip=" + ip)
@@ -694,8 +700,10 @@ def upload_db():
     if not f.filename.endswith(".db"): return jsonify({"ok":False,"error":"El archivo debe ser .db"})
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     f.save(DB_PATH)
+    size_gb = round(os.path.getsize(DB_PATH)/(1024**3),2)
     logging.info(f"BD UPLOAD | user={session.get('username')} | size={os.path.getsize(DB_PATH)}")
-    return jsonify({"ok":True,"size_gb":round(os.path.getsize(DB_PATH)/(1024**3),2)})
+    notificar_telegram(f"📦 BD reemplazada por {session.get('username')} ({size_gb} GB)")
+    return jsonify({"ok":True,"size_gb":size_gb})
 
 # ── Import SQL ─────────────────────────────────────────────────────────────────
 @app.route("/api/import-sql", methods=["POST"])
@@ -719,6 +727,7 @@ def import_sql():
             return jsonify({"ok":False,"error":result.stderr[:500]})
         size = round(os.path.getsize(DB_PATH)/(1024**3),2)
         logging.info(f"SQL IMPORT | user={session.get('username')} | size={size}GB")
+        notificar_telegram(f"📦 BD reimportada desde .sql por {session.get('username')} ({size} GB)")
         return jsonify({"ok":True,"size_gb":size})
     except subprocess.TimeoutExpired:
         return jsonify({"ok":False,"error":"Timeout — archivo muy grande."})
@@ -754,12 +763,16 @@ def update_csv():
 
 def _run_csv_job(job_id, tmp_path, tabla):
     log = job_status[job_id]["log"]
+    username = job_status[job_id].get("username", "?")
     try:
         _procesar_csv(tmp_path, tabla, log)
         job_status[job_id]["status"] = "done"
+        ultimo = log[-1] if log else ""
+        notificar_telegram(f"📄 Tabla {tabla} actualizada por {username}\n{ultimo}")
     except Exception as e:
         log.append(f"✗ Error: {e}")
         job_status[job_id]["status"] = "error"
+        notificar_telegram(f"⚠️ Error actualizando tabla {tabla} ({username}): {e}")
     finally:
         try: os.remove(tmp_path)
         except: pass
@@ -1899,6 +1912,44 @@ def vua_consultas_frecuentes_list():
         "SELECT * FROM vua_consultas_frecuentes WHERE activo=1 ORDER BY orden").fetchall()]
     con.close(); return jsonify({"ok": True, "rows": rows})
 
+@app.route("/api/vua/consultas_frecuentes", methods=["POST"])
+@login_required
+@modulo_required("vua")
+def vua_consultas_frecuentes_create():
+    """Permite guardar una consulta normativa ya resuelta como frecuente,
+    igual que ya se puede hacer con correos_rapidos."""
+    data = request.json or {}
+    pregunta = (data.get("pregunta") or "").strip()
+    if not pregunta:
+        return jsonify({"ok": False, "error": "Falta la pregunta"})
+    con = sqlite3.connect(HIST_DB)
+    con.execute("INSERT INTO vua_consultas_frecuentes (pregunta, respuesta, activo) VALUES (?,?,1)",
+        (pregunta, data.get("respuesta","")))
+    con.commit(); con.close(); return jsonify({"ok": True})
+
+@app.route("/api/vua/consultas_frecuentes/<int:cid>", methods=["PUT"])
+@login_required
+@modulo_required("vua")
+def vua_consultas_frecuentes_update(cid):
+    data = request.json or {}
+    con = sqlite3.connect(HIST_DB)
+    fields = []; params = []
+    for f in ["pregunta","respuesta","activo"]:
+        if f in data: fields.append(f + "=?"); params.append(data[f])
+    if fields:
+        params.append(cid)
+        con.execute("UPDATE vua_consultas_frecuentes SET " + ", ".join(fields) + " WHERE id=?", params)
+        con.commit()
+    con.close(); return jsonify({"ok": True})
+
+@app.route("/api/vua/consultas_frecuentes/<int:cid>", methods=["DELETE"])
+@login_required
+@modulo_required("vua")
+def vua_consultas_frecuentes_delete(cid):
+    con = sqlite3.connect(HIST_DB)
+    con.execute("UPDATE vua_consultas_frecuentes SET activo=0 WHERE id=?", (cid,))
+    con.commit(); con.close(); return jsonify({"ok": True})
+
 # ── VUA Minuta IA ─────────────────────────────────────────────────────────────
 @app.route("/api/vua/minuta_ia", methods=["POST"])
 @login_required
@@ -2901,6 +2952,20 @@ def token_revocado(token):
 # Requiere: openpyxl   →   pip install openpyxl --break-system-packages
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _resolver_tabla_dat(p):
+    """Resuelve la tabla DAT_<anio> a partir del parámetro opcional 'anio' del
+    request; si no viene o es inválido, usa el año actual. Valida rango para
+    evitar que un valor arbitrario llegue al f-string de la query SQL."""
+    import datetime as _dt
+    anio = p.get("anio")
+    try:
+        anio = int(anio) if anio else _dt.date.today().year
+    except (TypeError, ValueError):
+        anio = _dt.date.today().year
+    if anio < 2000 or anio > 2100:
+        anio = _dt.date.today().year
+    return f"DAT_{anio}", anio
+
 @app.route("/api/sintia/dashboard")
 @login_required
 @modulo_required("sintia")
@@ -3040,10 +3105,8 @@ def sintia_dat_query():
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
-    # Detectar tabla del año actual
-    import datetime as _dt
-    anio = _dt.date.today().year
-    tabla = f"DAT_{anio}"
+    # Tabla según año elegido (por defecto, el actual)
+    tabla, anio = _resolver_tabla_dat(p)
 
     try:
         con = sqlite3.connect(DB_PATH)
@@ -3202,8 +3265,7 @@ def sintia_dat_export():
     if p.get("novedad"): conditions.append("tiene_novedad = ?");      params.append(p["novedad"])
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-    import datetime as _dt
-    tabla = f"DAT_{_dt.date.today().year}"
+    tabla, anio = _resolver_tabla_dat(p)
 
     try:
         con = sqlite3.connect(DB_PATH); con.row_factory = sqlite3.Row
@@ -3214,7 +3276,7 @@ def sintia_dat_export():
         rows = [list(r) for r in rows_raw]
         buf = _exportar_xlsx(cols, rows)
         return send_file(buf, as_attachment=True,
-                         download_name="DAT_consulta.xlsx",
+                         download_name=f"DAT_{anio}_consulta.xlsx",
                          mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     except Exception as e:
         logging.error(f"DAT EXPORT ERROR | {e}")
@@ -5647,6 +5709,7 @@ def api_fin_upload():
     periodo_hasta = max(fechas_consumo) if fechas_consumo else None
 
     # Pre-categorizar para la previsualización (todavía no se guarda en BD)
+    posibles_dup_total = 0
     for m in movimientos:
         if m["tipo"] == "consumo":
             m["categoria_id"] = fin.categorizar(HIST_DB, m["descripcion"])
@@ -5654,11 +5717,15 @@ def api_fin_upload():
             m["categoria_id"] = "cargos_tarjeta"
         else:
             m["categoria_id"] = None
+        m["posibles_duplicados"] = fin.buscar_posible_duplicado(HIST_DB, tarjeta_id, m["fecha"], m["monto_ars"])
+        if m["posibles_duplicados"]:
+            posibles_dup_total += 1
 
     return jsonify({
         "ok": True,
         "tarjeta_id": tarjeta_id,
         "archivo_nombre": archivo.filename,
+        "posibles_duplicados_total": posibles_dup_total,
         "movimientos": movimientos,
         "total_declarado_ars": total_ars,
         "total_declarado_usd": total_usd,
@@ -5693,6 +5760,7 @@ def api_fin_confirmar():
         return jsonify({"ok": False, "error": f"Los datos recibidos no tienen el formato esperado: {e}"})
 
     logging.info(f"FINANZAS UPLOAD | user={session.get('username')} | tarjeta={tarjeta_id} | movs={len(guardados)}")
+    notificar_telegram(f"💳 Resumen '{data.get('archivo_nombre','')}' cargado por {session.get('username')} — {len(guardados)} movimientos")
     return jsonify({"ok": True, "resumen_id": resumen_id, "guardados": len(guardados)})
 
 
@@ -5706,8 +5774,16 @@ def api_fin_movimiento_manual():
     descripcion = (data.get("descripcion") or "").strip()
     monto_ars = data.get("monto_ars")
     categoria_id = data.get("categoria_id")
+    forzar = bool(data.get("forzar"))
     if not fecha or not descripcion or monto_ars is None:
         return jsonify({"ok": False, "error": "Faltan fecha, descripción o monto"})
+
+    if not forzar:
+        dups = fin.buscar_posible_duplicado(HIST_DB, "manual", fecha, float(monto_ars))
+        if dups:
+            return jsonify({"ok": False, "posible_duplicado": True, "coincidencias": dups,
+                             "error": "Ya existe un movimiento con monto y fecha similares. "
+                                      "Reenviá con forzar=true si igual querés cargarlo."})
 
     mov = {
         "fecha": fecha, "descripcion": descripcion, "comprobante": "",
@@ -5742,6 +5818,36 @@ def api_fin_movimientos():
     rows = [dict(r) for r in con.execute(q, params).fetchall()]
     con.close()
     return jsonify({"ok": True, "rows": rows})
+
+
+@app.route("/api/finanzas/movimientos/export")
+@login_required
+@finanzas_owner_required
+def api_fin_movimientos_export():
+    """Exporta a Excel los mismos movimientos que /api/finanzas/movimientos,
+    con los mismos filtros opcionales de mes/tarjeta."""
+    mes = request.args.get("mes")
+    tarjeta_id = request.args.get("tarjeta_id")
+    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
+    q = ("SELECT m.fecha, m.descripcion, t.nombre as tarjeta, c.nombre as categoria, "
+         "m.monto_ars, m.monto_usd, m.cuota_actual, m.cuota_total, m.tipo, m.origen "
+         "FROM fin_movimientos m "
+         "LEFT JOIN fin_categorias c ON m.categoria_id=c.id "
+         "LEFT JOIN fin_tarjetas t ON m.tarjeta_id=t.id WHERE 1=1")
+    params = []
+    if mes:
+        q += " AND substr(m.fecha,1,7)=?"; params.append(mes)
+    if tarjeta_id:
+        q += " AND m.tarjeta_id=?"; params.append(tarjeta_id)
+    q += " ORDER BY m.fecha DESC"
+    cur = con.execute(q, params)
+    cols = [d[0] for d in cur.description]
+    rows = [list(r) for r in cur.fetchall()]
+    con.close()
+    buf = _exportar_xlsx(cols, rows)
+    nombre = f"finanzas_{mes or 'todo'}.xlsx"
+    return send_file(buf, as_attachment=True, download_name=nombre,
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 @app.route("/api/finanzas/movimientos/<mov_id>/categoria", methods=["POST"])
