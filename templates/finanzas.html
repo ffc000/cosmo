@@ -325,6 +325,7 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
           <div class="filter-bar">
             <input type="month" id="mov-mes" onchange="cargarMovimientos()">
             <select id="mov-tarjeta" onchange="cargarMovimientos()"><option value="">Todas las tarjetas</option></select>
+            <button class="btn btn-outline btn-sm" onclick="exportarMovimientos()">⬇️ Exportar a Excel</button>
           </div>
           <div style="overflow-x:auto">
             <table class="data-table" style="font-size:.75rem">
@@ -635,6 +636,8 @@ async function procesarPDF() {
   }
 }
 
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
 async function renderPreview() {
   const catsResp = await (await fetch('/api/finanzas/categorias')).json();
   const categorias = catsResp.ok ? catsResp.rows : [];
@@ -643,14 +646,17 @@ async function renderPreview() {
   const valTxt = d.validado
     ? `<span class="badge-ok">✓ Coincide con el total del resumen (${fmtMoney(d.total_declarado_ars)})</span>`
     : `<span class="badge-fail">✗ No coincide: calculado ${fmtMoney(d.total_calculado_ars)} vs declarado ${d.total_declarado_ars !== null ? fmtMoney(d.total_declarado_ars) : '—'} — revisá antes de guardar</span>`;
-  document.getElementById('preview-validacion').innerHTML = valTxt;
+  const dupTxt = d.posibles_duplicados_total
+    ? `<div class="alert alert-warn" style="margin-top:.4rem">⚠ ${d.posibles_duplicados_total} movimiento(s) con monto y fecha similares a algo ya cargado (marcados abajo) — revisalos antes de confirmar.</div>`
+    : '';
+  document.getElementById('preview-validacion').innerHTML = valTxt + dupTxt;
 
-  const catOptions = (selId) => categorias.map(c => `<option value="${c.id}" ${selId===c.id?'selected':''}>${c.nombre}</option>`).join('');
+  const catOptions = (selId) => categorias.map(c => `<option value="${c.id}" ${selId===c.id?'selected':''}>${esc(c.nombre)}</option>`).join('');
 
   document.getElementById('preview-body').innerHTML = d.movimientos.map((m, i) => `
-    <tr class="preview-row tipo-${m.tipo}">
-      <td style="font-family:var(--mono)">${m.fecha}</td>
-      <td>${m.descripcion}</td>
+    <tr class="preview-row tipo-${m.tipo}${m.posibles_duplicados && m.posibles_duplicados.length ? ' fila-posible-duplicado' : ''}">
+      <td style="font-family:var(--mono)">${esc(m.fecha)}</td>
+      <td>${esc(m.descripcion)}${m.posibles_duplicados && m.posibles_duplicados.length ? ' <span title="Ya existe un movimiento similar cargado el ' + esc(m.posibles_duplicados[0].fecha) + '">⚠️</span>' : ''}</td>
       <td style="font-family:var(--mono)">${m.cuota_actual ? m.cuota_actual + '/' + m.cuota_total : '—'}</td>
       <td style="font-family:var(--mono)">${m.monto_usd > 0 ? 'U$S ' + m.monto_usd.toFixed(2) : fmtMoney(m.monto_ars)}</td>
       <td>${m.tipo}</td>
@@ -691,6 +697,14 @@ async function cargarTarjetasFiltro() {
   const sel = document.getElementById('mov-tarjeta');
   sel.innerHTML = '<option value="">Todas las tarjetas</option>' +
     d.rows.map(t => `<option value="${t.id}">${t.nombre}</option>`).join('');
+}
+
+function exportarMovimientos() {
+  const mes = document.getElementById('mov-mes').value || mesActual();
+  const tarjeta_id = document.getElementById('mov-tarjeta').value;
+  let url = `/api/finanzas/movimientos/export?mes=${mes}`;
+  if (tarjeta_id) url += `&tarjeta_id=${tarjeta_id}`;
+  window.location.href = url;
 }
 
 async function cargarMovimientos() {

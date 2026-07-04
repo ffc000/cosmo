@@ -318,7 +318,13 @@ input:checked+.slider::before{transform:translateX(18px)}
         <div class="alert alert-warn">⚠ La BD no está cargada. <a href="/admin">Ir a Administración →</a></div>
         {% endif %}
         <div class="card">
-          <div class="card-title">Filtros — DAT_{{ now.year }}</div>
+          <div class="card-title">Filtros
+            <select id="dat-anio" style="font-size:.78rem;margin-left:.5rem;width:auto;display:inline-block">
+              <option value="{{ now.year }}">DAT_{{ now.year }}</option>
+              <option value="{{ now.year - 1 }}">DAT_{{ now.year - 1 }}</option>
+              <option value="{{ now.year - 2 }}">DAT_{{ now.year - 2 }}</option>
+            </select>
+          </div>
           <div class="form-row cols4">
             <div><label>Fecha ingreso desde</label><input type="date" id="dat-fec-d"></div>
             <div><label>Fecha ingreso hasta</label><input type="date" id="dat-fec-h"></div>
@@ -647,6 +653,7 @@ const PAGE_SIZE=500;
 // ── CONSULTA DAT ──
 function buscarDat(){
   _datParams={
+    anio:   document.getElementById('dat-anio').value,
     fec_d: document.getElementById('dat-fec-d').value,
     fec_h: document.getElementById('dat-fec-h').value,
     ftx_d: document.getElementById('dat-ftx-d').value,
@@ -696,6 +703,7 @@ function limpiarDat(){
 }
 function exportarDat(){
   const params={
+    anio:document.getElementById('dat-anio').value,
     fec_d:document.getElementById('dat-fec-d').value,
     fec_h:document.getElementById('dat-fec-h').value,
     ftx_d:document.getElementById('dat-ftx-d').value,

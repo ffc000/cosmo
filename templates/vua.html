@@ -427,6 +427,7 @@ select option{background:var(--surface)}
           </div>
           <button class="btn btn-primary btn-full" id="btn-norm" onclick="consultarNorm()">⚖️ Consultar</button>
           <div class="resultado" id="norm-resultado"></div>
+          <button class="btn btn-outline btn-sm" id="btn-norm-guardar" style="display:none;margin-top:.5rem" onclick="guardarNormFrecuente()">⭐ Guardar como consulta frecuente</button>
         </div>
       </div>
 
@@ -712,14 +713,25 @@ function generarCorreo(){
 }
 
 // ── Normativa ──
+let _ultimaNorm = null;
 function setNorm(t){document.getElementById('norm-pregunta').value=t}
 function consultarNorm(){
   const pregunta=document.getElementById('norm-pregunta').value.trim();if(!pregunta)return;
   const btn=document.getElementById('btn-norm');btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Consultando...';
+  document.getElementById('btn-norm-guardar').style.display='none';
   fetch('/api/vua/normativa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pregunta})})
     .then(r=>r.json()).then(data=>{
       btn.disabled=false;btn.innerHTML='⚖️ Consultar';
       const el=document.getElementById('norm-resultado');el.textContent=data.ok?data.respuesta:'Error: '+data.error;el.classList.add('visible');
+      if(data.ok){_ultimaNorm={pregunta,respuesta:data.respuesta};document.getElementById('btn-norm-guardar').style.display='inline-block';}
+    });
+}
+function guardarNormFrecuente(){
+  if(!_ultimaNorm)return;
+  fetch('/api/vua/consultas_frecuentes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(_ultimaNorm)})
+    .then(r=>r.json()).then(d=>{
+      if(d.ok){document.getElementById('btn-norm-guardar').textContent='✓ Guardada';loadNormativaInfo();}
+      else alert('Error: '+d.error);
     });
 }
 
@@ -1047,7 +1059,10 @@ function loadNormativaInfo(){
   fetch('/api/vua/consultas_frecuentes').then(r=>r.json()).then(data=>{
     const el=document.getElementById('norm-rapidas-container');if(!el)return;
     const rows=data.rows||[];if(!rows.length){el.innerHTML='';return}
-    el.innerHTML=rows.map(c=>`<button class="btn btn-outline btn-sm" onclick="setNorm('${c.pregunta.replace(/'/g,"\\'")}')">${c.etiqueta}</button>`).join('');
+    el.innerHTML=rows.map(c=>{
+      const label=esc(c.pregunta.length>60?c.pregunta.slice(0,60)+'…':c.pregunta);
+      return `<button class="btn btn-outline btn-sm" onclick="setNorm('${c.pregunta.replace(/'/g,"\\'")}')">${label}</button>`;
+    }).join('');
   });
 }
 
