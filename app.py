@@ -3,7 +3,7 @@ CosmoTools — app.py v2
 Plataforma de herramientas DI REPA / ARCA
 """
 
-import os, sqlite3, io, uuid, threading, bcrypt, logging, subprocess, json, tempfile, re
+import os, sqlite3, io, uuid, threading, bcrypt, logging, subprocess, json, tempfile, re, secrets
 import xml.etree.ElementTree as ET
 import urllib.request
 import urllib.parse
@@ -345,9 +345,12 @@ def init_historial():
     cur_u = con.cursor()
     cur_u.execute("SELECT COUNT(*) FROM usuarios")
     if cur_u.fetchone()[0] == 0:
-        default_hash = bcrypt.hashpw(b"admin", bcrypt.gensalt()).decode()
+        _temp_pass = secrets.token_urlsafe(12)
+        default_hash = bcrypt.hashpw(_temp_pass.encode(), bcrypt.gensalt()).decode()
         con.execute("INSERT INTO usuarios (username, password_hash, rol, modulos) VALUES (?,?,?,?)",
             ("admin", default_hash, "admin", "sintia,vua,senasa"))
+        logging.warning(f"SEED ADMIN | tabla 'usuarios' vacía — se creó 'admin' con password temporal: {_temp_pass} "
+                         f"(cambiarla inmediatamente después de loguear)")
 
     # ── Tabla compartida de integrantes (VUA, SENASA, SINTIA) ──────────────────
     con.execute("""CREATE TABLE IF NOT EXISTS integrantes (
@@ -570,6 +573,25 @@ def modulo_required(nombre):
             return f(*args, **kwargs)
         return decorated
     return decorator
+
+_FINANZAS_ALLOWED = {u.strip() for u in os.environ.get("FINANZAS_ALLOWED_USERS", "").split(",") if u.strip()}
+
+def finanzas_owner_required(f):
+    """Los datos de fin_ddjj* son personales (una sola declaración jurada por año,
+    sin columna de propietario) y NO deben quedar accesibles a cualquier usuario
+    al que se le habilite el módulo 'finanzas' desde el panel de admin.
+    Requiere, además del módulo habilitado, ser admin o estar en
+    FINANZAS_ALLOWED_USERS (env var, usernames separados por coma)."""
+    @wraps(f)
+    @modulo_required("finanzas")
+    def decorated(*args, **kwargs):
+        u = session.get("username", "")
+        if session.get("role") != "admin" and u not in _FINANZAS_ALLOWED:
+            if request.is_json or request.path.startswith("/api/"):
+                return jsonify({"ok": False, "error": "Sin permiso"}), 403
+            return redirect(url_for("index"))
+        return f(*args, **kwargs)
+    return decorated
 
 @app.route("/login", methods=["GET", "POST"])
 @limiter.limit("20 per 15 minutes", error_message="Demasiados intentos.")
@@ -5547,21 +5569,21 @@ def _extraer_paginas_pdf(file_storage):
 
 @app.route("/finanzas")
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 def finanzas_index():
     return render_template("finanzas.html", username=session.get("username", ""))
 
 
 @app.route("/api/finanzas/tarjetas", methods=["GET"])
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 def api_fin_tarjetas():
     return jsonify({"ok": True, "rows": fin.get_tarjetas(HIST_DB)})
 
 
 @app.route("/api/finanzas/tarjetas", methods=["POST"])
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 def api_fin_tarjeta_crear():
     data = request.json or {}
     nombre = data.get("nombre", "").strip()
@@ -5575,7 +5597,7 @@ def api_fin_tarjeta_crear():
 
 @app.route("/api/finanzas/upload", methods=["POST"])
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 @limiter.limit("30 per hour", error_message="Demasiados uploads de resúmenes.")
 def api_fin_upload():
     """Parsea el PDF y devuelve una previsualización editable. Todavía no guarda nada."""
@@ -5650,7 +5672,7 @@ def api_fin_upload():
 
 @app.route("/api/finanzas/confirmar", methods=["POST"])
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 def api_fin_confirmar():
     """Guarda en BD los movimientos que el usuario ya revisó/corrigió en la previsualización."""
     data = request.json or {}
@@ -5676,7 +5698,7 @@ def api_fin_confirmar():
 
 @app.route("/api/finanzas/movimiento_manual", methods=["POST"])
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 def api_fin_movimiento_manual():
     """Carga manual de un gasto (ej. transferencia bancaria) sin pasar por un PDF."""
     data = request.json or {}
@@ -5702,7 +5724,7 @@ def api_fin_movimiento_manual():
 
 @app.route("/api/finanzas/movimientos")
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 def api_fin_movimientos():
     mes = request.args.get("mes")
     tarjeta_id = request.args.get("tarjeta_id")
@@ -5724,7 +5746,7 @@ def api_fin_movimientos():
 
 @app.route("/api/finanzas/movimientos/<mov_id>/categoria", methods=["POST"])
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 def api_fin_recategorizar(mov_id):
     data = request.json or {}
     categoria_id = data.get("categoria_id")
@@ -5736,7 +5758,7 @@ def api_fin_recategorizar(mov_id):
 
 @app.route("/api/finanzas/movimientos/<mov_id>", methods=["DELETE"])
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 def api_fin_eliminar_movimiento(mov_id):
     ok = fin.eliminar_movimiento(HIST_DB, mov_id)
     if not ok:
@@ -5747,7 +5769,7 @@ def api_fin_eliminar_movimiento(mov_id):
 
 @app.route("/api/finanzas/categorias", methods=["GET"])
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 def api_fin_categorias():
     con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
     rows = [dict(r) for r in con.execute("SELECT * FROM fin_categorias ORDER BY orden").fetchall()]
@@ -5757,7 +5779,7 @@ def api_fin_categorias():
 
 @app.route("/api/finanzas/categorias", methods=["POST"])
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 def api_fin_crear_categoria():
     data = request.json or {}
     nombre = (data.get("nombre") or "").strip()
@@ -5774,7 +5796,7 @@ def api_fin_crear_categoria():
 
 @app.route("/api/finanzas/categorias/<cat_id>/presupuesto", methods=["POST"])
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 def api_fin_set_presupuesto_cat(cat_id):
     data = request.json or {}
     monto = data.get("monto")
@@ -5800,7 +5822,7 @@ def api_fin_set_presupuesto_cat(cat_id):
 
 @app.route("/api/finanzas/presupuesto", methods=["POST"])
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 def api_fin_set_presupuesto_total():
     data = request.json or {}
     mes = data.get("mes")
@@ -5823,7 +5845,7 @@ def api_fin_set_presupuesto_total():
 
 @app.route("/api/finanzas/resumen")
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 def api_fin_resumen():
     mes = request.args.get("mes") or date.today().isoformat()[:7]
     return jsonify({
@@ -5835,7 +5857,7 @@ def api_fin_resumen():
 
 @app.route("/api/finanzas/resumenes_subidos")
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 def api_fin_resumenes_subidos():
     con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
     rows = [dict(r) for r in con.execute(
@@ -5850,14 +5872,14 @@ def api_fin_resumenes_subidos():
 
 @app.route("/api/finanzas/ddjj", methods=["GET"])
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 def api_ddjj_list():
     return jsonify({"ok": True, "rows": fin.listar_ddjj(HIST_DB)})
 
 
 @app.route("/api/finanzas/ddjj", methods=["POST"])
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 def api_ddjj_crear():
     data = request.json or {}
     try:
@@ -5878,7 +5900,7 @@ def api_ddjj_crear():
 
 @app.route("/api/finanzas/ddjj/<ddjj_id>", methods=["PUT"])
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 def api_ddjj_actualizar(ddjj_id):
     data = request.json or {}
     campos = {k: v for k, v in data.items() if k in ("fecha_cierre", "valor_dolar", "estado", "fecha_presentacion")}
@@ -5889,7 +5911,7 @@ def api_ddjj_actualizar(ddjj_id):
 
 @app.route("/api/finanzas/ddjj/<ddjj_id>", methods=["DELETE"])
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 def api_ddjj_borrar(ddjj_id):
     fin.borrar_ddjj(HIST_DB, ddjj_id)
     logging.info(f"DDJJ DELETE | user={session.get('username')} | id={ddjj_id}")
@@ -5898,14 +5920,14 @@ def api_ddjj_borrar(ddjj_id):
 
 @app.route("/api/finanzas/ddjj/<ddjj_id>/dinero", methods=["GET"])
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 def api_ddjj_dinero_list(ddjj_id):
     return jsonify({"ok": True, "rows": fin.listar_dinero_ddjj(HIST_DB, ddjj_id)})
 
 
 @app.route("/api/finanzas/ddjj/<ddjj_id>/dinero", methods=["POST"])
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 def api_ddjj_dinero_crear(ddjj_id):
     data = request.json or {}
     try:
@@ -5925,7 +5947,7 @@ def api_ddjj_dinero_crear(ddjj_id):
 
 @app.route("/api/finanzas/ddjj/dinero/<reg_id>", methods=["DELETE"])
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 def api_ddjj_dinero_borrar(reg_id):
     fin.borrar_dinero_ddjj(HIST_DB, reg_id)
     return jsonify({"ok": True})
@@ -5933,14 +5955,14 @@ def api_ddjj_dinero_borrar(reg_id):
 
 @app.route("/api/finanzas/ddjj/<ddjj_id>/propiedades", methods=["GET"])
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 def api_ddjj_propiedades_list(ddjj_id):
     return jsonify({"ok": True, "rows": fin.listar_propiedades_ddjj(HIST_DB, ddjj_id)})
 
 
 @app.route("/api/finanzas/ddjj/<ddjj_id>/propiedades", methods=["POST"])
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 def api_ddjj_propiedades_crear(ddjj_id):
     data = request.json or {}
     try:
@@ -5959,7 +5981,7 @@ def api_ddjj_propiedades_crear(ddjj_id):
 
 @app.route("/api/finanzas/ddjj/propiedades/<reg_id>", methods=["DELETE"])
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 def api_ddjj_propiedades_borrar(reg_id):
     fin.borrar_propiedad_ddjj(HIST_DB, reg_id)
     return jsonify({"ok": True})
@@ -5967,7 +5989,7 @@ def api_ddjj_propiedades_borrar(reg_id):
 
 @app.route("/api/finanzas/ddjj/<ddjj_id>/tarjetas", methods=["GET"])
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 def api_ddjj_tarjetas_list(ddjj_id):
     rows = fin.listar_tarjetas_ddjj(HIST_DB, app.secret_key, ddjj_id, revelar=False)
     return jsonify({"ok": True, "rows": rows})
@@ -5975,7 +5997,7 @@ def api_ddjj_tarjetas_list(ddjj_id):
 
 @app.route("/api/finanzas/ddjj/tarjetas/<tarjeta_id>/revelar", methods=["POST"])
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 @limiter.limit("20 per 15 minutes", error_message="Demasiados intentos de ver números completos.")
 def api_ddjj_tarjetas_revelar(tarjeta_id):
     con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
@@ -5993,7 +6015,7 @@ def api_ddjj_tarjetas_revelar(tarjeta_id):
 
 @app.route("/api/finanzas/ddjj/<ddjj_id>/tarjetas", methods=["POST"])
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 def api_ddjj_tarjetas_crear(ddjj_id):
     data = request.json or {}
     try:
@@ -6010,7 +6032,7 @@ def api_ddjj_tarjetas_crear(ddjj_id):
 
 @app.route("/api/finanzas/ddjj/tarjetas/<tarjeta_id>", methods=["DELETE"])
 @login_required
-@modulo_required("finanzas")
+@finanzas_owner_required
 def api_ddjj_tarjetas_borrar(tarjeta_id):
     fin.borrar_tarjeta_ddjj(HIST_DB, tarjeta_id)
     logging.info(f"DDJJ TARJETA DELETE | user={session.get('username')} | id={tarjeta_id}")
