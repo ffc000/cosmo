@@ -166,6 +166,63 @@ def inject_session_vars():
 job_status = {}
 import threading as _threading
 
+# ── Recordatorio de servicios recurrentes (finanzas) ────────────────────────────
+def _estado_servicios_mes(con, mes):
+    """Para cada servicio activo, busca si hay un movimiento de ese mes cuya
+    descripción coincide con alguno de sus patrones (o si fue marcado pagado
+    a mano cuando no hay coincidencia automática). Devuelve una lista de dicts."""
+    con.row_factory = sqlite3.Row
+    servicios = con.execute(
+        "SELECT * FROM fin_servicios WHERE activo=1 ORDER BY orden").fetchall()
+    resultado = []
+    for s in servicios:
+        match = None
+        patrones = [p.strip() for p in (s["patron"] or "").split(",") if p.strip()]
+        if patrones:
+            condiciones = " OR ".join(["LOWER(descripcion) LIKE ?"] * len(patrones))
+            params = [f"%{p.lower()}%" for p in patrones]
+            match = con.execute(
+                f"SELECT fecha, descripcion, monto_ars FROM fin_movimientos "
+                f"WHERE substr(fecha,1,7)=? AND ({condiciones}) ORDER BY fecha LIMIT 1",
+                [mes] + params).fetchone()
+        manual = con.execute(
+            "SELECT pagado, fecha_pago FROM fin_servicios_pagos WHERE servicio_id=? AND mes=?",
+            (s["id"], mes)).fetchone()
+        pagado_manual = bool(manual and manual["pagado"])
+        resultado.append({
+            "id": s["id"], "nombre": s["nombre"], "patron": s["patron"],
+            "pagado": bool(match) or pagado_manual,
+            "automatico": bool(match),
+            "movimiento": dict(match) if match else None,
+            "pagado_manual": pagado_manual,
+        })
+    return resultado
+
+def _chequear_recordatorio_servicios():
+    while True:
+        try:
+            hoy = datetime.now()
+            if hoy.day == 2:
+                mes = hoy.strftime("%Y-%m")
+                con = sqlite3.connect(HIST_DB)
+                row = con.execute("SELECT valor FROM fin_servicios_estado WHERE clave='ultimo_aviso_mes'").fetchone()
+                if not (row and row[0] == mes):
+                    estado = _estado_servicios_mes(con, mes)
+                    pendientes = [s["nombre"] for s in estado if not s["pagado"]]
+                    if pendientes:
+                        lista = "\n".join(f"• {n}" for n in pendientes)
+                        notificar_telegram(f"💸 Sin pago detectado este mes ({mes}):\n\n{lista}")
+                    con.execute(
+                        "INSERT INTO fin_servicios_estado (clave, valor) VALUES ('ultimo_aviso_mes', ?) "
+                        "ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor", (mes,))
+                    con.commit()
+                con.close()
+        except Exception:
+            logging.exception("Error en chequeo de recordatorio de servicios")
+        _threading.Event().wait(3600)  # revisa cada hora
+
+_threading.Thread(target=_chequear_recordatorio_servicios, daemon=True).start()
+
 # ── Repositorio de documentos por módulo (contexto para la IA) ─────────────────
 MODULOS_REPOSITORIO = ("vua", "senasa", "sintia")
 
@@ -595,6 +652,31 @@ def init_historial():
         modulo TEXT NOT NULL, nombre_archivo TEXT, contenido TEXT,
         subido_por TEXT, creado TEXT DEFAULT (datetime('now'))
     )""")
+    con.execute("""CREATE TABLE IF NOT EXISTS fin_servicios (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nombre TEXT NOT NULL, patron TEXT, activo INTEGER DEFAULT 1, orden INTEGER DEFAULT 0
+    )""")
+    try:
+        con.execute("ALTER TABLE fin_servicios ADD COLUMN patron TEXT")
+    except sqlite3.OperationalError:
+        pass  # ya existe (instalación previa a este cambio)
+    con.execute("""CREATE TABLE IF NOT EXISTS fin_servicios_pagos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        servicio_id INTEGER NOT NULL, mes TEXT NOT NULL,
+        pagado INTEGER DEFAULT 0, fecha_pago TEXT,
+        UNIQUE(servicio_id, mes)
+    )""")
+    con.execute("""CREATE TABLE IF NOT EXISTS fin_servicios_estado (
+        clave TEXT PRIMARY KEY, valor TEXT
+    )""")
+    cur.execute("SELECT COUNT(*) FROM fin_servicios")
+    if cur.fetchone()[0] == 0:
+        for i, (nombre, patron) in enumerate([
+            ("Gas","gas"), ("Luz","edenor,edesur,luz"), ("Agua","aysa,agua"),
+            ("Internet","fibertel,telecentro,movistar,internet"), ("Expensas","expensa"),
+            ("Crédito","credito,préstamo,prestamo"), ("ABL","abl,rentas")
+        ]):
+            con.execute("INSERT INTO fin_servicios (nombre, patron, orden) VALUES (?,?,?)", (nombre, patron, i))
     # Seed vua_config con claves mínimas si está vacía
     cur.execute("SELECT COUNT(*) FROM vua_config")
     if cur.fetchone()[0] == 0:
@@ -5937,6 +6019,58 @@ def api_fin_movimientos_export():
     nombre = f"finanzas_{mes or 'todo'}.xlsx"
     return send_file(buf, as_attachment=True, download_name=nombre,
                      mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+# ── Servicios recurrentes ──────────────────────────────────────────────────────
+@app.route("/api/finanzas/servicios")
+@login_required
+@finanzas_owner_required
+def api_fin_servicios_list():
+    mes = request.args.get("mes") or datetime.now().strftime("%Y-%m")
+    con = sqlite3.connect(HIST_DB)
+    rows = _estado_servicios_mes(con, mes)
+    con.close()
+    return jsonify({"ok": True, "mes": mes, "rows": rows})
+
+@app.route("/api/finanzas/servicios", methods=["POST"])
+@login_required
+@finanzas_owner_required
+def api_fin_servicios_create():
+    data = request.json or {}
+    nombre = (data.get("nombre") or "").strip()
+    patron = (data.get("patron") or "").strip()
+    if not nombre:
+        return jsonify({"ok": False, "error": "Falta el nombre"})
+    con = sqlite3.connect(HIST_DB)
+    orden = con.execute("SELECT COALESCE(MAX(orden),0)+1 FROM fin_servicios").fetchone()[0]
+    con.execute("INSERT INTO fin_servicios (nombre, patron, orden) VALUES (?,?,?)", (nombre, patron, orden))
+    con.commit(); con.close()
+    return jsonify({"ok": True})
+
+@app.route("/api/finanzas/servicios/<int:sid>", methods=["DELETE"])
+@login_required
+@finanzas_owner_required
+def api_fin_servicios_delete(sid):
+    con = sqlite3.connect(HIST_DB)
+    con.execute("UPDATE fin_servicios SET activo=0 WHERE id=?", (sid,))
+    con.commit(); con.close()
+    return jsonify({"ok": True})
+
+@app.route("/api/finanzas/servicios/<int:sid>/pagar", methods=["POST"])
+@login_required
+@finanzas_owner_required
+def api_fin_servicios_pagar(sid):
+    """Marca (o desmarca) el pago manualmente, para el caso en que la
+    descripción del movimiento no coincida con ningún patrón automático."""
+    data = request.json or {}
+    mes = data.get("mes") or datetime.now().strftime("%Y-%m")
+    pagado = 1 if data.get("pagado", True) else 0
+    con = sqlite3.connect(HIST_DB)
+    con.execute("INSERT INTO fin_servicios_pagos (servicio_id, mes, pagado, fecha_pago) VALUES (?,?,?,?) "
+                "ON CONFLICT(servicio_id, mes) DO UPDATE SET pagado=excluded.pagado, fecha_pago=excluded.fecha_pago",
+                (sid, mes, pagado, datetime.now().strftime("%Y-%m-%d") if pagado else None))
+    con.commit(); con.close()
+    return jsonify({"ok": True})
 
 
 @app.route("/api/finanzas/movimientos/<mov_id>/categoria", methods=["POST"])
