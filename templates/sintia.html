@@ -197,6 +197,7 @@ input:checked+.slider::before{transform:translateX(18px)}
       <div class="nav-item" id="nav-generar" onclick="showPanel('generar')"><span class="nav-icon">📄</span><span class="nav-label">Generar informe</span></div>
       <div class="nav-item" id="nav-dat"     onclick="showPanel('dat')"><span class="nav-icon">🔍</span><span class="nav-label">Consulta DAT</span></div>
       <div class="nav-item" id="nav-rec"     onclick="showPanel('rec')"><span class="nav-icon">⚠️</span><span class="nav-label">Consulta Rechazos</span></div>
+      <div class="nav-item" id="nav-repositorio" onclick="showPanel('repositorio')"><span class="nav-icon">🗂️</span><span class="nav-label">Repositorio</span></div>
     </nav>
     <div class="sidebar-footer">
       <span class="db-pill {% if db_exists %}ok{% else %}missing{% endif %}">
@@ -540,6 +541,22 @@ input:checked+.slider::before{transform:translateX(18px)}
         </div>
       </div>
 
+      <div class="panel" id="tab-repositorio">
+        <div class="card">
+          <div class="card-title">Repositorio de documentos</div>
+          <p style="font-size:.82rem;color:var(--muted);margin-bottom:1rem">
+            Subí informes, antecedentes u otros documentos Word que no forman parte de la estructura fija del módulo.
+            El texto completo de todo lo que subas acá se envía como contexto a la IA al generar el informe de SINTIA.
+          </p>
+          <div class="form-row">
+            <input type="file" id="repo-archivo" accept=".docx">
+            <button class="btn btn-primary" onclick="subirRepositorio('sintia')">⬆️ Subir</button>
+          </div>
+          <div id="repo-estado" style="margin-top:.5rem"></div>
+          <div id="repo-lista" style="margin-top:1rem"></div>
+        </div>
+      </div>
+
     </div><!-- /content -->
   </div><!-- /main -->
 </div><!-- /app -->
@@ -551,7 +568,7 @@ document.getElementById('hamburger').addEventListener('click',()=>{sidebar.class
 overlay.addEventListener('click',()=>{sidebar.classList.remove('open');overlay.classList.remove('visible')});
 
 // ── Panel switching ──
-const TITULOS = {dashboard:'SINTIA — Dashboard', generar:'SINTIA — Generar informe', dat:'SINTIA — Consulta DAT', rec:'SINTIA — Consulta Rechazos'};
+const TITULOS = {dashboard:'SINTIA — Dashboard', generar:'SINTIA — Generar informe', dat:'SINTIA — Consulta DAT', rec:'SINTIA — Consulta Rechazos', repositorio:'SINTIA — Repositorio de Documentos'};
 let _dashCharts = {};
 let _dashLoaded = false;
 function showPanel(id) {
@@ -564,6 +581,7 @@ function showPanel(id) {
   if(id==='dat'){limpiarRec();}
   else if(id==='rec'){limpiarDat();}
   else if(id==='dashboard'){loadDashboard();}
+  else if(id==='repositorio'){cargarRepositorio('sintia');}
 }
 showPanel('dashboard');
 
@@ -951,6 +969,35 @@ async function _fetchDashboard() {
     error.style.display = 'block';
     loading.style.display = 'none';
   }
+}
+
+// ── Repositorio de documentos (contexto IA) ──
+function escHtml(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function cargarRepositorio(modulo){
+  fetch(`/api/repositorio/${modulo}`).then(r=>r.json()).then(data=>{
+    const el=document.getElementById('repo-lista');if(!el)return;
+    if(!data.ok||!data.rows.length){el.innerHTML='<div style="color:var(--muted);font-size:.82rem">Todavía no se subió ningún documento.</div>';return}
+    el.innerHTML='<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Archivo</th><th>Subido por</th><th>Fecha</th><th></th></tr></thead><tbody>'+
+      data.rows.map(d=>`<tr><td>${escHtml(d.nombre_archivo)}</td><td>${escHtml(d.subido_por)}</td><td style="font-family:var(--mono);font-size:.7rem">${escHtml((d.creado||'').slice(0,16))}</td><td><button class="btn btn-danger btn-sm" onclick="borrarRepositorio('${modulo}',${d.id})">🗑️</button></td></tr>`).join('')+
+      '</tbody></table></div>';
+  });
+}
+function subirRepositorio(modulo){
+  const input=document.getElementById('repo-archivo');
+  const estado=document.getElementById('repo-estado');
+  if(!input.files[0]){estado.innerHTML='<div class="alert alert-warn">Elegí un archivo .docx.</div>';return}
+  const fd=new FormData();fd.append('archivo',input.files[0]);
+  estado.innerHTML='<div class="alert alert-info"><span class="spinner"></span> Subiendo...</div>';
+  fetch(`/api/repositorio/${modulo}`,{method:'POST',body:fd}).then(r=>r.json()).then(d=>{
+    if(!d.ok){estado.innerHTML=`<div class="alert alert-warn">✗ ${escHtml(d.error)}</div>`;return}
+    estado.innerHTML='<div class="alert alert-ok">✓ Documento agregado.</div>';
+    input.value='';
+    cargarRepositorio(modulo);
+  }).catch(e=>{estado.innerHTML=`<div class="alert alert-warn">Error: ${escHtml(e.message)}</div>`;});
+}
+function borrarRepositorio(modulo,id){
+  if(!confirm('¿Eliminar este documento del repositorio?'))return;
+  fetch(`/api/repositorio/${modulo}/${id}`,{method:'DELETE'}).then(r=>r.json()).then(d=>{if(d.ok)cargarRepositorio(modulo)});
 }
 </script>
 </body>
