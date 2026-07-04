@@ -237,6 +237,7 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
       <div class="nav-item" id="nav-categorias" onclick="switchModule('fin','categorias')"><span class="nav-icon">🏷️</span><span class="nav-label">Categorías y presupuesto</span></div>
       <div class="nav-item" id="nav-tarjetas" onclick="switchModule('fin','tarjetas')"><span class="nav-icon">💳</span><span class="nav-label">Tarjetas</span></div>
       <div class="nav-item" id="nav-ddjj" onclick="switchModule('fin','ddjj')"><span class="nav-icon">📑</span><span class="nav-label">Declaraciones Juradas</span></div>
+      <div class="nav-item" id="nav-servicios" onclick="switchModule('fin','servicios')"><span class="nav-icon">🔔</span><span class="nav-label">Servicios recurrentes</span></div>
     </nav>
     {% include '_sidebar_footer.html' %}
   </div>
@@ -471,6 +472,25 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
         </div>
       </div>
 
+      <div class="panel" id="panel-servicios">
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.9rem;flex-wrap:wrap;gap:.5rem">
+            <div class="card-title" style="margin:0">Servicios recurrentes — <span id="servicios-mes-label"></span></div>
+            <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+              <input type="text" id="servicio-nombre-nuevo" placeholder="Nombre (ej: Gas)" style="width:auto">
+              <input type="text" id="servicio-patron-nuevo" placeholder="Palabras clave del resumen (ej: metrogas,gas)" style="width:auto">
+              <button class="btn btn-fin btn-sm" onclick="agregarServicio()">+ Agregar</button>
+            </div>
+          </div>
+          <p style="font-size:.78rem;color:var(--muted);margin-bottom:1rem">
+            Cada mes se revisan los movimientos cargados buscando esas palabras clave en la descripción.
+            Si no aparece ninguno, el día 2 se manda un recordatorio por Telegram. Si un pago no se detecta solo,
+            podés marcarlo como pagado a mano.
+          </p>
+          <div id="servicios-lista"></div>
+        </div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -487,6 +507,7 @@ const TOPBAR_TITLES = {
   categorias:  'FINANZAS / CATEGORÍAS Y PRESUPUESTO',
   tarjetas:    'FINANZAS / TARJETAS',
   ddjj:        'FINANZAS / DECLARACIONES JURADAS',
+  servicios:   'FINANZAS / SERVICIOS RECURRENTES',
 };
 
 function switchModule(mod, panel) {
@@ -504,6 +525,7 @@ function switchModule(mod, panel) {
   if (panel === 'categorias')  cargarCategoriasPresupuesto();
   if (panel === 'tarjetas')    cargarTarjetasList();
   if (panel === 'ddjj')        cargarDDJJList();
+  if (panel === 'servicios')   cargarServicios();
 }
 
 document.getElementById('hamburger').onclick = () => {
@@ -1073,6 +1095,55 @@ async function borrarTarjetaDDJJ(id) {
   if (!confirm('¿Borrar esta tarjeta de la declaración?')) return;
   await fetch(`/api/finanzas/ddjj/tarjetas/${id}`, { method: 'DELETE' });
   cargarTarjetasDDJJList();
+}
+
+// ── Servicios recurrentes ──────────────────────────────────────────────────────
+function cargarServicios() {
+  fetch('/api/finanzas/servicios').then(r => r.json()).then(d => {
+    if (!d.ok) return;
+    document.getElementById('servicios-mes-label').textContent = d.mes;
+    const el = document.getElementById('servicios-lista');
+    if (!d.rows.length) { el.innerHTML = '<div style="color:var(--muted);font-size:.82rem">No hay servicios cargados.</div>'; return; }
+    el.innerHTML = d.rows.map(s => {
+      let estado;
+      if (s.automatico) {
+        const mov = s.movimiento;
+        estado = `<span style="font-size:.7rem;color:var(--fin)">✓ Detectado: ${esc(mov.descripcion)} (${esc(mov.fecha)})</span>`;
+      } else if (s.pagado_manual) {
+        estado = `<span style="font-size:.7rem;color:var(--muted)">✓ Marcado pagado a mano</span>`;
+      } else {
+        estado = `<span style="font-size:.7rem;color:var(--danger)">⚠ Sin pago detectado</span>`;
+      }
+      return `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:.6rem .8rem;border-bottom:1px solid var(--border);gap:.6rem;flex-wrap:wrap">
+        <div style="flex:1;min-width:160px">
+          <div style="${s.pagado ? 'text-decoration:line-through;color:var(--muted)' : ''}">${esc(s.nombre)}</div>
+          ${estado}
+        </div>
+        ${!s.automatico ? `<label style="display:flex;align-items:center;gap:.4rem;font-size:.75rem;cursor:pointer">
+          <input type="checkbox" ${s.pagado_manual ? 'checked' : ''} onchange="togglePagoServicio(${s.id}, this.checked)"> Marcar pagado a mano
+        </label>` : ''}
+        <button class="btn btn-sm" onclick="borrarServicio(${s.id})">🗑️</button>
+      </div>`;
+    }).join('');
+  });
+}
+function agregarServicio() {
+  const nombreInput = document.getElementById('servicio-nombre-nuevo');
+  const patronInput = document.getElementById('servicio-patron-nuevo');
+  const nombre = nombreInput.value.trim();
+  const patron = patronInput.value.trim();
+  if (!nombre) return;
+  fetch('/api/finanzas/servicios', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({nombre, patron})})
+    .then(r => r.json()).then(d => { if (d.ok) { nombreInput.value=''; patronInput.value=''; cargarServicios(); } });
+}
+function togglePagoServicio(id, pagado) {
+  fetch(`/api/finanzas/servicios/${id}/pagar`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({pagado})})
+    .then(r => r.json()).then(() => cargarServicios());
+}
+function borrarServicio(id) {
+  if (!confirm('¿Eliminar este servicio de la lista?')) return;
+  fetch(`/api/finanzas/servicios/${id}`, {method:'DELETE'}).then(r => r.json()).then(() => cargarServicios());
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────────
