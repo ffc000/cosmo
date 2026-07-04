@@ -66,6 +66,86 @@ os.makedirs("/tmp/sintia_uploads", exist_ok=True)
 STOCK_REPORTS_DIR = "/data/reports/stock"
 os.makedirs(STOCK_REPORTS_DIR, exist_ok=True)
 
+# ── Auth (deben quedar definidos antes de cualquier @login_required/@modulo_required) ──
+def check_password(plain, hashed):
+    try: return bcrypt.checkpw(plain.encode(), hashed.encode())
+    except Exception: return False  # nunca comparar en texto plano
+
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get("logged_in"):
+            return redirect(url_for("login"))
+        token = session.get("token","")
+        if token and token_revocado(token):
+            session.clear(); return redirect(url_for("login"))
+        last = session.get("last_active")
+        if last and datetime.now().timestamp() - last > 14400:
+            session.clear(); return redirect(url_for("login"))
+        session["last_active"] = datetime.now().timestamp()
+        if token:
+            try: actualizar_sesion(token)
+            except: pass
+        session.permanent = True
+        return f(*args, **kwargs)
+    return decorated
+
+def tiene_permiso_admin(seccion=None):
+    """seccion=None -> algún permiso admin (bd o sistema). seccion='bd'|'sistema' -> ese en particular.
+    role=='admin' es superadmin y siempre pasa (compatibilidad con usuarios existentes)."""
+    if session.get("role") == "admin":
+        return True
+    modulos = session.get("modulos", [])
+    if seccion:
+        return f"admin_{seccion}" in modulos
+    return "admin_bd" in modulos or "admin_sistema" in modulos
+
+def admin_required(seccion=None):
+    def decorator(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            if not tiene_permiso_admin(seccion):
+                if request.is_json or request.path.startswith("/api/"):
+                    return jsonify({"ok": False, "error": "Sin permiso"}), 403
+                return redirect(url_for("index"))
+            return f(*args, **kwargs)
+        return decorated
+    return decorator
+
+def modulo_required(nombre):
+    """Exige que el usuario tenga `nombre` en su lista de módulos habilitados.
+    Sin esto, ocultar el link del sidebar no alcanza: cualquier usuario logueado
+    puede pegar la URL directamente."""
+    def decorator(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            if nombre not in session.get("modulos", []):
+                if request.is_json or request.path.startswith("/api/"):
+                    return jsonify({"ok": False, "error": "Módulo no habilitado"}), 403
+                return redirect(url_for("index"))
+            return f(*args, **kwargs)
+        return decorated
+    return decorator
+
+_FINANZAS_ALLOWED = {u.strip() for u in os.environ.get("FINANZAS_ALLOWED_USERS", "").split(",") if u.strip()}
+
+def finanzas_owner_required(f):
+    """Los datos de fin_ddjj* son personales (una sola declaración jurada por año,
+    sin columna de propietario) y NO deben quedar accesibles a cualquier usuario
+    al que se le habilite el módulo 'finanzas' desde el panel de admin.
+    Requiere, además del módulo habilitado, ser admin o estar en
+    FINANZAS_ALLOWED_USERS (env var, usernames separados por coma)."""
+    @wraps(f)
+    @modulo_required("finanzas")
+    def decorated(*args, **kwargs):
+        u = session.get("username", "")
+        if session.get("role") != "admin" and u not in _FINANZAS_ALLOWED:
+            if request.is_json or request.path.startswith("/api/"):
+                return jsonify({"ok": False, "error": "Sin permiso"}), 403
+            return redirect(url_for("index"))
+        return f(*args, **kwargs)
+    return decorated
+
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(filename="/data/accesos.log", level=logging.INFO,
     format="%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
@@ -615,85 +695,6 @@ def db_conn(path=None):
     finally:
         con.close()
 
-
-def check_password(plain, hashed):
-    try: return bcrypt.checkpw(plain.encode(), hashed.encode())
-    except Exception: return False  # nunca comparar en texto plano
-
-def login_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if not session.get("logged_in"):
-            return redirect(url_for("login"))
-        token = session.get("token","")
-        if token and token_revocado(token):
-            session.clear(); return redirect(url_for("login"))
-        last = session.get("last_active")
-        if last and datetime.now().timestamp() - last > 14400:
-            session.clear(); return redirect(url_for("login"))
-        session["last_active"] = datetime.now().timestamp()
-        if token:
-            try: actualizar_sesion(token)
-            except: pass
-        session.permanent = True
-        return f(*args, **kwargs)
-    return decorated
-
-def tiene_permiso_admin(seccion=None):
-    """seccion=None -> algún permiso admin (bd o sistema). seccion='bd'|'sistema' -> ese en particular.
-    role=='admin' es superadmin y siempre pasa (compatibilidad con usuarios existentes)."""
-    if session.get("role") == "admin":
-        return True
-    modulos = session.get("modulos", [])
-    if seccion:
-        return f"admin_{seccion}" in modulos
-    return "admin_bd" in modulos or "admin_sistema" in modulos
-
-def admin_required(seccion=None):
-    def decorator(f):
-        @wraps(f)
-        def decorated(*args, **kwargs):
-            if not tiene_permiso_admin(seccion):
-                if request.is_json or request.path.startswith("/api/"):
-                    return jsonify({"ok": False, "error": "Sin permiso"}), 403
-                return redirect(url_for("index"))
-            return f(*args, **kwargs)
-        return decorated
-    return decorator
-
-def modulo_required(nombre):
-    """Exige que el usuario tenga `nombre` en su lista de módulos habilitados.
-    Sin esto, ocultar el link del sidebar no alcanza: cualquier usuario logueado
-    puede pegar la URL directamente."""
-    def decorator(f):
-        @wraps(f)
-        def decorated(*args, **kwargs):
-            if nombre not in session.get("modulos", []):
-                if request.is_json or request.path.startswith("/api/"):
-                    return jsonify({"ok": False, "error": "Módulo no habilitado"}), 403
-                return redirect(url_for("index"))
-            return f(*args, **kwargs)
-        return decorated
-    return decorator
-
-_FINANZAS_ALLOWED = {u.strip() for u in os.environ.get("FINANZAS_ALLOWED_USERS", "").split(",") if u.strip()}
-
-def finanzas_owner_required(f):
-    """Los datos de fin_ddjj* son personales (una sola declaración jurada por año,
-    sin columna de propietario) y NO deben quedar accesibles a cualquier usuario
-    al que se le habilite el módulo 'finanzas' desde el panel de admin.
-    Requiere, además del módulo habilitado, ser admin o estar en
-    FINANZAS_ALLOWED_USERS (env var, usernames separados por coma)."""
-    @wraps(f)
-    @modulo_required("finanzas")
-    def decorated(*args, **kwargs):
-        u = session.get("username", "")
-        if session.get("role") != "admin" and u not in _FINANZAS_ALLOWED:
-            if request.is_json or request.path.startswith("/api/"):
-                return jsonify({"ok": False, "error": "Sin permiso"}), 403
-            return redirect(url_for("index"))
-        return f(*args, **kwargs)
-    return decorated
 
 @app.route("/login", methods=["GET", "POST"])
 @limiter.limit("20 per 15 minutes", error_message="Demasiados intentos.")
