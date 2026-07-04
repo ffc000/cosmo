@@ -1530,6 +1530,7 @@ function renderCalSemana() {
 async function cargarSemanas() { cargarCalendario(); }
 
 function esc(s) { return (s||'').replace(/'/g,"\\'").replace(/\n/g,' '); }
+function escHtml(s) { return String(s??'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 function editarSesion(id, desc, notas, dia, turno, fechaInicio) {
   document.getElementById('ses-id').value = id;
@@ -1655,7 +1656,7 @@ async function enviarClaude() {
   if (!pregunta) return;
   input.value = '';
   const chat = document.getElementById('claude-chat');
-  chat.innerHTML += `<div class="claude-msg claude-user">${pregunta}</div>`;
+  chat.innerHTML += `<div class="claude-msg claude-user">${escHtml(pregunta)}</div>`;
   chat.innerHTML += `<div class="claude-msg claude-resp" id="claude-loading"><span class="spinner spinner-dark"></span> Pensando...</div>`;
   chat.scrollTop = chat.scrollHeight;
   const btn = document.getElementById('btn-claude-send');

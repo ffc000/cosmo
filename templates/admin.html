@@ -647,11 +647,14 @@ function loadPrompts(){
     const el=document.getElementById('prompts-list');
     if(!data.ok||!data.rows.length){el.innerHTML='<div style="color:var(--muted);font-size:.82rem">No hay prompts.</div>';return}
     el.innerHTML=data.rows.map(p=>`
-      <div class="prompt-card" onclick="editarPrompt('${p.id}','${p.nombre.replace(/'/g,'')}','${(p.descripcion||'').replace(/'/g,'')}')">
-        <div><div class="prompt-name">${p.nombre}</div><div class="prompt-desc">${p.descripcion||''}</div><div style="font-family:var(--mono);font-size:.6rem;color:var(--dim);margin-top:.2rem">Modificado: ${(p.modificado||'').slice(0,16)}</div></div>
-        <span class="prompt-tag">${p.modulo}</span>
+      <div class="prompt-card" data-id="${esc(p.id)}" data-nombre="${esc(p.nombre)}" data-desc="${esc(p.descripcion||'')}" onclick="editarPromptFromCard(this)">
+        <div><div class="prompt-name">${esc(p.nombre)}</div><div class="prompt-desc">${esc(p.descripcion||'')}</div><div style="font-family:var(--mono);font-size:.6rem;color:var(--dim);margin-top:.2rem">Modificado: ${esc((p.modificado||'').slice(0,16))}</div></div>
+        <span class="prompt-tag">${esc(p.modulo)}</span>
       </div>`).join('');
   });
+}
+function editarPromptFromCard(el){
+  editarPrompt(el.dataset.id, el.dataset.nombre, el.dataset.desc);
 }
 function editarPrompt(id,nombre,desc){
   fetch(`/api/admin/prompts/${id}`).then(r=>r.json()).then(data=>{

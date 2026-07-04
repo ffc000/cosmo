@@ -696,6 +696,8 @@ function generarMinuta(){
   });
 }
 
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
 // ── Correos ──
 function setCorreo(t){document.getElementById('correo-instruccion').value=t}
 function generarCorreo(){
@@ -731,9 +733,9 @@ function validarBPMN(){
   fetch('/api/vua/bpmn',{method:'POST',body:fd}).then(r=>r.json()).then(data=>{
     if(bpmnBtn){bpmnBtn.disabled=false;bpmnBtn.innerHTML='📐 Validar diagrama';}
     const el=document.getElementById('bpmn-resultado');el.style.display='block';
-    if(!data.ok){el.innerHTML=`<div class="alert alert-warn">✗ ${data.error}</div>`;return}
-    let html=`<div class="alert ${data.total===0?'alert-ok':'alert-warn'}">Circuito: <strong>${data.circuito}</strong> — ${data.total===0?'✓ Sin hallazgos':'⚠ '+data.total+' hallazgo(s)'}</div>`;
-    [...(data.errores||[]),...(data.advertencias||[])].forEach(h=>{html+=`<div class="riesgo-card"><div class="riesgo-titulo">${h.id}</div><div class="riesgo-desc">${h.descripcion}</div><div class="riesgo-mitig">${h.norma}</div></div>`});
+    if(!data.ok){el.innerHTML=`<div class="alert alert-warn">✗ ${esc(data.error)}</div>`;return}
+    let html=`<div class="alert ${data.total===0?'alert-ok':'alert-warn'}">Circuito: <strong>${esc(data.circuito)}</strong> — ${data.total===0?'✓ Sin hallazgos':'⚠ '+data.total+' hallazgo(s)'}</div>`;
+    [...(data.errores||[]),...(data.advertencias||[])].forEach(h=>{html+=`<div class="riesgo-card"><div class="riesgo-titulo">${esc(h.id)}</div><div class="riesgo-desc">${esc(h.descripcion)}</div><div class="riesgo-mitig">${esc(h.norma)}</div></div>`});
     el.innerHTML=html;
   });
 }
