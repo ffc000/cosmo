@@ -262,10 +262,11 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
             <span>Resumen del mes</span>
             <input type="month" id="dash-mes" style="width:auto;font-size:.78rem;padding:.35rem .5rem;margin-left:auto" onchange="cargarDashboard()">
           </div>
-          <div class="stat-grid" style="grid-template-columns:repeat(3,1fr)">
+          <div class="stat-grid" style="grid-template-columns:repeat(4,1fr)">
             <div class="stat-card"><div class="stat-val" id="dash-consumos">—</div><div class="stat-lbl">Gastado (consumos)</div></div>
             <div class="stat-card"><div class="stat-val" id="dash-cargos">—</div><div class="stat-lbl">Intereses / impuestos tarjeta</div></div>
             <div class="stat-card"><div class="stat-val" id="dash-disponible">—</div><div class="stat-lbl">Disponible de presupuesto</div></div>
+            <div class="stat-card" id="dash-proyeccion-card" style="display:none"><div class="stat-val" id="dash-proyeccion">—</div><div class="stat-lbl">Proyección de cierre</div></div>
           </div>
           <div id="dash-sincat" style="display:none" class="alert alert-warn"></div>
           <div class="form-row" style="margin-top:.6rem;max-width:320px">
@@ -283,6 +284,28 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
           <div class="card-title">Gasto por categoría</div>
           <div style="width:100%;overflow-x:auto;margin-bottom:1rem"><canvas id="canvas-categorias" height="160"></canvas></div>
           <div id="lista-categorias"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Comparativo por rubro</div>
+          <p style="font-size:.78rem;color:var(--muted);margin-bottom:.8rem" id="comp-nota"></p>
+          <div style="overflow-x:auto">
+            <table class="data-table" style="font-size:.78rem">
+              <thead><tr><th>Rubro</th><th>Este mes</th><th>Mes anterior</th><th>Promedio previo</th><th>vs. anterior</th><th>vs. promedio</th></tr></thead>
+              <tbody id="comp-body"><tr><td colspan="6" style="text-align:center;color:var(--muted);padding:1rem">Cargando...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card" id="atipicos-card" style="display:none">
+          <div class="card-title">Gastos atípicos este mes</div>
+          <p style="font-size:.78rem;color:var(--muted);margin-bottom:.8rem">Movimientos muy por encima del promedio histórico de su categoría.</p>
+          <div id="atipicos-lista"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Evolución anual (gasto total por mes)</div>
+          <div style="width:100%;overflow-x:auto"><canvas id="canvas-anual" height="140"></canvas></div>
         </div>
       </div>
 
@@ -573,6 +596,83 @@ async function cargarDashboard() {
   _categoriasCache = d.categorias.filter(c => c.gastado > 0 || c.presupuesto_mensual > 0);
   renderCategoriasDashboard();
   renderChartCategorias();
+  cargarComparativo(mes);
+  cargarProyeccion(mes);
+  cargarAtipicos(mes);
+  cargarEvolucionAnual(mes);
+}
+
+async function cargarProyeccion(mes) {
+  const card = document.getElementById('dash-proyeccion-card');
+  const d = await (await fetch(`/api/finanzas/proyeccion?mes=${mes}`)).json();
+  if (!d.ok || !d.proyeccion) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  document.getElementById('dash-proyeccion').textContent = fmtMoney(d.proyeccion.proyectado);
+}
+
+async function cargarAtipicos(mes) {
+  const card = document.getElementById('atipicos-card');
+  const cont = document.getElementById('atipicos-lista');
+  const d = await (await fetch(`/api/finanzas/atipicos?mes=${mes}`)).json();
+  if (!d.ok || !d.rows.length) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  cont.innerHTML = d.rows.map(r => `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:.5rem .7rem;border-bottom:1px solid var(--border)">
+      <div>
+        <div style="font-size:.82rem">${esc(r.descripcion)}</div>
+        <div style="font-size:.72rem;color:var(--muted)">${esc(r.categoria_nombre)} · ${esc(r.fecha)} · promedio habitual ${fmtMoney(r.promedio_categoria)}</div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-family:var(--mono);font-weight:600">${fmtMoney(r.monto_ars)}</div>
+        <div style="font-size:.7rem;color:var(--danger)">${r.veces_promedio}x el promedio</div>
+      </div>
+    </div>`).join('');
+}
+
+let _chartAnual = null;
+async function cargarEvolucionAnual(mes) {
+  const d = await (await fetch(`/api/finanzas/evolucion_anual?mes=${mes}`)).json();
+  if (!d.ok) return;
+  const ctx = document.getElementById('canvas-anual').getContext('2d');
+  if (_chartAnual) _chartAnual.destroy();
+  _chartAnual = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: d.rows.map(r => r.mes),
+      datasets: [{ data: d.rows.map(r => r.total), backgroundColor: '#0EA5A4' }]
+    },
+    options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+  });
+}
+
+async function cargarComparativo(mes) {
+  const body = document.getElementById('comp-body');
+  const nota = document.getElementById('comp-nota');
+  const d = await (await fetch(`/api/finanzas/comparativo?mes=${mes}`)).json();
+  if (!d.ok) { body.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted)">Error al cargar.</td></tr>'; return; }
+
+  nota.textContent = d.es_mes_actual
+    ? `Comparando gasto acumulado hasta el día ${d.dia_corte} de cada mes (mes en curso, todavía no cerró).`
+    : `Comparando el mes completo contra ${d.meses_comparados.join(', ')}.`;
+
+  if (!d.rubros.length) { body.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:1rem">Sin datos suficientes para comparar.</td></tr>'; return; }
+
+  const fmtVar = (v) => {
+    if (v === null) return '<span style="color:var(--muted)">nuevo</span>';
+    const color = v > 15 ? 'var(--danger)' : (v < -15 ? 'var(--fin)' : 'var(--muted)');
+    const flecha = v > 0 ? '▲' : (v < 0 ? '▼' : '—');
+    return `<span style="color:${color}">${flecha} ${Math.abs(v)}%</span>`;
+  };
+
+  body.innerHTML = d.rubros.map(r => `
+    <tr>
+      <td>${esc(r.nombre)}</td>
+      <td style="font-family:var(--mono)">${fmtMoney(r.actual)}</td>
+      <td style="font-family:var(--mono)">${fmtMoney(r.mes_anterior)}</td>
+      <td style="font-family:var(--mono)">${fmtMoney(r.promedio_previo)}</td>
+      <td>${fmtVar(r.variacion_vs_anterior_pct)}</td>
+      <td>${fmtVar(r.variacion_vs_promedio_pct)}</td>
+    </tr>`).join('');
 }
 
 function renderCategoriasDashboard() {
@@ -1114,11 +1214,14 @@ function cargarServicios() {
       } else {
         estado = `<span style="font-size:.7rem;color:var(--danger)">⚠ Sin pago detectado</span>`;
       }
+      const aumento = s.posible_aumento_tarifa
+        ? `<div style="font-size:.7rem;color:var(--danger)">⚠ ${s.variacion_pct}% más que el mes pasado (${fmtMoney(s.monto_mes_anterior)} → ${fmtMoney(s.movimiento.monto_ars)}) — revisar si aumentó la tarifa</div>` : '';
       return `
       <div style="display:flex;align-items:center;justify-content:space-between;padding:.6rem .8rem;border-bottom:1px solid var(--border);gap:.6rem;flex-wrap:wrap">
         <div style="flex:1;min-width:160px">
           <div style="${s.pagado ? 'text-decoration:line-through;color:var(--muted)' : ''}">${esc(s.nombre)}</div>
           ${estado}
+          ${aumento}
         </div>
         ${!s.automatico ? `<label style="display:flex;align-items:center;gap:.4rem;font-size:.75rem;cursor:pointer">
           <input type="checkbox" ${s.pagado_manual ? 'checked' : ''} onchange="togglePagoServicio(${s.id}, this.checked)"> Marcar pagado a mano
