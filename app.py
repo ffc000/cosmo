@@ -167,34 +167,52 @@ job_status = {}
 import threading as _threading
 
 # ── Recordatorio de servicios recurrentes (finanzas) ────────────────────────────
+def _mes_anterior_str(mes):
+    a, mm = int(mes[:4]), int(mes[5:7]) - 1
+    if mm <= 0:
+        mm += 12; a -= 1
+    return f"{a:04d}-{mm:02d}"
+
+def _buscar_match_servicio(con, patrones, mes):
+    if not patrones:
+        return None
+    condiciones = " OR ".join(["LOWER(descripcion) LIKE ?"] * len(patrones))
+    params = [f"%{p.lower()}%" for p in patrones]
+    return con.execute(
+        f"SELECT fecha, descripcion, monto_ars FROM fin_movimientos "
+        f"WHERE substr(fecha,1,7)=? AND ({condiciones}) ORDER BY fecha LIMIT 1",
+        [mes] + params).fetchone()
+
 def _estado_servicios_mes(con, mes):
     """Para cada servicio activo, busca si hay un movimiento de ese mes cuya
     descripción coincide con alguno de sus patrones (o si fue marcado pagado
-    a mano cuando no hay coincidencia automática). Devuelve una lista de dicts."""
+    a mano cuando no hay coincidencia automática). También compara el monto
+    contra el del mes anterior, para marcar posibles aumentos de tarifa."""
     con.row_factory = sqlite3.Row
     servicios = con.execute(
         "SELECT * FROM fin_servicios WHERE activo=1 ORDER BY orden").fetchall()
+    mes_ant = _mes_anterior_str(mes)
     resultado = []
     for s in servicios:
-        match = None
         patrones = [p.strip() for p in (s["patron"] or "").split(",") if p.strip()]
-        if patrones:
-            condiciones = " OR ".join(["LOWER(descripcion) LIKE ?"] * len(patrones))
-            params = [f"%{p.lower()}%" for p in patrones]
-            match = con.execute(
-                f"SELECT fecha, descripcion, monto_ars FROM fin_movimientos "
-                f"WHERE substr(fecha,1,7)=? AND ({condiciones}) ORDER BY fecha LIMIT 1",
-                [mes] + params).fetchone()
+        match = _buscar_match_servicio(con, patrones, mes)
+        match_ant = _buscar_match_servicio(con, patrones, mes_ant)
         manual = con.execute(
             "SELECT pagado, fecha_pago FROM fin_servicios_pagos WHERE servicio_id=? AND mes=?",
             (s["id"], mes)).fetchone()
         pagado_manual = bool(manual and manual["pagado"])
+        variacion_pct = None
+        if match and match_ant and match_ant["monto_ars"] > 0:
+            variacion_pct = round((match["monto_ars"] - match_ant["monto_ars"]) / match_ant["monto_ars"] * 100, 1)
         resultado.append({
             "id": s["id"], "nombre": s["nombre"], "patron": s["patron"],
             "pagado": bool(match) or pagado_manual,
             "automatico": bool(match),
             "movimiento": dict(match) if match else None,
             "pagado_manual": pagado_manual,
+            "monto_mes_anterior": match_ant["monto_ars"] if match_ant else None,
+            "variacion_pct": variacion_pct,
+            "posible_aumento_tarifa": variacion_pct is not None and variacion_pct >= 15,
         })
     return resultado
 
@@ -6182,6 +6200,38 @@ def api_fin_resumen():
         "resumen": fin.resumen_mes(HIST_DB, mes),
         "categorias": fin.gasto_por_categoria(HIST_DB, mes),
     })
+
+
+@app.route("/api/finanzas/comparativo")
+@login_required
+@finanzas_owner_required
+def api_fin_comparativo():
+    mes = request.args.get("mes") or date.today().isoformat()[:7]
+    return jsonify({"ok": True, **fin.comparativo_por_categoria(HIST_DB, mes)})
+
+
+@app.route("/api/finanzas/proyeccion")
+@login_required
+@finanzas_owner_required
+def api_fin_proyeccion():
+    mes = request.args.get("mes") or date.today().isoformat()[:7]
+    return jsonify({"ok": True, "proyeccion": fin.proyeccion_cierre_mes(HIST_DB, mes)})
+
+
+@app.route("/api/finanzas/atipicos")
+@login_required
+@finanzas_owner_required
+def api_fin_atipicos():
+    mes = request.args.get("mes") or date.today().isoformat()[:7]
+    return jsonify({"ok": True, "rows": fin.gastos_atipicos(HIST_DB, mes)})
+
+
+@app.route("/api/finanzas/evolucion_anual")
+@login_required
+@finanzas_owner_required
+def api_fin_evolucion_anual():
+    mes = request.args.get("mes") or date.today().isoformat()[:7]
+    return jsonify({"ok": True, "rows": fin.evolucion_anual(HIST_DB, mes)})
 
 
 @app.route("/api/finanzas/resumenes_subidos")

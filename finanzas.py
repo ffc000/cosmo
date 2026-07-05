@@ -43,6 +43,7 @@ import hashlib
 import re
 import sqlite3
 import uuid
+import calendar
 from datetime import datetime, timedelta
 
 try:
@@ -407,6 +408,144 @@ def gasto_por_categoria(db_path: str, mes: str):
     """, (mes,)).fetchall()
     con.close()
     return [dict(r) for r in rows]
+
+
+def comparativo_por_categoria(db_path: str, mes: str, meses_atras: int = 3):
+    """Gasto del mes por rubro vs. mes anterior y promedio de los últimos
+    `meses_atras` meses completos previos. Si `mes` es el mes en curso, todas
+    las comparaciones se cortan al mismo día del mes para no comparar un mes
+    a medio cerrar contra meses completos."""
+    con = sqlite3.connect(db_path); con.row_factory = sqlite3.Row
+    hoy = datetime.now()
+    es_mes_actual = mes == hoy.strftime("%Y-%m")
+    dia_corte = hoy.day if es_mes_actual else 31
+
+    def _gasto_por_mes(m, corte):
+        return {r["categoria_id"]: r["total"] for r in con.execute(
+            "SELECT categoria_id, COALESCE(SUM(monto_ars),0) as total "
+            "FROM fin_movimientos WHERE tipo='consumo' AND substr(fecha,1,7)=? "
+            "AND CAST(substr(fecha,9,2) AS INTEGER) <= ? GROUP BY categoria_id",
+            (m, corte)).fetchall()}
+
+    anio, num_mes = int(mes[:4]), int(mes[5:7])
+    meses_prev = []
+    for i in range(1, meses_atras + 1):
+        a, mm = anio, num_mes - i
+        while mm <= 0:
+            mm += 12; a -= 1
+        meses_prev.append(f"{a:04d}-{mm:02d}")
+
+    actual = _gasto_por_mes(mes, dia_corte)
+    anterior = _gasto_por_mes(meses_prev[0], dia_corte) if meses_prev else {}
+    historico = [_gasto_por_mes(m, dia_corte) for m in meses_prev]
+
+    categorias = con.execute("SELECT id, nombre, color FROM fin_categorias ORDER BY orden").fetchall()
+    con.close()
+
+    resultado = []
+    for c in categorias:
+        cid = c["id"]
+        act = round(actual.get(cid, 0), 2)
+        ant = anterior.get(cid, 0)
+        valores_hist = [h.get(cid, 0) for h in historico if h.get(cid, 0) > 0]
+        promedio = round(sum(valores_hist) / len(valores_hist), 2) if valores_hist else 0
+        if ant > 0:
+            variacion_vs_anterior = round((act - ant) / ant * 100, 1)
+        else:
+            variacion_vs_anterior = None  # no hubo gasto el mes anterior: "nuevo"
+        if promedio > 0:
+            variacion_vs_promedio = round((act - promedio) / promedio * 100, 1)
+        else:
+            variacion_vs_promedio = None
+        if act > 0 or ant > 0 or promedio > 0:
+            resultado.append({
+                "categoria_id": cid, "nombre": c["nombre"], "color": c["color"],
+                "actual": act, "mes_anterior": round(ant, 2), "promedio_previo": promedio,
+                "variacion_vs_anterior_pct": variacion_vs_anterior,
+                "variacion_vs_promedio_pct": variacion_vs_promedio,
+            })
+    resultado.sort(key=lambda r: abs(r["variacion_vs_promedio_pct"] or 0), reverse=True)
+    return {"mes": mes, "dia_corte": dia_corte, "es_mes_actual": es_mes_actual,
+            "meses_comparados": meses_prev, "rubros": resultado}
+
+
+def proyeccion_cierre_mes(db_path: str, mes: str):
+    """Proyecta el gasto total del mes en curso si se sigue gastando al mismo
+    ritmo diario que hasta ahora. Solo tiene sentido para el mes actual."""
+    hoy = datetime.now()
+    if mes != hoy.strftime("%Y-%m"):
+        return None
+    dia = hoy.day
+    dias_del_mes = calendar.monthrange(hoy.year, hoy.month)[1]
+    con = sqlite3.connect(db_path)
+    acumulado = con.execute(
+        "SELECT COALESCE(SUM(monto_ars),0) FROM fin_movimientos WHERE tipo='consumo' AND substr(fecha,1,7)=?",
+        (mes,)).fetchone()[0]
+    con.close()
+    if dia == 0:
+        return None
+    proyectado = round(acumulado / dia * dias_del_mes, 2)
+    return {"acumulado": round(acumulado, 2), "dia_actual": dia, "dias_del_mes": dias_del_mes,
+            "proyectado": proyectado}
+
+
+def gastos_atipicos(db_path: str, mes: str, umbral: float = 3.0, meses_referencia: int = 6):
+    """Movimientos del mes cuyo monto es `umbral` veces (o más) el monto
+    promedio histórico de esa categoría, tomando como referencia los
+    `meses_referencia` meses anteriores. Sirve para pescar compras
+    inusuales o posibles errores de carga."""
+    con = sqlite3.connect(db_path); con.row_factory = sqlite3.Row
+    anio, num_mes = int(mes[:4]), int(mes[5:7])
+    a, mm = anio, num_mes - meses_referencia
+    while mm <= 0:
+        mm += 12; a -= 1
+    mes_desde = f"{a:04d}-{mm:02d}"
+
+    promedios = {r["categoria_id"]: r["promedio"] for r in con.execute(
+        "SELECT categoria_id, AVG(monto_ars) as promedio FROM fin_movimientos "
+        "WHERE tipo='consumo' AND categoria_id IS NOT NULL "
+        "AND substr(fecha,1,7) >= ? AND substr(fecha,1,7) < ? "
+        "GROUP BY categoria_id", (mes_desde, mes)).fetchall()}
+
+    movimientos = con.execute(
+        "SELECT m.id, m.fecha, m.descripcion, m.monto_ars, m.categoria_id, c.nombre as categoria_nombre "
+        "FROM fin_movimientos m LEFT JOIN fin_categorias c ON c.id=m.categoria_id "
+        "WHERE m.tipo='consumo' AND substr(m.fecha,1,7)=?", (mes,)).fetchall()
+    con.close()
+
+    atipicos = []
+    for m in movimientos:
+        prom = promedios.get(m["categoria_id"])
+        if prom and prom > 0 and m["monto_ars"] >= prom * umbral:
+            atipicos.append({
+                "id": m["id"], "fecha": m["fecha"], "descripcion": m["descripcion"],
+                "monto_ars": m["monto_ars"], "categoria_nombre": m["categoria_nombre"] or "Sin categoría",
+                "promedio_categoria": round(prom, 2),
+                "veces_promedio": round(m["monto_ars"] / prom, 1),
+            })
+    atipicos.sort(key=lambda x: x["veces_promedio"], reverse=True)
+    return atipicos
+
+
+def evolucion_anual(db_path: str, mes_hasta: str, meses: int = 12):
+    """Total gastado (consumos) mes a mes, para ver estacionalidad."""
+    anio, num_mes = int(mes_hasta[:4]), int(mes_hasta[5:7])
+    lista_meses = []
+    for i in range(meses - 1, -1, -1):
+        a, mm = anio, num_mes - i
+        while mm <= 0:
+            mm += 12; a -= 1
+        while mm > 12:
+            mm -= 12; a += 1
+        lista_meses.append(f"{a:04d}-{mm:02d}")
+
+    con = sqlite3.connect(db_path)
+    totales = {r[0]: r[1] for r in con.execute(
+        "SELECT substr(fecha,1,7) as mes, SUM(monto_ars) FROM fin_movimientos "
+        "WHERE tipo='consumo' AND substr(fecha,1,7) IN (%s) GROUP BY mes" % ",".join("?"*len(lista_meses)),
+        lista_meses).fetchall()}
+    con.close()
+    return [{"mes": m, "total": round(totales.get(m, 0), 2)} for m in lista_meses]
 
 
 def resumen_mes(db_path: str, mes: str):
