@@ -223,8 +223,16 @@ def categorizar(db_path: str, descripcion: str):
 
 def aprender_regla(db_path: str, patron: str, categoria_id: str):
     """Se llama cuando el usuario corrige la categoría de un movimiento a mano:
-    la próxima vez que aparezca ese comercio, ya lo categoriza solo."""
+    la próxima vez que aparezca ese comercio, ya lo categoriza solo.
+
+    Si ya existía una regla con el mismo patrón (de una corrección anterior,
+    posiblemente a otra categoría), se borra antes de insertar la nueva —
+    si no, la regla vieja podía seguir ganando el empate en `categorizar()`
+    y la corrección más reciente nunca se aplicaba."""
     con = sqlite3.connect(db_path)
+    con.execute(
+        "DELETE FROM fin_reglas_categorizacion WHERE patron=?",
+        (patron.upper(),))
     con.execute(
         "INSERT INTO fin_reglas_categorizacion (patron,categoria_id,prioridad,creado) VALUES (?,?,?,?)",
         (patron.upper(), categoria_id, 1, datetime.now().isoformat()))

@@ -120,8 +120,14 @@ def parse_santander(paginas_texto: list[str], anio_resumen: int) -> list[dict]:
 
             fecha = date(anio_actual, mes_actual, dia).isoformat()
 
-            es_pago = bool(_SANT_SU_PAGO.search(resto)) or resto.rstrip().endswith("-")
+            es_pago = bool(_SANT_SU_PAGO.search(resto))
             es_cargo = en_cargos or any(k in resto.upper() for k in _SANT_CARGO_KEYS)
+            # Nota de crédito/devolución: monto negativo que NO es "SU PAGO EN PESOS/USD".
+            # Antes se clasificaba como "pago" (igual que un pago de resumen), lo que la
+            # sacaba del total de gasto real. Ahora queda como "consumo" en negativo,
+            # para que reste de la categoría correspondiente en vez de desaparecer.
+            es_nota_credito = (not es_pago) and resto.rstrip().endswith("-")
+            signo = -1.0 if (es_nota_credito and not es_cargo) else 1.0
 
             cuota_actual = cuota_total = None
             m_cuota = _SANT_CUOTA.search(resto)
@@ -134,11 +140,11 @@ def parse_santander(paginas_texto: list[str], anio_resumen: int) -> list[dict]:
 
             es_usd = "USD" in resto.upper() or "U$S" in resto.upper()
             if es_usd and len(montos) >= 2 and abs(_to_float(montos[-1])) == abs(_to_float(montos[-2])):
-                monto_usd, monto_ars = abs(_to_float(montos[-1])), 0.0
+                monto_usd, monto_ars = signo * abs(_to_float(montos[-1])), 0.0
             elif es_usd and len(montos) == 1:
-                monto_usd, monto_ars = abs(_to_float(montos[0])), 0.0
+                monto_usd, monto_ars = signo * abs(_to_float(montos[0])), 0.0
             else:
-                monto_ars, monto_usd = abs(_to_float(montos[-1])), 0.0
+                monto_ars, monto_usd = signo * abs(_to_float(montos[-1])), 0.0
 
             # Descripción: lo que queda antes del primer monto/cuota
             desc = resto
@@ -213,8 +219,14 @@ def parse_galicia(paginas_texto: list[str]) -> list[dict]:
             resto = m.group(4)
 
             montos = re.findall(NUM_RE, resto)
-            es_pago = bool(_GAL_SU_PAGO.search(resto)) or any(t.strip().startswith("-") for t in montos)
+            es_pago = bool(_GAL_SU_PAGO.search(resto))
+            # Nota de crédito/devolución: monto negativo que NO es "SU PAGO EN PESOS/USD".
+            # Antes se clasificaba como "pago" (igual que un pago de resumen), lo que la
+            # sacaba del total de gasto real. Ahora queda como "consumo" en negativo,
+            # para que reste de la categoría correspondiente en vez de desaparecer.
+            es_nota_credito = (not es_pago) and any(t.strip().startswith("-") for t in montos)
             es_cargo = en_cargos or any(k in resto.upper() for k in _GAL_CARGO_KEYS)
+            signo = -1.0 if (es_nota_credito and not es_cargo) else 1.0
 
             cuota_actual = cuota_total = None
             m_cuota = _GAL_CUOTA.search(resto)
@@ -226,11 +238,11 @@ def parse_galicia(paginas_texto: list[str]) -> list[dict]:
 
             es_usd = "USD" in resto.upper()
             if es_usd and len(montos) >= 2 and abs(_to_float(montos[-1])) == abs(_to_float(montos[-2])):
-                monto_usd, monto_ars = abs(_to_float(montos[-1])), 0.0
+                monto_usd, monto_ars = signo * abs(_to_float(montos[-1])), 0.0
             elif es_usd and len(montos) == 1:
-                monto_usd, monto_ars = abs(_to_float(montos[0])), 0.0
+                monto_usd, monto_ars = signo * abs(_to_float(montos[0])), 0.0
             else:
-                monto_ars, monto_usd = abs(_to_float(montos[-1])), 0.0
+                monto_ars, monto_usd = signo * abs(_to_float(montos[-1])), 0.0
 
             desc = resto
             if m_cuota:

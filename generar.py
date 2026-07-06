@@ -316,27 +316,9 @@ def correr_queries(ruta_db, pais, anio, mes_d, mes_h, log_fn):
     datos_ult = totales_mes(per_ult)
     datos_ant = totales_mes(per_ant)
     impoexpo_ult = q(f"""SELECT TIPO_REGISTRO, SUM(CASE WHEN EST_MIC='TRANS' THEN 1 ELSE 0 END) AS trans, SUM(CASE WHEN EST_MIC='NO TRANS' THEN 1 ELSE 0 END) AS no_trans, SUM(CASE WHEN EST_MIC='TRANS TARD' THEN 1 ELSE 0 END) AS tardio, SUM(CASE WHEN CARGADO='SI' THEN 1 ELSE 0 END) AS cargado, SUM(CASE WHEN CARGADO='NO' THEN 1 ELSE 0 END) AS lastre, COUNT(*) AS total FROM {tabla} WHERE MIC LIKE ? AND strftime('%Y-%m',FECHA_INGRESO_ISO)=? GROUP BY TIPO_REGISTRO""", (like, per_ult))
-    rechazos_ult_cat = q("""
+    rechazos_ult_cat = q(f"""
         WITH ranked AS (SELECT mensaje, ROW_NUMBER() OVER (PARTITION BY NroMic ORDER BY Fecha_ISO DESC) AS rn FROM RECHAZOS WHERE PaisEmisor=? AND Anio=? AND Metodo='OficializarMicDta' AND strftime('%Y-%m',Fecha_ISO)=?),
-        res AS (SELECT CASE
-            WHEN mensaje LIKE '%Nro de Mic existente%' THEN 'NRO DE MIC EXISTENTE'
-            WHEN mensaje LIKE '%NRO DE MIC INEXISTENTE%' THEN 'NRO DE MIC INEXISTENTE'
-            WHEN mensaje LIKE '%VEHICULO%' THEN 'VEHICULO'
-            WHEN mensaje LIKE '%CONSIGNATARIO%' THEN 'CONSIGNATARIO'
-            WHEN mensaje LIKE '%PAISDEST.CODADUDEST%' THEN 'PAISDEST.CODADUDEST'
-            WHEN mensaje LIKE '%PAISDEST.CODADUENT%' THEN 'PAISDEST.CODADUENT'
-            WHEN mensaje LIKE '%PAISDEST.CODCIUDEST%' THEN 'PAISDEST.CODCIUDEST'
-            WHEN mensaje LIKE '%PORTE%DUPLICADO%' THEN 'CARTA_PORTE_DUPLICADO'
-            WHEN mensaje LIKE '%PORTE%' AND mensaje NOT LIKE '%DUPLICADO%' THEN 'CARTA PORTE'
-            WHEN mensaje LIKE '%CRT%' THEN 'CRT'
-            WHEN mensaje LIKE '%DESTINACION%' AND mensaje NOT LIKE '%INDNCM%' THEN 'DESTINACION'
-            WHEN mensaje LIKE '%INDNCM%' THEN 'INDNCM'
-            WHEN mensaje LIKE '%CODADUEMI%' THEN 'CODADUEMI'
-            WHEN mensaje LIKE '%CODADUSAL%' THEN 'CODADUSAL'
-            WHEN mensaje LIKE '%PAISESDEPASO%' THEN 'PAISESDEPASO'
-            WHEN mensaje LIKE '%FECHA DEL EVENTO %' THEN 'FECHA_DEL_EVENTO'
-            WHEN mensaje LIKE '%CONTENEDOR%' THEN 'CONTENEDOR'
-            ELSE 'OTROS' END AS Categoria, COUNT(*) AS Rechazos
+        res AS (SELECT {_sql_case_categorias()} AS Categoria, COUNT(*) AS Rechazos
         FROM ranked WHERE rn=1 GROUP BY Categoria)
         SELECT Categoria, Rechazos FROM res ORDER BY Rechazos DESC
     """, (pais, anio, per_ult))
