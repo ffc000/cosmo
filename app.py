@@ -21,17 +21,21 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 def notificar_telegram(msg: str):
-    """Envía un mensaje al bot de Telegram. No rompe el flujo si falla."""
+    """Envía un mensaje al bot de Telegram. No rompe el flujo si falla.
+    Corre en un hilo aparte para no bloquear la respuesta al usuario mientras
+    espera la llamada de red (hasta 3s si Telegram está lento/caído)."""
     if not TELEGRAM_TOKEN:
         return
-    try:
-        urllib.request.urlopen(
-            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-            f"?chat_id={TELEGRAM_CHAT_ID}&text=" + urllib.parse.quote(msg),
-            timeout=3
-        )
-    except Exception:
-        pass
+    def _enviar():
+        try:
+            urllib.request.urlopen(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+                f"?chat_id={TELEGRAM_CHAT_ID}&text=" + urllib.parse.quote(msg),
+                timeout=3
+            )
+        except Exception:
+            pass
+    _threading.Thread(target=_enviar, daemon=True).start()
 
 
 # Confía en 1 proxy (nginx) para X-Forwarded-For: reescribe request.remote_addr
@@ -49,6 +53,23 @@ app.config['SESSION_COOKIE_SECURE'] = True     # solo se envía por HTTPS
 app.config['SESSION_COOKIE_HTTPONLY'] = True   # no accesible desde JS
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # mitiga CSRF básico en navegación cruzada
 app.config['WTF_CSRF_TIME_LIMIT'] = None  # el timeout de sesión ya lo maneja login_required (4h)
+
+@app.after_request
+def _security_headers(resp):
+    """Headers de defensa en profundidad — no reemplazan la validación de
+    entrada/salida ya hecha, pero limitan el daño si algo se escapa:
+    - X-Frame-Options: evita que la app se embeba en un <iframe> ajeno (clickjacking).
+    - X-Content-Type-Options: evita que el navegador "adivine" un tipo de
+      contenido distinto al declarado (mitiga algunos vectores de XSS).
+    - Strict-Transport-Security: fuerza HTTPS en el navegador (la app ya
+      requiere cookies solo por HTTPS con SESSION_COOKIE_SECURE).
+    - Referrer-Policy: no filtra la URL completa (con tokens/ids) a terceros.
+    """
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return resp
 csrf = CSRFProtect(app)
 
 # ── Config ─────────────────────────────────────────────────────────────────────
@@ -151,8 +172,12 @@ logging.basicConfig(filename="/data/accesos.log", level=logging.INFO,
     format="%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 
 # ── Rate limiter ───────────────────────────────────────────────────────────────
+# storage_uri: en memoria por defecto (sirve con 1 solo worker). Si se corre con
+# más de un worker (gunicorn -w >1), cada worker llevaría su propia cuenta y el
+# límite dejaría de cumplirse — en ese caso definir RATELIMIT_STORAGE_URI=redis://...
 limiter = Limiter(key_func=get_remote_address, app=app,
-    default_limits=["300 per minute"], storage_uri="memory://")
+    default_limits=["300 per minute"],
+    storage_uri=os.environ.get("RATELIMIT_STORAGE_URI", "memory://"))
 
 # ── Context processor ──────────────────────────────────────────────────────────
 @app.context_processor
@@ -949,6 +974,20 @@ def _migrar_fechas_cronologia():
 
 init_historial()
 _migrar_fechas_cronologia()
+
+# WAL mejora mucho la concurrencia lectura/escritura de SQLite: con dos hilos de
+# background (recordatorio de servicios, backup automático) más las requests
+# normales escribiendo sobre las mismas bases, el modo "rollback journal" (default)
+# genera bloqueos ("database is locked") más seguido de lo necesario.
+# Se activa una sola vez: WAL queda grabado en el archivo de la base.
+for _db in (HIST_DB, DB_PATH):
+    try:
+        if os.path.exists(_db):
+            _con_wal = sqlite3.connect(_db, timeout=10)
+            _con_wal.execute("PRAGMA journal_mode=WAL")
+            _con_wal.close()
+    except Exception:
+        logging.exception(f"No se pudo activar WAL en {_db}")
 
 # ── Migración APP_PASS/APP_USER legacy → BD ────────────────────────────────────
 def _migrar_usuarios_legacy():
