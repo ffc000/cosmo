@@ -978,6 +978,33 @@ def import_sql():
     except Exception as e:
         return jsonify({"ok":False,"error":str(e)})
 
+@app.route("/api/limpiar-tabla", methods=["POST"])
+@login_required
+@admin_required("bd")
+@limiter.limit("10 per hour", error_message="Demasiados intentos de vaciar una tabla.")
+def limpiar_tabla():
+    """Borra todos los registros de una tabla DAT_YYYY o RECHAZOS, sin
+    borrar la tabla en sí (estructura e índices quedan intactos)."""
+    data = request.json or {}
+    tabla = (data.get("tabla") or "").strip()
+    if tabla not in ("REC", "RECHAZOS") and not re.match(r'^DAT_\d{4}$', tabla):
+        return jsonify({"ok": False, "error": f"Tabla no permitida: '{tabla}'"})
+    if not os.path.exists(DB_PATH):
+        return jsonify({"ok": False, "error": "La BD no está cargada"})
+    con = sqlite3.connect(DB_PATH)
+    cur = con.cursor()
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,))
+    if not cur.fetchone():
+        con.close()
+        return jsonify({"ok": False, "error": f"La tabla {tabla} no existe"})
+    cur.execute(f"SELECT COUNT(*) FROM {tabla}")
+    total_antes = cur.fetchone()[0]
+    cur.execute(f"DELETE FROM {tabla}")
+    con.commit(); con.close()
+    logging.info(f"LIMPIAR TABLA | tabla={tabla} | user={session.get('username')} | borrados={total_antes}")
+    notificar_telegram(f"🗑️ Se vació la tabla {tabla} ({total_antes:,} registros borrados) por {session.get('username')}")
+    return jsonify({"ok": True, "borrados": total_antes})
+
 # ── Update CSV (async) ─────────────────────────────────────────────────────────
 @app.route("/api/update-csv", methods=["POST"])
 @login_required
@@ -985,6 +1012,8 @@ def import_sql():
 def update_csv():
     tabla = request.form.get("tabla","").strip()
     anio  = request.form.get("anio", str(datetime.today().year))
+    modo  = request.form.get("modo", "reemplazar")
+    if modo not in ("reemplazar", "agregar"): modo = "reemplazar"
     if tabla == "DAT": tabla = f"DAT_{anio}"
     # Whitelist: solo tablas conocidas o DAT_YYYY
     if tabla not in ("REC", "RECHAZOS") and not re.match(r'^DAT_\d{4}$', tabla):
@@ -1000,16 +1029,16 @@ def update_csv():
     job_id = str(uuid.uuid4())[:8]
     job_status[job_id] = {"status":"running","log":[f"Archivo recibido: {size_kb} KB"],"files":[],
                            "username": session.get("username","?")}
-    logging.info(f"CSV UPLOAD | tabla={tabla} | size={size_kb}KB")
-    t = threading.Thread(target=_run_csv_job, args=(job_id, tmp_path, tabla))
+    logging.info(f"CSV UPLOAD | tabla={tabla} | size={size_kb}KB | modo={modo}")
+    t = threading.Thread(target=_run_csv_job, args=(job_id, tmp_path, tabla, modo))
     t.start()
     return jsonify({"ok":True,"job_id":job_id})
 
-def _run_csv_job(job_id, tmp_path, tabla):
+def _run_csv_job(job_id, tmp_path, tabla, modo="reemplazar"):
     log = job_status[job_id]["log"]
     username = job_status[job_id].get("username", "?")
     try:
-        _procesar_csv(tmp_path, tabla, log)
+        _procesar_csv(tmp_path, tabla, log, modo)
         job_status[job_id]["status"] = "done"
         ultimo = log[-1] if log else ""
         notificar_telegram(f"📄 Tabla {tabla} actualizada por {username}\n{ultimo}")
@@ -1021,13 +1050,18 @@ def _run_csv_job(job_id, tmp_path, tabla):
         try: os.remove(tmp_path)
         except: pass
 
-def _procesar_csv(tmp_path, tabla, log):
+def _procesar_csv(tmp_path, tabla, log, modo="reemplazar"):
     con = sqlite3.connect(DB_PATH)
     cur = con.cursor()
     try:
         if tabla.startswith("DAT_"):
             # Streaming línea por línea — evita cargar 650MB en RAM
-            log.append("Procesando archivo DAT (streaming)...")
+            log.append(f"Procesando archivo DAT (streaming, modo: {modo})...")
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,))
+            tabla_existe = cur.fetchone() is not None
+            rowid_inicio = 1
+            if modo == "agregar" and tabla_existe:
+                rowid_inicio = (cur.execute(f"SELECT COALESCE(MAX(rowid),0) FROM {tabla}").fetchone()[0]) + 1
             headers = None
             placeholders = None
             batch = []
@@ -1044,12 +1078,15 @@ def _procesar_csv(tmp_path, tabla, log):
                         headers = [h.strip() for h in line.split(";")]
                         col_normalize = {"TIENE NOVEDAD?": "tiene_novedad", "TIENE NOVEDAD": "tiene_novedad"}
                         headers = [col_normalize.get(h, h) for h in headers]
-                        cur.execute(f"DROP TABLE IF EXISTS {tabla}")
-                        cols_def = ", ".join([f'"{h}" TEXT' for h in headers])
-                        cur.execute(f"CREATE TABLE {tabla} ({cols_def})")
+                        if modo == "agregar" and tabla_existe:
+                            log.append("Modo agregar: se suman filas a la tabla existente, no se pisa nada.")
+                        else:
+                            cur.execute(f"DROP TABLE IF EXISTS {tabla}")
+                            cols_def = ", ".join([f'"{h}" TEXT' for h in headers])
+                            cur.execute(f"CREATE TABLE {tabla} ({cols_def})")
+                            log.append(f"Columnas: {len(headers)} — tabla creada, insertando...")
                         placeholders = ", ".join(["?" for _ in headers])
                         con.commit()
-                        log.append(f"Columnas: {len(headers)} — tabla creada, insertando...")
                         continue
                     vals = [v.strip() for v in line.split(";")]
                     while len(vals) < len(headers): vals.append(None)
@@ -1085,10 +1122,12 @@ def _procesar_csv(tmp_path, tabla, log):
                     ELSE NULL END
                 WHERE rowid BETWEEN ? AND ?"""
             batch_iso = 50000
-            for start in range(1, inserted + batch_iso, batch_iso):
-                cur.execute(iso_sql, (start, start + batch_iso - 1))
+            rowid_fin = rowid_inicio + inserted - 1
+            for start in range(rowid_inicio, rowid_fin + 1, batch_iso):
+                fin_batch = min(start + batch_iso - 1, rowid_fin)
+                cur.execute(iso_sql, (start, fin_batch))
                 con.commit()
-                log.append(f"  Fechas ISO: {min(start + batch_iso - 1, inserted):,} / {inserted:,}...")
+                log.append(f"  Fechas ISO: {fin_batch - rowid_inicio + 1:,} / {inserted:,}...")
             log.append("Creando índice...")
             try: cur.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{tabla}_key ON {tabla}(OPERACION_PAD_EXT, MIC, TIPO_REGISTRO)")
             except: pass
