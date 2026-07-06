@@ -1181,28 +1181,33 @@ def _procesar_csv(tmp_path, tabla, log, modo="reemplazar"):
                         headers = [h.strip() for h in line.split(";")]
                         col_normalize = {"TIENE NOVEDAD?": "tiene_novedad", "TIENE NOVEDAD": "tiene_novedad"}
                         headers = [col_normalize.get(h, h) for h in headers]
+                        insert_sql = None
                         if modo == "agregar" and tabla_existe:
                             log.append("Modo agregar: se suman filas a la tabla existente, no se pisa nada.")
+                            cols_quoted = ", ".join(f'"{h}"' for h in headers)
+                            placeholders = ", ".join(["?" for _ in headers])
+                            insert_sql = f"INSERT INTO {tabla} ({cols_quoted}) VALUES ({placeholders})"
                         else:
                             cur.execute(f"DROP TABLE IF EXISTS {tabla}")
                             cols_def = ", ".join([f'"{h}" TEXT' for h in headers])
                             cur.execute(f"CREATE TABLE {tabla} ({cols_def})")
                             log.append(f"Columnas: {len(headers)} — tabla creada, insertando...")
-                        placeholders = ", ".join(["?" for _ in headers])
+                            placeholders = ", ".join(["?" for _ in headers])
+                            insert_sql = f"INSERT INTO {tabla} VALUES ({placeholders})"
                         con.commit()
                         continue
                     vals = [v.strip() for v in line.split(";")]
                     while len(vals) < len(headers): vals.append(None)
                     batch.append(vals[:len(headers)])
                     if len(batch) >= batch_size:
-                        cur.executemany(f"INSERT INTO {tabla} VALUES ({placeholders})", batch)
+                        cur.executemany(insert_sql, batch)
                         inserted += len(batch)
                         batch = []
                         if inserted % 50000 == 0:
                             con.commit()
                             log.append(f"  {inserted:,} filas insertadas...")
             if batch:
-                cur.executemany(f"INSERT INTO {tabla} VALUES ({placeholders})", batch)
+                cur.executemany(insert_sql, batch)
                 inserted += len(batch)
             con.commit()
             if inserted == 0:
