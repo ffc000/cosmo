@@ -260,14 +260,24 @@ select option{background:var(--surface)}
         {% if not db_exists %}<div class="alert alert-warn">⚠ La BD no está cargada.</div>{% endif %}
         <div class="card">
           <div class="card-title">DAT — Datos de operaciones</div>
-          <div class="alert alert-info">Subí <strong>datos.lst</strong> — reemplaza la tabla del año. Fechas ISO e índice automáticos.</div>
+          <div class="alert alert-info">Subí <strong>datos.lst</strong>. "Reemplazar" borra la tabla del año y la carga de cero. "Agregar" suma filas a lo que ya haya (útil para cargar el segundo semestre sin perder el primero).</div>
           <div class="form-row cols2" style="margin-top:.6rem">
             <div><label>Año</label><input type="number" id="upd-anio-dat" value="{{ now.year }}" min="2020" max="2030"></div>
+            <div><label>Modo</label>
+              <select id="upd-modo-dat">
+                <option value="reemplazar">Reemplazar tabla del año</option>
+                <option value="agregar">Agregar a la tabla existente</option>
+              </select>
+            </div>
           </div>
           <div class="upload-zone" id="zone-dat"><input type="file" id="file-dat" accept=".txt,.csv,.lst"><div class="upload-icon">📂</div><div class="upload-text"><strong>datos.lst</strong> — separador ;</div><div class="upload-filename" id="fname-dat"></div></div>
           <button class="btn btn-primary btn-full" id="btn-dat" style="margin-top:.9rem" {% if not db_exists %}disabled{% endif %}>Subir y procesar DAT</button>
           <div id="msg-dat" style="margin-top:.6rem;font-size:.8rem;"></div>
           <div class="log-box" id="log-dat"></div>
+          <div style="margin-top:.9rem;border-top:1px solid var(--border);padding-top:.9rem">
+            <button class="btn btn-danger btn-sm" id="btn-vaciar-dat" {% if not db_exists %}disabled{% endif %}>🗑️ Vaciar tabla DAT del año elegido</button>
+            <div id="msg-vaciar-dat" style="margin-top:.4rem;font-size:.8rem;"></div>
+          </div>
         </div>
         <div class="card">
           <div class="card-title">RECHAZOS — Errores de transmisión</div>
@@ -478,9 +488,9 @@ function setupZone(zId,iId,fId){
 ['dat','rech','sql','db'].forEach(x=>setupZone(`zone-${x}`,`file-${x}`,`fname-${x}`));
 setupZone('zone-rech-sql','file-rech-sql','fname-rech-sql');
 
-function uploadTXT(fId,tabla,mId,lId,bId,anio){
+function uploadTXT(fId,tabla,mId,lId,bId,anio,modo){
   const file=document.getElementById(fId).files[0];if(!file){showMsg(mId,"Seleccioná un archivo primero.","warn");return}
-  const fd=new FormData();fd.append("file",file);fd.append("tabla",tabla);if(anio)fd.append("anio",anio);
+  const fd=new FormData();fd.append("file",file);fd.append("tabla",tabla);if(anio)fd.append("anio",anio);if(modo)fd.append("modo",modo);
   const btn=document.getElementById(bId),logBox=document.getElementById(lId);
   btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Subiendo... 0%';
   logBox.classList.add("visible");logBox.innerHTML="";
@@ -505,8 +515,23 @@ function uploadTXT(fId,tabla,mId,lId,bId,anio){
   xhr.onerror=()=>{showMsg(mId,"✗ Error de red","err");btn.disabled=false;btn.innerHTML="Subir y procesar";};
   xhr.send(fd);
 }
-document.getElementById('btn-dat').addEventListener('click',()=>uploadTXT('file-dat','DAT','msg-dat','log-dat','btn-dat',document.getElementById('upd-anio-dat').value));
+document.getElementById('btn-dat').addEventListener('click',()=>uploadTXT('file-dat','DAT','msg-dat','log-dat','btn-dat',document.getElementById('upd-anio-dat').value,document.getElementById('upd-modo-dat').value));
 document.getElementById('btn-rech').addEventListener('click',()=>uploadTXT('file-rech','RECHAZOS','msg-rech','log-rech','btn-rech',null));
+
+document.getElementById('btn-vaciar-dat').addEventListener('click',()=>{
+  const anio=document.getElementById('upd-anio-dat').value;
+  const tabla=`DAT_${anio}`;
+  const msgEl=document.getElementById('msg-vaciar-dat');
+  if(!confirm(`¿Seguro que querés borrar TODOS los registros de ${tabla}? Esta acción no se puede deshacer.`))return;
+  const btn=document.getElementById('btn-vaciar-dat');
+  btn.disabled=true;btn.textContent='Vaciando...';
+  fetch('/api/limpiar-tabla',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tabla})})
+    .then(r=>r.json()).then(d=>{
+      btn.disabled=false;btn.textContent='🗑️ Vaciar tabla DAT del año elegido';
+      if(d.ok)showMsg('msg-vaciar-dat',`✓ Se borraron ${d.borrados.toLocaleString('es-AR')} registros de ${tabla}.`,'ok');
+      else showMsg('msg-vaciar-dat','✗ '+d.error,'err');
+    }).catch(e=>{btn.disabled=false;btn.textContent='🗑️ Vaciar tabla DAT del año elegido';showMsg('msg-vaciar-dat','Error: '+e.message,'err');});
+});
 
 function uploadXHR(fId,url,pId,bId,wId,mId){
   const file=document.getElementById(fId).files[0];if(!file){showMsg(mId,'Seleccioná un archivo.','warn');return}
