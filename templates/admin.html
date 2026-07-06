@@ -958,13 +958,32 @@ function loadBackup(){
         aHtml+=`<div style="display:flex;align-items:center;justify-content:space-between;padding:.6rem 0;border-bottom:1px solid var(--border)">
           <div><strong style="font-family:var(--mono);font-size:.82rem">${k}_backup.db</strong>
           <div style="font-size:.7rem;color:var(--muted)">${v.size_mb} MB — ${v.fecha}</div></div>
-          <a href="/api/admin/backup/download/${k}" class="download-btn">⬇ Descargar</a></div>`;
+          <div style="display:flex;gap:.5rem">
+          <a href="/api/admin/backup/download/${k}" class="download-btn">⬇ Descargar</a>
+          <button class="btn btn-danger btn-sm" onclick="restaurarBackup('${k}')">♻ Restaurar</button>
+          <button class="btn btn-danger btn-sm" onclick="eliminarBackup('${k}')">🗑 Eliminar</button>
+          </div></div>`;
       }else{
         aHtml+=`<div style="padding:.6rem 0;border-bottom:1px solid var(--border);font-size:.8rem;color:var(--muted)">${k}_backup.db — Sin backup disponible</div>`;
       }
     }
     aEl.innerHTML=aHtml||'<div style="color:var(--muted);font-size:.82rem">Sin archivos de backup.</div>';
   });
+}
+function restaurarBackup(clave){
+  if(!confirm(`¿Restaurar el backup de '${clave}'? Esto reemplaza la base de datos en uso ahora mismo por la del backup.`))return;
+  fetch('/api/admin/backup/restaurar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({clave})})
+    .then(r=>r.json()).then(d=>{
+      if(d.ok){showMsg('msg-backup',`✓ Se restauró '${clave}' correctamente.`,'ok');loadBackup();}
+      else showMsg('msg-backup','✗ '+d.error,'err');
+    }).catch(e=>showMsg('msg-backup','Error: '+e.message,'err'));
+}
+function eliminarBackup(clave){
+  if(!confirm(`¿Eliminar el backup de '${clave}'?`))return;
+  fetch(`/api/admin/backup/${clave}`,{method:'DELETE'}).then(r=>r.json()).then(d=>{
+    if(d.ok){showMsg('msg-backup',`✓ Backup de '${clave}' eliminado.`,'ok');loadBackup();}
+    else showMsg('msg-backup','✗ '+d.error,'err');
+  }).catch(e=>showMsg('msg-backup','Error: '+e.message,'err'));
 }
 document.addEventListener('DOMContentLoaded',()=>{
   const btn=document.getElementById('btn-backup-manual');
