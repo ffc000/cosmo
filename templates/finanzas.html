@@ -269,6 +269,7 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
             <div class="stat-card" id="dash-proyeccion-card" style="display:none"><div class="stat-val" id="dash-proyeccion">—</div><div class="stat-lbl">Proyección de cierre</div></div>
           </div>
           <div id="dash-sincat" style="display:none" class="alert alert-warn"></div>
+          <div id="dash-tarjetas-pago" style="margin-top:.6rem"></div>
           <div class="form-row" style="margin-top:.6rem;max-width:320px">
             <div>
               <label>Presupuesto total del mes</label>
@@ -363,14 +364,23 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
       <!-- Panel: Carga manual -->
       <div class="panel" id="panel-manual">
         <div class="card" style="max-width:480px">
-          <div class="card-title">Cargar gasto manual (transferencia, efectivo)</div>
+          <div class="card-title">Cargar gasto o pago manual</div>
+          <div class="form-row">
+            <div><label>Tipo</label>
+              <select id="man-tipo" onchange="document.getElementById('man-tarjeta-row').style.display=this.value==='pago'?'flex':'none';document.getElementById('man-cat-row').style.display=this.value==='pago'?'none':'flex';">
+                <option value="consumo">Gasto (transferencia, efectivo)</option>
+                <option value="pago">Pago de tarjeta</option>
+              </select>
+            </div>
+          </div>
           <div class="form-row"><div><label>Fecha</label><input type="date" id="man-fecha"></div></div>
           <div class="form-row"><div><label>Descripción</label><input type="text" id="man-desc" placeholder="Ej: Transferencia alquiler"></div></div>
           <div class="form-row cols2">
             <div><label>Monto (ARS)</label><input type="number" id="man-monto" placeholder="0"></div>
-            <div><label>Categoría</label><select id="man-categoria"></select></div>
+            <div id="man-cat-row"><label>Categoría</label><select id="man-categoria"></select></div>
+            <div id="man-tarjeta-row" style="display:none"><label>Tarjeta</label><select id="man-tarjeta"></select></div>
           </div>
-          <button class="btn btn-fin btn-full" style="margin-top:.6rem" onclick="guardarManual()">Guardar gasto</button>
+          <button class="btn btn-fin btn-full" style="margin-top:.6rem" onclick="guardarManual()">Guardar</button>
           <div id="man-estado" style="margin-top:.6rem"></div>
         </div>
       </div>
@@ -600,6 +610,19 @@ async function cargarDashboard() {
   cargarProyeccion(mes);
   cargarAtipicos(mes);
   cargarEvolucionAnual(mes);
+  cargarEstadoPagoTarjetas(mes);
+}
+
+async function cargarEstadoPagoTarjetas(mes) {
+  const cont = document.getElementById('dash-tarjetas-pago');
+  const d = await (await fetch(`/api/finanzas/tarjetas/estado_pago?mes=${mes || mesActual_()}`)).json();
+  if (!d.ok || !d.rows.length) { cont.innerHTML = ''; return; }
+  cont.innerHTML = d.rows.map(t => {
+    if (t.saldado) {
+      return `<div class="alert alert-ok" style="margin-bottom:.4rem">✓ ${esc(t.nombre)}: pagado (${fmtMoney(t.monto_a_pagar)})</div>`;
+    }
+    return `<div class="alert alert-danger" style="margin-bottom:.4rem">⚠ ${esc(t.nombre)}: falta pagar ${fmtMoney(t.falta)} de ${fmtMoney(t.monto_a_pagar)} (ya pagaste ${fmtMoney(t.pagado)})</div>`;
+  }).join('');
 }
 
 async function cargarProyeccion(mes) {
@@ -889,26 +912,32 @@ async function cargarCategoriasSelect() {
   if (!d.ok) return;
   document.getElementById('man-categoria').innerHTML =
     '<option value="">— sin categoría —</option>' + d.rows.map(c => `<option value="${c.id}">${c.nombre}</option>`).join('');
+  const dt = await (await fetch('/api/finanzas/tarjetas')).json();
+  if (dt.ok) {
+    document.getElementById('man-tarjeta').innerHTML = dt.rows.map(t => `<option value="${t.id}">${esc(t.nombre)}</option>`).join('');
+  }
   if (!document.getElementById('man-fecha').value) {
     document.getElementById('man-fecha').value = new Date().toISOString().substring(0, 10);
   }
 }
 
 async function guardarManual() {
+  const tipo = document.getElementById('man-tipo').value;
   const fecha = document.getElementById('man-fecha').value;
   const descripcion = document.getElementById('man-desc').value.trim();
   const monto_ars = parseFloat(document.getElementById('man-monto').value);
   const categoria_id = document.getElementById('man-categoria').value || null;
+  const tarjeta_id = document.getElementById('man-tarjeta').value || null;
   const estado = document.getElementById('man-estado');
   if (!fecha || !descripcion || isNaN(monto_ars)) {
     estado.innerHTML = '<div class="alert alert-danger">Completá fecha, descripción y monto.</div>'; return;
   }
   const d = await (await fetch('/api/finanzas/movimiento_manual', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ fecha, descripcion, monto_ars, categoria_id })
+    body: JSON.stringify({ fecha, descripcion, monto_ars, categoria_id, tipo, tarjeta_id })
   })).json();
   if (d.ok) {
-    estado.innerHTML = '<div class="alert alert-ok">✓ Gasto guardado.</div>';
+    estado.innerHTML = '<div class="alert alert-ok">✓ Guardado.</div>';
     document.getElementById('man-desc').value = '';
     document.getElementById('man-monto').value = '';
   } else {
@@ -1000,9 +1029,30 @@ async function cargarTarjetasList() {
   if (!d.ok) return;
   const cont = document.getElementById('tarjetas-list');
   const reales = d.rows.filter(t => t.motor !== 'manual');
+  const mesActual = mesActual_();
   cont.innerHTML = reales.length
-    ? reales.map(t => `<div class="cat-row"><div class="cat-info"><strong>${t.nombre}</strong> <span style="color:var(--muted);font-size:.75rem">(${t.motor}${t.dia_cierre ? ', cierra el ' + t.dia_cierre : ''})</span></div></div>`).join('')
+    ? reales.map(t => `
+      <div class="cat-row">
+        <div class="cat-info"><strong>${esc(t.nombre)}</strong> <span style="color:var(--muted);font-size:.75rem">(${t.motor}${t.dia_cierre ? ', cierra el ' + t.dia_cierre : ''})</span></div>
+        <div style="display:flex;align-items:center;gap:.4rem">
+          <label style="font-size:.72rem;color:var(--muted)">A pagar este mes</label>
+          <input type="number" id="monto-tarjeta-${t.id}" placeholder="0" style="width:110px">
+          <button class="btn btn-fin btn-sm" onclick="guardarMontoTarjeta('${t.id}')">Guardar</button>
+        </div>
+      </div>`).join('')
     : '<p style="color:var(--muted);font-size:.82rem">Sin tarjetas configuradas todavía.</p>';
+}
+
+function mesActual_(){ return new Date().toISOString().substring(0,7); }
+
+async function guardarMontoTarjeta(tid) {
+  const monto_a_pagar = parseFloat(document.getElementById(`monto-tarjeta-${tid}`).value);
+  if (isNaN(monto_a_pagar)) return;
+  await fetch(`/api/finanzas/tarjetas/${tid}/monto`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ mes: mesActual_(), monto_a_pagar })
+  });
+  cargarEstadoPagoTarjetas();
 }
 
 async function crearTarjeta() {
