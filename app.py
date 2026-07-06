@@ -2000,6 +2000,8 @@ def vua_informe_download(job_id):
     # 2. Fallback: buscar en disco por job_id en el nombre del archivo
     #    (cubre reinicio del servidor entre generación y descarga)
     import glob
+    if not re.match(r'^[a-zA-Z0-9]{1,32}$', job_id or ""):
+        return jsonify({"ok": False, "error": "job_id inválido"}), 400
     patron = os.path.join(OUTPUT_FOLDER, f"*{job_id}*.docx")
     archivos = sorted(glob.glob(patron), key=os.path.getmtime, reverse=True)
     if archivos and os.path.exists(archivos[0]):
@@ -2951,6 +2953,8 @@ def senasa_informe_download(job_id):
         return send_file(job["files"][0], as_attachment=True,
             download_name=os.path.basename(job["files"][0]),
             mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    if not re.match(r'^[a-zA-Z0-9]{1,32}$', job_id or ""):
+        return jsonify({"ok": False, "error": "job_id inválido"}), 400
     archivos = sorted(glob.glob(os.path.join(OUTPUT_FOLDER, f"*{job_id}*.docx")), key=os.path.getmtime, reverse=True)
     if archivos:
         return send_file(archivos[0], as_attachment=True, download_name=os.path.basename(archivos[0]),
