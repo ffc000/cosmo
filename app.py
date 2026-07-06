@@ -47,7 +47,7 @@ if not _secret:
     raise RuntimeError("SECRET_KEY no está definida en las variables de entorno. "
                        "Exportá una clave aleatoria antes de iniciar la aplicación.")
 app.secret_key = _secret
-app.permanent_session_lifetime = timedelta(hours=4)
+app.permanent_session_lifetime = timedelta(minutes=10)
 app.config['MAX_CONTENT_LENGTH'] = None  # Sin límite en Flask — nginx maneja con client_max_body_size 2G
 app.config['SESSION_COOKIE_SECURE'] = True     # solo se envía por HTTPS
 app.config['SESSION_COOKIE_HTTPONLY'] = True   # no accesible desde JS
@@ -101,7 +101,7 @@ def login_required(f):
         if token and token_revocado(token):
             session.clear(); return redirect(url_for("login"))
         last = session.get("last_active")
-        if last and datetime.now().timestamp() - last > 14400:
+        if last and datetime.now().timestamp() - last > 600:
             session.clear(); return redirect(url_for("login"))
         session["last_active"] = datetime.now().timestamp()
         if token:
