@@ -243,6 +243,48 @@ _threading.Thread(target=_chequear_recordatorio_servicios, daemon=True).start()
 
 # ── Repositorio de documentos por módulo (contexto para la IA) ─────────────────
 MODULOS_REPOSITORIO = ("vua", "senasa", "sintia")
+MODULOS_CON_CRONOLOGIA = {"vua": "vua_cronologia", "senasa": "senasa_cronologia"}
+
+def _extraer_cronologia_de_texto(texto, modulo):
+    """Le pide a la IA que identifique hechos con fecha (reuniones, hitos,
+    decisiones) dentro de un documento y devuelve una lista de entradas
+    {fecha, actividad, participantes} para sumar a la cronología del módulo."""
+    import anthropic, httpx
+    client = anthropic.Anthropic(api_key=get_api_key(), http_client=httpx.Client(follow_redirects=True))
+    prompt = (
+        "Del siguiente documento, identificá únicamente los hechos que tengan una fecha concreta "
+        "asociada (reuniones, hitos, decisiones, entregas, cambios de estado). Ignorá contenido sin fecha. "
+        "Devolvé SOLO un JSON: una lista de objetos con las claves \"fecha\" (formato AAAA-MM-DD si se puede "
+        "inferir, si no la fecha tal como aparece en el texto), \"actividad\" (resumen breve, una oración) y "
+        "\"participantes\" (si se mencionan, si no cadena vacía). Si no hay ningún hecho con fecha, devolvé [].\n\n"
+        f"Documento:\n{texto[:12000]}"
+    )
+    msg = client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=2000,
+        system="Respondés solo con JSON válido (una lista), sin texto adicional ni markdown.",
+        messages=[{"role": "user", "content": prompt}])
+    import json as _json
+    try:
+        entradas = _json.loads(msg.content[0].text.strip())
+        return entradas if isinstance(entradas, list) else []
+    except Exception:
+        return []
+
+def _agregar_entradas_cronologia(con, tabla, entradas, fuente):
+    max_orden = con.execute(f"SELECT MAX(orden) FROM {tabla}").fetchone()[0] or 0
+    agregadas = 0
+    for e in entradas:
+        actividad = (e.get("actividad") or "").strip()
+        if not actividad:
+            continue
+        max_orden += 1
+        con.execute(
+            f"INSERT INTO {tabla} (fecha, actividad, participantes, estado, orden, creado, modificado) "
+            f"VALUES (?,?,?,?,?,datetime('now'),datetime('now'))",
+            (e.get("fecha", "A definir"), f"{actividad} (fuente: {fuente})",
+             e.get("participantes", ""), "Pendiente", max_orden))
+        agregadas += 1
+    return agregadas
+
 
 def _extraer_texto_docx(file_storage):
     """Extrae texto plano (párrafos + tablas) de un .docx subido."""
@@ -308,10 +350,23 @@ def repositorio_upload(modulo):
     con = sqlite3.connect(HIST_DB)
     con.execute("INSERT INTO doc_repositorio (modulo, nombre_archivo, contenido, subido_por) VALUES (?,?,?,?)",
         (modulo, f.filename, texto, session.get("username", "?")))
-    con.commit(); con.close()
-    logging.info(f"REPOSITORIO UPLOAD | modulo={modulo} | user={session.get('username')} | archivo={f.filename}")
-    notificar_telegram(f"📁 Documento '{f.filename}' agregado al repositorio de {modulo} por {session.get('username')}")
-    return jsonify({"ok": True})
+    con.commit()
+    agregadas_cronologia = 0
+    if modulo in MODULOS_CON_CRONOLOGIA:
+        try:
+            entradas = _extraer_cronologia_de_texto(texto, modulo)
+            agregadas_cronologia = _agregar_entradas_cronologia(
+                con, MODULOS_CON_CRONOLOGIA[modulo], entradas, f.filename)
+            con.commit()
+        except Exception:
+            logging.exception(f"Error extrayendo cronología de '{f.filename}' ({modulo})")
+    con.close()
+    logging.info(f"REPOSITORIO UPLOAD | modulo={modulo} | user={session.get('username')} | archivo={f.filename} | cronologia+={agregadas_cronologia}")
+    msg = f"📁 Documento '{f.filename}' agregado al repositorio de {modulo} por {session.get('username')}"
+    if agregadas_cronologia:
+        msg += f"\n🗓️ Se sumaron {agregadas_cronologia} hito(s) a la cronología."
+    notificar_telegram(msg)
+    return jsonify({"ok": True, "agregadas_cronologia": agregadas_cronologia})
 
 @app.route("/api/repositorio/<modulo>/<int:doc_id>", methods=["DELETE"])
 @login_required
