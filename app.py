@@ -803,6 +803,10 @@ def init_historial():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         fecha TEXT DEFAULT (datetime('now')), origen TEXT, resultados TEXT
     )""")
+    con.execute("""CREATE TABLE IF NOT EXISTS fin_tarjetas_montos (
+        tarjeta_id TEXT NOT NULL, mes TEXT NOT NULL, monto_a_pagar REAL DEFAULT 0,
+        UNIQUE(tarjeta_id, mes)
+    )""")
     cur.execute("SELECT COUNT(*) FROM fin_servicios")
     if cur.fetchone()[0] == 0:
         for i, (nombre, patron) in enumerate([
@@ -6085,6 +6089,51 @@ def api_fin_tarjeta_crear():
     return jsonify({"ok": True, "id": tid})
 
 
+@app.route("/api/finanzas/tarjetas/<tid>/monto", methods=["POST"])
+@login_required
+@finanzas_owner_required
+def api_fin_tarjeta_monto(tid):
+    """Fija cuánto hay que pagar de esta tarjeta en un mes dado (del resumen: total o pago mínimo)."""
+    data = request.json or {}
+    mes = data.get("mes") or date.today().isoformat()[:7]
+    monto = data.get("monto_a_pagar")
+    if monto is None:
+        return jsonify({"ok": False, "error": "Falta el monto"})
+    con = sqlite3.connect(HIST_DB)
+    con.execute(
+        "INSERT INTO fin_tarjetas_montos (tarjeta_id, mes, monto_a_pagar) VALUES (?,?,?) "
+        "ON CONFLICT(tarjeta_id, mes) DO UPDATE SET monto_a_pagar=excluded.monto_a_pagar",
+        (tid, mes, float(monto)))
+    con.commit(); con.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/finanzas/tarjetas/estado_pago")
+@login_required
+@finanzas_owner_required
+def api_fin_tarjetas_estado_pago():
+    """Para cada tarjeta con un monto a pagar fijado este mes: cuánto se
+    pagó ya (movimientos tipo='pago' de esa tarjeta en el mes) y cuánto falta."""
+    mes = request.args.get("mes") or date.today().isoformat()[:7]
+    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
+    rows = con.execute(
+        "SELECT t.id as tarjeta_id, t.nombre, m.monto_a_pagar, "
+        "COALESCE((SELECT SUM(monto_ars) FROM fin_movimientos "
+        " WHERE tarjeta_id=t.id AND tipo='pago' AND substr(fecha,1,7)=?), 0) as pagado "
+        "FROM fin_tarjetas t JOIN fin_tarjetas_montos m ON m.tarjeta_id=t.id AND m.mes=? "
+        "WHERE m.monto_a_pagar > 0", (mes, mes)).fetchall()
+    con.close()
+    resultado = []
+    for r in rows:
+        falta = round(r["monto_a_pagar"] - r["pagado"], 2)
+        resultado.append({
+            "tarjeta_id": r["tarjeta_id"], "nombre": r["nombre"],
+            "monto_a_pagar": round(r["monto_a_pagar"], 2), "pagado": round(r["pagado"], 2),
+            "falta": max(falta, 0), "saldado": falta <= 0,
+        })
+    return jsonify({"ok": True, "mes": mes, "rows": resultado})
+
+
 @app.route("/api/finanzas/upload", methods=["POST"])
 @login_required
 @finanzas_owner_required
@@ -6196,18 +6245,25 @@ def api_fin_confirmar():
 @login_required
 @finanzas_owner_required
 def api_fin_movimiento_manual():
-    """Carga manual de un gasto (ej. transferencia bancaria) sin pasar por un PDF."""
+    """Carga manual de un gasto (ej. transferencia bancaria) o de un pago
+    hecho sobre una tarjeta, sin pasar por un PDF."""
     data = request.json or {}
     fecha = data.get("fecha")
     descripcion = (data.get("descripcion") or "").strip()
     monto_ars = data.get("monto_ars")
     categoria_id = data.get("categoria_id")
+    tipo = data.get("tipo", "consumo")
+    if tipo not in ("consumo", "pago"):
+        tipo = "consumo"
+    tarjeta_id = data.get("tarjeta_id") if tipo == "pago" else None
     forzar = bool(data.get("forzar"))
     if not fecha or not descripcion or monto_ars is None:
         return jsonify({"ok": False, "error": "Faltan fecha, descripción o monto"})
+    if tipo == "pago" and not tarjeta_id:
+        return jsonify({"ok": False, "error": "Elegí a qué tarjeta corresponde el pago"})
 
     if not forzar:
-        dups = fin.buscar_posible_duplicado(HIST_DB, "manual", fecha, float(monto_ars))
+        dups = fin.buscar_posible_duplicado(HIST_DB, tarjeta_id or "manual", fecha, float(monto_ars))
         if dups:
             return jsonify({"ok": False, "posible_duplicado": True, "coincidencias": dups,
                              "error": "Ya existe un movimiento con monto y fecha similares. "
@@ -6216,13 +6272,14 @@ def api_fin_movimiento_manual():
     mov = {
         "fecha": fecha, "descripcion": descripcion, "comprobante": "",
         "monto_ars": float(monto_ars), "monto_usd": 0.0,
-        "cuota_actual": None, "cuota_total": None, "tipo": "consumo",
+        "cuota_actual": None, "cuota_total": None, "tipo": tipo,
     }
-    guardados = fin.guardar_movimientos(HIST_DB, "manual", None, [mov], origen="manual")
-    cat_final = categoria_id or fin.categorizar(HIST_DB, descripcion)
-    if cat_final:
-        fin.recategorizar_movimiento(HIST_DB, guardados[0]["id"], cat_final, aprender=False)
-        guardados[0]["categoria_id"] = cat_final
+    guardados = fin.guardar_movimientos(HIST_DB, tarjeta_id or "manual", None, [mov], origen="manual")
+    if tipo == "consumo":
+        cat_final = categoria_id or fin.categorizar(HIST_DB, descripcion)
+        if cat_final:
+            fin.recategorizar_movimiento(HIST_DB, guardados[0]["id"], cat_final, aprender=False)
+            guardados[0]["categoria_id"] = cat_final
     return jsonify({"ok": True, "movimiento": guardados[0]})
 
 
