@@ -496,6 +496,7 @@ function uploadTXT(fId,tabla,mId,lId,bId,anio,modo){
   logBox.classList.add("visible");logBox.innerHTML="";
   const xhr=new XMLHttpRequest();
   xhr.open("POST","/api/update-csv");
+  xhr.setRequestHeader("X-CSRFToken", document.querySelector('meta[name="csrf-token"]').content);
   xhr.upload.addEventListener("progress",e=>{
     if(e.lengthComputable){const p=Math.round(e.loaded/e.total*100);btn.innerHTML=`<span class="spinner"></span> Subiendo... ${p}%`;}
   });
