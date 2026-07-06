@@ -241,6 +241,63 @@ def _chequear_recordatorio_servicios():
 
 _threading.Thread(target=_chequear_recordatorio_servicios, daemon=True).start()
 
+# ── Backup semanal ───────────────────────────────────────────────────────────
+BACKUP_DIR = "/data/backups"
+os.makedirs(BACKUP_DIR, exist_ok=True)
+BACKUP_FUENTES = {"pad": lambda: DB_PATH, "historial": lambda: HIST_DB}
+
+def _ejecutar_backup(origen="manual"):
+    import shutil, json as _json
+    resultados = {}
+    for clave, get_path in BACKUP_FUENTES.items():
+        src = get_path()
+        dest = os.path.join(BACKUP_DIR, f"{clave}_backup.db")
+        try:
+            if not os.path.exists(src):
+                raise FileNotFoundError("el archivo origen no existe")
+            shutil.copy2(src, dest)
+            resultados[clave] = {"ok": True, "size_mb": round(os.path.getsize(dest) / (1024 * 1024), 2)}
+        except Exception as e:
+            resultados[clave] = {"ok": False, "error": str(e)}
+    con = sqlite3.connect(HIST_DB)
+    con.execute("INSERT INTO backups (origen, resultados) VALUES (?,?)", (origen, _json.dumps(resultados)))
+    con.commit(); con.close()
+    todo_ok = all(r["ok"] for r in resultados.values())
+    logging.info(f"BACKUP {origen} | ok={todo_ok} | {resultados}")
+    if todo_ok:
+        notificar_telegram(f"💾 Backup {origen} OK — " + ", ".join(f"{k}: {v['size_mb']} MB" for k, v in resultados.items()))
+    else:
+        errores = ", ".join(f"{k}: {v.get('error')}" for k, v in resultados.items() if not v["ok"])
+        notificar_telegram(f"⚠️ Backup {origen} con errores — {errores}")
+    return resultados, todo_ok
+
+def _proximo_backup_domingo():
+    hoy = datetime.now()
+    dias_hasta_domingo = (6 - hoy.weekday()) % 7
+    candidato = (hoy + timedelta(days=dias_hasta_domingo)).replace(hour=2, minute=0, second=0, microsecond=0)
+    if candidato <= hoy:
+        candidato += timedelta(days=7)
+    return candidato.strftime("%Y-%m-%d %H:%M")
+
+def _chequear_backup_automatico():
+    while True:
+        try:
+            hoy = datetime.now()
+            if hoy.weekday() == 6 and hoy.hour == 2:  # domingo 02:xx
+                semana = hoy.strftime("%Y-W%W")
+                con = sqlite3.connect(HIST_DB)
+                row = con.execute(
+                    "SELECT fecha FROM backups WHERE origen='auto' ORDER BY fecha DESC LIMIT 1").fetchone()
+                ya_corrio_esta_semana = row and datetime.strptime(row[0][:19], "%Y-%m-%d %H:%M:%S").strftime("%Y-W%W") == semana
+                con.close()
+                if not ya_corrio_esta_semana:
+                    _ejecutar_backup(origen="auto")
+        except Exception:
+            logging.exception("Error en backup automático semanal")
+        _threading.Event().wait(1800)  # revisa cada 30 min
+
+_threading.Thread(target=_chequear_backup_automatico, daemon=True).start()
+
 # ── Repositorio de documentos por módulo (contexto para la IA) ─────────────────
 MODULOS_REPOSITORIO = ("vua", "senasa", "sintia")
 MODULOS_CON_CRONOLOGIA = {"vua": "vua_cronologia", "senasa": "senasa_cronologia"}
@@ -742,6 +799,10 @@ def init_historial():
     con.execute("""CREATE TABLE IF NOT EXISTS fin_servicios_estado (
         clave TEXT PRIMARY KEY, valor TEXT
     )""")
+    con.execute("""CREATE TABLE IF NOT EXISTS backups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        fecha TEXT DEFAULT (datetime('now')), origen TEXT, resultados TEXT
+    )""")
     cur.execute("SELECT COUNT(*) FROM fin_servicios")
     if cur.fetchone()[0] == 0:
         for i, (nombre, patron) in enumerate([
@@ -1004,6 +1065,48 @@ def limpiar_tabla():
     logging.info(f"LIMPIAR TABLA | tabla={tabla} | user={session.get('username')} | borrados={total_antes}")
     notificar_telegram(f"🗑️ Se vació la tabla {tabla} ({total_antes:,} registros borrados) por {session.get('username')}")
     return jsonify({"ok": True, "borrados": total_antes})
+
+@app.route("/api/admin/backup/estado")
+@login_required
+@admin_required("bd")
+def api_backup_estado():
+    import json as _json
+    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
+    row = con.execute("SELECT fecha, resultados FROM backups ORDER BY fecha DESC LIMIT 1").fetchone()
+    con.close()
+    ultimo = None
+    if row:
+        ultimo = {"fecha": row["fecha"], "resultados": _json.loads(row["resultados"])}
+    archivos = {}
+    for clave in BACKUP_FUENTES:
+        path = os.path.join(BACKUP_DIR, f"{clave}_backup.db")
+        if os.path.exists(path):
+            archivos[clave] = {
+                "size_mb": round(os.path.getsize(path) / (1024 * 1024), 2),
+                "fecha": datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y-%m-%d %H:%M"),
+            }
+        else:
+            archivos[clave] = None
+    return jsonify({"ok": True, "ultimo": ultimo, "archivos": archivos, "proximo": _proximo_backup_domingo()})
+
+@app.route("/api/admin/backup/ejecutar", methods=["POST"])
+@login_required
+@admin_required("bd")
+@limiter.limit("5 per hour", error_message="Demasiados intentos de backup manual.")
+def api_backup_ejecutar():
+    resultados, todo_ok = _ejecutar_backup(origen="manual")
+    return jsonify({"ok": todo_ok, "resultados": resultados})
+
+@app.route("/api/admin/backup/download/<clave>")
+@login_required
+@admin_required("bd")
+def api_backup_download(clave):
+    if clave not in BACKUP_FUENTES:
+        return jsonify({"ok": False, "error": "Backup no válido"}), 404
+    path = os.path.join(BACKUP_DIR, f"{clave}_backup.db")
+    if not os.path.exists(path):
+        return jsonify({"ok": False, "error": "No hay backup disponible"}), 404
+    return send_file(path, as_attachment=True, download_name=f"{clave}_backup.db")
 
 # ── Update CSV (async) ─────────────────────────────────────────────────────────
 @app.route("/api/update-csv", methods=["POST"])
