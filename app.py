@@ -299,6 +299,42 @@ def _chequear_backup_automatico():
 _threading.Thread(target=_chequear_backup_automatico, daemon=True).start()
 
 # ── Repositorio de documentos por módulo (contexto para la IA) ─────────────────
+def _validar_fecha_ddmmaaaa(s):
+    """True si s es una fecha real en formato dd/mm/aaaa (o el sentinel 'A definir')."""
+    if s == "A definir":
+        return True
+    m = re.match(r'^(\d{2})/(\d{2})/(\d{4})$', s or "")
+    if not m:
+        return False
+    d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    try:
+        date(y, mo, d)
+        return True
+    except ValueError:
+        return False
+
+def _normalizar_fecha_a_ddmmaaaa(s):
+    """Intenta convertir distintos formatos comunes (aaaa-mm-dd, aaaa/mm/dd, dd-mm-aaaa)
+    al estándar dd/mm/aaaa. Si no puede, devuelve 'A definir'."""
+    s = (s or "").strip()
+    if not s:
+        return "A definir"
+    if _validar_fecha_ddmmaaaa(s):
+        return s
+    m = re.match(r'^(\d{4})[-/](\d{2})[-/](\d{2})$', s)
+    if m:
+        y, mo, d = m.groups()
+        cand = f"{d}/{mo}/{y}"
+        if _validar_fecha_ddmmaaaa(cand):
+            return cand
+    m = re.match(r'^(\d{2})-(\d{2})-(\d{4})$', s)
+    if m:
+        d, mo, y = m.groups()
+        cand = f"{d}/{mo}/{y}"
+        if _validar_fecha_ddmmaaaa(cand):
+            return cand
+    return "A definir"
+
 MODULOS_REPOSITORIO = ("vua", "senasa", "sintia")
 MODULOS_CON_CRONOLOGIA = {"vua": "vua_cronologia", "senasa": "senasa_cronologia"}
 
@@ -311,7 +347,7 @@ def _extraer_cronologia_de_texto(texto, modulo):
     prompt = (
         "Del siguiente documento, identificá únicamente los hechos que tengan una fecha concreta "
         "asociada (reuniones, hitos, decisiones, entregas, cambios de estado). Ignorá contenido sin fecha. "
-        "Devolvé SOLO un JSON: una lista de objetos con las claves \"fecha\" (formato AAAA-MM-DD si se puede "
+        "Devolvé SOLO un JSON: una lista de objetos con las claves \"fecha\" (formato DD/MM/AAAA si se puede "
         "inferir, si no la fecha tal como aparece en el texto), \"actividad\" (resumen breve, una oración) y "
         "\"participantes\" (si se mencionan, si no cadena vacía). Si no hay ningún hecho con fecha, devolvé [].\n\n"
         f"Documento:\n{texto[:12000]}"
@@ -319,11 +355,14 @@ def _extraer_cronologia_de_texto(texto, modulo):
     msg = client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=2000,
         system="Respondés solo con JSON válido (una lista), sin texto adicional ni markdown.",
         messages=[{"role": "user", "content": prompt}])
-    import json as _json
+    import json as _json, re as _re
+    texto_resp = msg.content[0].text.strip()
+    texto_resp = _re.sub(r'^```(?:json)?\s*|\s*```$', '', texto_resp, flags=_re.MULTILINE).strip()
     try:
-        entradas = _json.loads(msg.content[0].text.strip())
+        entradas = _json.loads(texto_resp)
         return entradas if isinstance(entradas, list) else []
     except Exception:
+        logging.error(f"No se pudo parsear JSON de cronología. Respuesta cruda: {texto_resp[:500]}")
         return []
 
 def _agregar_entradas_cronologia(con, tabla, entradas, fuente):
@@ -334,10 +373,11 @@ def _agregar_entradas_cronologia(con, tabla, entradas, fuente):
         if not actividad:
             continue
         max_orden += 1
+        fecha = _normalizar_fecha_a_ddmmaaaa(e.get("fecha", ""))
         con.execute(
             f"INSERT INTO {tabla} (fecha, actividad, participantes, estado, orden, creado, modificado) "
             f"VALUES (?,?,?,?,?,datetime('now'),datetime('now'))",
-            (e.get("fecha", "A definir"), f"{actividad} (fuente: {fuente})",
+            (fecha, f"{actividad} (fuente: {fuente})",
              e.get("participantes", ""), "Pendiente", max_orden))
         agregadas += 1
     return agregadas
@@ -398,32 +438,40 @@ def repositorio_upload(modulo):
     f = request.files["archivo"]
     if not f.filename.lower().endswith(".docx"):
         return jsonify({"ok": False, "error": "Por ahora solo se aceptan archivos Word (.docx)"})
+    data_bytes = f.read()
     try:
-        texto = _extraer_texto_docx(f)
+        texto = _extraer_texto_docx(io.BytesIO(data_bytes))
     except Exception as e:
         return jsonify({"ok": False, "error": f"No se pudo leer el documento: {e}"})
     if not texto.strip():
         return jsonify({"ok": False, "error": "El documento no tiene texto extraíble"})
+    repo_dir = os.path.join("/data/repositorio", modulo)
+    os.makedirs(repo_dir, exist_ok=True)
+    ruta_archivo = os.path.join(repo_dir, f"{uuid.uuid4().hex[:12]}_{f.filename}")
+    with open(ruta_archivo, "wb") as out:
+        out.write(data_bytes)
     con = sqlite3.connect(HIST_DB)
-    con.execute("INSERT INTO doc_repositorio (modulo, nombre_archivo, contenido, subido_por) VALUES (?,?,?,?)",
-        (modulo, f.filename, texto, session.get("username", "?")))
+    con.execute("INSERT INTO doc_repositorio (modulo, nombre_archivo, contenido, ruta_archivo, subido_por) VALUES (?,?,?,?,?)",
+        (modulo, f.filename, texto, ruta_archivo, session.get("username", "?")))
     con.commit()
     agregadas_cronologia = 0
+    error_cronologia = None
     if modulo in MODULOS_CON_CRONOLOGIA:
         try:
             entradas = _extraer_cronologia_de_texto(texto, modulo)
             agregadas_cronologia = _agregar_entradas_cronologia(
                 con, MODULOS_CON_CRONOLOGIA[modulo], entradas, f.filename)
             con.commit()
-        except Exception:
+        except Exception as e:
             logging.exception(f"Error extrayendo cronología de '{f.filename}' ({modulo})")
+            error_cronologia = str(e)
     con.close()
     logging.info(f"REPOSITORIO UPLOAD | modulo={modulo} | user={session.get('username')} | archivo={f.filename} | cronologia+={agregadas_cronologia}")
     msg = f"📁 Documento '{f.filename}' agregado al repositorio de {modulo} por {session.get('username')}"
     if agregadas_cronologia:
         msg += f"\n🗓️ Se sumaron {agregadas_cronologia} hito(s) a la cronología."
     notificar_telegram(msg)
-    return jsonify({"ok": True, "agregadas_cronologia": agregadas_cronologia})
+    return jsonify({"ok": True, "agregadas_cronologia": agregadas_cronologia, "error_cronologia": error_cronologia})
 
 @app.route("/api/repositorio/<modulo>/<int:doc_id>", methods=["DELETE"])
 @login_required
@@ -431,9 +479,26 @@ def repositorio_delete(modulo, doc_id):
     if modulo not in MODULOS_REPOSITORIO or modulo not in session.get("modulos", []):
         return jsonify({"ok": False, "error": "Módulo no habilitado"}), 403
     con = sqlite3.connect(HIST_DB)
+    row = con.execute("SELECT ruta_archivo FROM doc_repositorio WHERE id=? AND modulo=?", (doc_id, modulo)).fetchone()
     con.execute("DELETE FROM doc_repositorio WHERE id=? AND modulo=?", (doc_id, modulo))
     con.commit(); con.close()
+    if row and row[0] and os.path.exists(row[0]):
+        try: os.remove(row[0])
+        except Exception: pass
     return jsonify({"ok": True})
+
+@app.route("/api/repositorio/<modulo>/<int:doc_id>/download")
+@login_required
+def repositorio_download(modulo, doc_id):
+    if modulo not in MODULOS_REPOSITORIO or modulo not in session.get("modulos", []):
+        return jsonify({"ok": False, "error": "Módulo no habilitado"}), 403
+    con = sqlite3.connect(HIST_DB)
+    row = con.execute("SELECT nombre_archivo, ruta_archivo FROM doc_repositorio WHERE id=? AND modulo=?",
+                       (doc_id, modulo)).fetchone()
+    con.close()
+    if not row or not row[1] or not os.path.exists(row[1]):
+        return jsonify({"ok": False, "error": "El archivo original ya no está disponible"}), 404
+    return send_file(row[1], as_attachment=True, download_name=row[0])
 
 def _limpiar_jobs_viejos():
     """Elimina jobs de más de 2 horas para evitar memory leak."""
@@ -779,9 +844,13 @@ def init_historial():
     )""")
     con.execute("""CREATE TABLE IF NOT EXISTS doc_repositorio (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        modulo TEXT NOT NULL, nombre_archivo TEXT, contenido TEXT,
+        modulo TEXT NOT NULL, nombre_archivo TEXT, contenido TEXT, ruta_archivo TEXT,
         subido_por TEXT, creado TEXT DEFAULT (datetime('now'))
     )""")
+    try:
+        con.execute("ALTER TABLE doc_repositorio ADD COLUMN ruta_archivo TEXT")
+    except sqlite3.OperationalError:
+        pass  # ya existe (instalación previa a este cambio)
     con.execute("""CREATE TABLE IF NOT EXISTS fin_servicios (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         nombre TEXT NOT NULL, patron TEXT, activo INTEGER DEFAULT 1, orden INTEGER DEFAULT 0
@@ -865,7 +934,21 @@ def init_historial():
         con.executemany("INSERT INTO senasa_ejes (nombre, descripcion, estado, orden) VALUES (?,?,?,?)", ejes_seed)
     con.commit(); con.close()
 
+def _migrar_fechas_cronologia():
+    """Normaliza fechas ya guardadas en otros formatos (aaaa-mm-dd, aaaa/mm/dd, etc.)
+    al estándar único dd/mm/aaaa."""
+    con = sqlite3.connect(HIST_DB)
+    for tabla in ("vua_cronologia", "senasa_cronologia"):
+        rows = con.execute(f"SELECT id, fecha FROM {tabla}").fetchall()
+        for rid, fecha in rows:
+            if not _validar_fecha_ddmmaaaa(fecha):
+                nueva = _normalizar_fecha_a_ddmmaaaa(fecha)
+                if nueva != fecha:
+                    con.execute(f"UPDATE {tabla} SET fecha=? WHERE id=?", (nueva, rid))
+    con.commit(); con.close()
+
 init_historial()
+_migrar_fechas_cronologia()
 
 # ── Migración APP_PASS/APP_USER legacy → BD ────────────────────────────────────
 def _migrar_usuarios_legacy():
@@ -1936,7 +2019,11 @@ def vua_informe_download(job_id):
 @modulo_required("vua")
 def vua_cronologia_get():
     con=sqlite3.connect(HIST_DB); con.row_factory=sqlite3.Row
-    rows=[dict(r) for r in con.execute("SELECT * FROM vua_cronologia ORDER BY orden ASC, id ASC").fetchall()]
+    rows=[dict(r) for r in con.execute(
+        "SELECT *, CASE WHEN fecha GLOB '[0-9][0-9]/[0-9][0-9]/[0-9][0-9][0-9][0-9]' "
+        "THEN substr(fecha,7,4)||substr(fecha,4,2)||substr(fecha,1,2) ELSE '00000000' END as _ord "
+        "FROM vua_cronologia ORDER BY (estado='Pendiente') DESC, _ord DESC, id ASC").fetchall()]
+    for r in rows: r.pop("_ord", None)
     con.close(); return jsonify({"ok":True,"rows":rows})
 
 @app.route("/api/vua/cronologia", methods=["POST"])
@@ -1944,11 +2031,12 @@ def vua_cronologia_get():
 @modulo_required("vua")
 def vua_cronologia_add():
     data=request.json or {}
+    fecha = _normalizar_fecha_a_ddmmaaaa(data.get("fecha","A definir")) if data.get("fecha") else "A definir"
     con=sqlite3.connect(HIST_DB); cur=con.cursor()
     cur.execute("SELECT MAX(orden) FROM vua_cronologia")
     max_orden=cur.fetchone()[0] or 0
     cur.execute("INSERT INTO vua_cronologia (fecha,actividad,participantes,estado,orden,creado,modificado) VALUES (?,?,?,?,?,datetime('now'),datetime('now'))",
-        (data.get("fecha","A definir"),data.get("actividad",""),data.get("participantes",""),data.get("estado","Pendiente"),max_orden+1))
+        (fecha,data.get("actividad",""),data.get("participantes",""),data.get("estado","Pendiente"),max_orden+1))
     new_id=cur.lastrowid; con.commit(); con.close()
     return jsonify({"ok":True,"id":new_id})
 
@@ -1957,9 +2045,15 @@ def vua_cronologia_add():
 @modulo_required("vua")
 def vua_cronologia_update(item_id):
     data=request.json or {}
+    if "fecha" in data and not _validar_fecha_ddmmaaaa(data["fecha"]):
+        return jsonify({"ok":False,"error":f"Fecha inválida: '{data['fecha']}'. Formato requerido: dd/mm/aaaa."}), 400
+    campos = {k: v for k, v in data.items() if k in ("fecha","actividad","participantes","estado")}
+    if not campos:
+        return jsonify({"ok":False,"error":"Nada para actualizar"}), 400
+    set_clause = ", ".join(f"{k}=?" for k in campos)
     con=sqlite3.connect(HIST_DB)
-    con.execute("UPDATE vua_cronologia SET fecha=?,actividad=?,participantes=?,estado=?,modificado=datetime('now') WHERE id=?",
-        (data.get("fecha"),data.get("actividad"),data.get("participantes"),data.get("estado"),item_id))
+    con.execute(f"UPDATE vua_cronologia SET {set_clause}, modificado=datetime('now') WHERE id=?",
+        (*campos.values(), item_id))
     con.commit(); con.close(); return jsonify({"ok":True})
 
 @app.route("/api/vua/cronologia/<int:item_id>", methods=["DELETE"])
@@ -2548,7 +2642,10 @@ def senasa_index():
 def senasa_crono_list():
     con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
     rows = [dict(r) for r in con.execute(
-        "SELECT * FROM senasa_cronologia ORDER BY orden ASC, id ASC").fetchall()]
+        "SELECT *, CASE WHEN fecha GLOB '[0-9][0-9]/[0-9][0-9]/[0-9][0-9][0-9][0-9]' "
+        "THEN substr(fecha,7,4)||substr(fecha,4,2)||substr(fecha,1,2) ELSE '00000000' END as _ord "
+        "FROM senasa_cronologia ORDER BY (estado='Pendiente') DESC, _ord DESC, id ASC").fetchall()]
+    for r in rows: r.pop("_ord", None)
     con.close()
     return jsonify({"ok": True, "rows": rows})
 
@@ -2557,11 +2654,12 @@ def senasa_crono_list():
 @modulo_required("senasa")
 def senasa_crono_add():
     data = request.json or {}
+    fecha = _normalizar_fecha_a_ddmmaaaa(data.get("fecha","")) if data.get("fecha") else "A definir"
     con = sqlite3.connect(HIST_DB); cur = con.cursor()
     cur.execute("SELECT MAX(orden) FROM senasa_cronologia")
     max_o = cur.fetchone()[0] or 0
     cur.execute("INSERT INTO senasa_cronologia (fecha,actividad,participantes,estado,orden) VALUES (?,?,?,?,?)",
-        (data.get("fecha",""), data.get("actividad",""),
+        (fecha, data.get("actividad",""),
          data.get("participantes",""), data.get("estado","Pendiente"), max_o+1))
     new_id = cur.lastrowid; con.commit(); con.close()
     return jsonify({"ok": True, "id": new_id})
@@ -2571,10 +2669,15 @@ def senasa_crono_add():
 @modulo_required("senasa")
 def senasa_crono_update(iid):
     data = request.json or {}
+    if "fecha" in data and not _validar_fecha_ddmmaaaa(data["fecha"]):
+        return jsonify({"ok": False, "error": f"Fecha inválida: '{data['fecha']}'. Formato requerido: dd/mm/aaaa."}), 400
+    campos = {k: v for k, v in data.items() if k in ("fecha","actividad","participantes","estado")}
+    if not campos:
+        return jsonify({"ok": False, "error": "Nada para actualizar"}), 400
+    set_clause = ", ".join(f"{k}=?" for k in campos)
     con = sqlite3.connect(HIST_DB)
-    con.execute("UPDATE senasa_cronologia SET fecha=?,actividad=?,participantes=?,estado=?,modificado=datetime('now') WHERE id=?",
-        (data.get("fecha",""), data.get("actividad",""),
-         data.get("participantes",""), data.get("estado","Pendiente"), iid))
+    con.execute(f"UPDATE senasa_cronologia SET {set_clause}, modificado=datetime('now') WHERE id=?",
+        (*campos.values(), iid))
     con.commit(); con.close()
     return jsonify({"ok": True})
 
