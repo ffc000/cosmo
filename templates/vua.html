@@ -649,7 +649,7 @@ function subirRepositorio(modulo){
   estado.innerHTML='<div class="alert alert-info"><span class="spinner"></span> Subiendo...</div>';
   fetch(`/api/repositorio/${modulo}`,{method:'POST',body:fd}).then(r=>r.json()).then(d=>{
     if(!d.ok){estado.innerHTML=`<div class="alert alert-warn">✗ ${esc(d.error)}</div>`;return}
-    estado.innerHTML='<div class="alert alert-ok">✓ Documento agregado.</div>';
+    estado.innerHTML='<div class="alert alert-ok">✓ Documento agregado.'+(d.agregadas_cronologia?` Se sumaron ${d.agregadas_cronologia} hito(s) a la cronología.`:'')+'</div>';
     input.value='';
     cargarRepositorio(modulo);
   }).catch(e=>{estado.innerHTML=`<div class="alert alert-warn">Error: ${esc(e.message)}</div>`;});
