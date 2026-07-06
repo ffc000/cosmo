@@ -463,7 +463,7 @@ function cargarRepositorio(modulo){
     const el=document.getElementById('repo-lista');if(!el)return;
     if(!data.ok||!data.rows.length){el.innerHTML='<div style="color:var(--muted);font-size:.82rem">Todavía no se subió ningún documento.</div>';return}
     el.innerHTML='<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Archivo</th><th>Subido por</th><th>Fecha</th><th></th></tr></thead><tbody>'+
-      data.rows.map(d=>`<tr><td>${escHtml(d.nombre_archivo)}</td><td>${escHtml(d.subido_por)}</td><td style="font-family:var(--mono);font-size:.7rem">${escHtml((d.creado||'').slice(0,16))}</td><td><button class="btn btn-danger btn-sm" onclick="borrarRepositorio('${modulo}',${d.id})">🗑️</button></td></tr>`).join('')+
+      data.rows.map(d=>`<tr><td>${escHtml(d.nombre_archivo)}</td><td>${escHtml(d.subido_por)}</td><td style="font-family:var(--mono);font-size:.7rem">${escHtml((d.creado||'').slice(0,16))}</td><td><a href="/api/repositorio/${modulo}/${d.id}/download" class="btn btn-outline btn-sm">⬇️</a> <button class="btn btn-danger btn-sm" onclick="borrarRepositorio('${modulo}',${d.id})">🗑️</button></td></tr>`).join('')+
       '</tbody></table></div>';
   });
 }
@@ -586,9 +586,14 @@ async function guardarCrono() {
     participantes: document.getElementById('crono-participantes').value,
     estado: document.getElementById('crono-estado').value,
   };
+  if (data.fecha !== 'A definir' && !/^\d{2}\/\d{2}\/\d{4}$/.test(data.fecha)) {
+    alert('Formato de fecha inválido. Usá dd/mm/aaaa (ej: 06/07/2026) o dejalo como "A definir".');
+    return;
+  }
   const url = id ? `/api/senasa/cronologia/${id}` : '/api/senasa/cronologia';
   const method = id ? 'PUT' : 'POST';
-  await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+  const res = await (await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) })).json();
+  if (!res.ok) { alert('No se pudo guardar: ' + res.error); return; }
   cerrarModal('modal-crono');
   cargarCronologia();
 }

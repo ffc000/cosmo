@@ -978,7 +978,7 @@ function cargarRepositorio(modulo){
     const el=document.getElementById('repo-lista');if(!el)return;
     if(!data.ok||!data.rows.length){el.innerHTML='<div style="color:var(--muted);font-size:.82rem">Todavía no se subió ningún documento.</div>';return}
     el.innerHTML='<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Archivo</th><th>Subido por</th><th>Fecha</th><th></th></tr></thead><tbody>'+
-      data.rows.map(d=>`<tr><td>${escHtml(d.nombre_archivo)}</td><td>${escHtml(d.subido_por)}</td><td style="font-family:var(--mono);font-size:.7rem">${escHtml((d.creado||'').slice(0,16))}</td><td><button class="btn btn-danger btn-sm" onclick="borrarRepositorio('${modulo}',${d.id})">🗑️</button></td></tr>`).join('')+
+      data.rows.map(d=>`<tr><td>${escHtml(d.nombre_archivo)}</td><td>${escHtml(d.subido_por)}</td><td style="font-family:var(--mono);font-size:.7rem">${escHtml((d.creado||'').slice(0,16))}</td><td><a href="/api/repositorio/${modulo}/${d.id}/download" class="btn btn-outline btn-sm">⬇️</a> <button class="btn btn-danger btn-sm" onclick="borrarRepositorio('${modulo}',${d.id})">🗑️</button></td></tr>`).join('')+
       '</tbody></table></div>';
   });
 }

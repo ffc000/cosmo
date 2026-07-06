@@ -637,7 +637,7 @@ function cargarRepositorio(modulo){
     const el=document.getElementById('repo-lista');if(!el)return;
     if(!data.ok||!data.rows.length){el.innerHTML='<div style="color:var(--muted);font-size:.82rem">Todavía no se subió ningún documento.</div>';return}
     el.innerHTML='<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Archivo</th><th>Subido por</th><th>Fecha</th><th></th></tr></thead><tbody>'+
-      data.rows.map(d=>`<tr><td>${esc(d.nombre_archivo)}</td><td>${esc(d.subido_por)}</td><td style="font-family:var(--mono);font-size:.7rem">${esc((d.creado||'').slice(0,16))}</td><td><button class="btn btn-danger btn-sm" onclick="borrarRepositorio('${modulo}',${d.id})">🗑️</button></td></tr>`).join('')+
+      data.rows.map(d=>`<tr><td>${esc(d.nombre_archivo)}</td><td>${esc(d.subido_por)}</td><td style="font-family:var(--mono);font-size:.7rem">${esc((d.creado||'').slice(0,16))}</td><td><a href="/api/repositorio/${modulo}/${d.id}/download" class="btn btn-outline btn-sm">⬇️</a> <button class="btn btn-danger btn-sm" onclick="borrarRepositorio('${modulo}',${d.id})">🗑️</button></td></tr>`).join('')+
       '</tbody></table></div>';
   });
 }
@@ -649,7 +649,7 @@ function subirRepositorio(modulo){
   estado.innerHTML='<div class="alert alert-info"><span class="spinner"></span> Subiendo...</div>';
   fetch(`/api/repositorio/${modulo}`,{method:'POST',body:fd}).then(r=>r.json()).then(d=>{
     if(!d.ok){estado.innerHTML=`<div class="alert alert-warn">✗ ${esc(d.error)}</div>`;return}
-    estado.innerHTML='<div class="alert alert-ok">✓ Documento agregado.'+(d.agregadas_cronologia?` Se sumaron ${d.agregadas_cronologia} hito(s) a la cronología.`:'')+'</div>';
+    estado.innerHTML='<div class="alert alert-ok">✓ Documento agregado.'+(d.agregadas_cronologia?` Se sumaron ${d.agregadas_cronologia} hito(s) a la cronología.`:'')+'</div>'+(d.error_cronologia?`<div class="alert alert-warn">⚠ No se pudo analizar para cronología: ${esc(d.error_cronologia)}</div>`:'');
     input.value='';
     cargarRepositorio(modulo);
   }).catch(e=>{estado.innerHTML=`<div class="alert alert-warn">Error: ${esc(e.message)}</div>`;});
@@ -833,8 +833,19 @@ function guardarActividad(){
 function editarCampo(span,campo,id){
   const original=span.textContent;const input=document.createElement('input');input.className='inline-input';input.value=original;
   span.replaceWith(input);input.focus();
-  function guardar(){fetch(`/api/vua/cronologia/${id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({[campo]:input.value})}).then(()=>{const s=document.createElement('span');s.className='editable';s.textContent=input.value;s.onclick=()=>editarCampo(s,campo,id);input.replaceWith(s)})}
-  input.addEventListener('blur',guardar);input.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();guardar()}if(e.key==='Escape'){input.value=original;guardar()}});
+  function guardar(){
+    const valor=input.value;
+    if(campo==='fecha' && valor!=='A definir' && !/^\d{2}\/\d{2}\/\d{4}$/.test(valor)){
+      alert('Formato de fecha inválido. Usá dd/mm/aaaa (ej: 06/07/2026) o dejalo como "A definir".');
+      input.focus();return;
+    }
+    fetch(`/api/vua/cronologia/${id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({[campo]:valor})})
+      .then(r=>r.json()).then(res=>{
+        if(!res.ok){alert('No se pudo guardar: '+res.error);input.focus();return}
+        const s=document.createElement('span');s.className='editable';s.textContent=valor;s.onclick=()=>editarCampo(s,campo,id);input.replaceWith(s);
+      }).catch(e=>{alert('Error al guardar: '+e.message);input.focus();});
+  }
+  input.addEventListener('blur',guardar);input.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();guardar()}if(e.key==='Escape'){input.value=original;span.textContent=original;input.replaceWith(span)}});
 }
 function actualizarEstado(id,estado){fetch(`/api/vua/cronologia/${id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({estado})})}
 function eliminarActividad(id,btn){if(!confirm('¿Eliminar esta actividad?'))return;fetch('/api/vua/cronologia/'+id,{method:'DELETE'}).then(()=>loadCronologia())}
