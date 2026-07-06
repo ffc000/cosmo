@@ -1054,7 +1054,7 @@ async function cargarFitRounds(act_id) {
     loading.style.display = 'none';
 
     if (!d.ok) {
-      body.innerHTML = `<div class="alert alert-warn" style="font-size:.78rem">FIT no disponible: ${d.error}</div>`;
+      body.innerHTML = `<div class="alert alert-warn" style="font-size:.78rem">FIT no disponible: ${escHtml(d.error)}</div>`;
       return;
     }
 
@@ -1092,7 +1092,7 @@ async function cargarFitRounds(act_id) {
         if (i === 0) {
           html += `<tr style="border-top:2px solid var(--border)">
             <td rowspan="${rowspan}" style="font-family:var(--mono);font-weight:700;font-size:.85rem;vertical-align:middle;text-align:center;background:var(--surface2)">${roundNum}</td>
-            <td rowspan="${rowspan}" style="font-weight:600;vertical-align:middle">${g.nombre}</td>
+            <td rowspan="${rowspan}" style="font-weight:600;vertical-align:middle">${escHtml(g.nombre)}</td>
             <td style="font-family:var(--mono)">${s.reps ?? '—'}</td>
             <td style="font-family:var(--mono)">${dur}</td>
             <td style="font-family:var(--mono);color:var(--muted)">${rest}</td>
@@ -1115,7 +1115,7 @@ async function cargarFitRounds(act_id) {
 
   } catch(e) {
     if (loading) loading.style.display = 'none';
-    if (body) body.innerHTML = `<div class="alert alert-warn" style="font-size:.78rem">Error leyendo FIT: ${e.message}</div>`;
+    if (body) body.innerHTML = `<div class="alert alert-warn" style="font-size:.78rem">Error leyendo FIT: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -1157,7 +1157,7 @@ async function iniciarSync() {
   })).json();
   if (!d.ok) {
     btn.disabled = false; btn.textContent = '🔄 Sincronizar';
-    document.getElementById('sync-resultado').innerHTML = `<div class="alert alert-danger">Error: ${d.error}</div>`;
+    document.getElementById('sync-resultado').innerHTML = `<div class="alert alert-danger">Error: ${escHtml(d.error)}</div>`;
     return;
   }
   _syncInterval = setInterval(() => pollSync(d.job_id, btn), 1500);
@@ -1175,7 +1175,7 @@ async function pollSync(job_id, btn) {
       document.getElementById('sync-resultado').innerHTML = `<div class="alert alert-ok">✓ Sync completo — ${s.nuevas} actividades nuevas importadas.</div>`;
       cargarStats(); cargarActividades();
     } else {
-      document.getElementById('sync-resultado').innerHTML = `<div class="alert alert-danger">Error: ${s.error}</div>`;
+      document.getElementById('sync-resultado').innerHTML = `<div class="alert alert-danger">Error: ${escHtml(s.error)}</div>`;
     }
   }
 }
@@ -1193,7 +1193,7 @@ async function analizarProgresion() {
   })).json();
   res.innerHTML = '';
   if (d.ok) { ia.className = 'ia-box visible'; ia.textContent = d.respuesta; }
-  else { res.innerHTML = `<div class="alert alert-danger">Error: ${d.error}</div>`; }
+  else { res.innerHTML = `<div class="alert alert-danger">Error: ${escHtml(d.error)}</div>`; }
 }
 
 async function cargarAnalisisPrev() {
@@ -1400,7 +1400,7 @@ async function cargarConfig() {
     el.innerHTML = `<div class="alert alert-ok">✓ Credenciales configuradas para <strong>${d.usuario}</strong></div>`;
     document.getElementById('cfg-usuario').value = d.usuario;
   } else if (d.error) {
-    el.innerHTML = `<div class="alert alert-danger">⚠ ${d.error}</div>`;
+    el.innerHTML = `<div class="alert alert-danger">⚠ ${escHtml(d.error)}</div>`;
   } else {
     el.innerHTML = `<div class="alert alert-warn">⚠ No hay credenciales configuradas.</div>`;
   }
@@ -1420,7 +1420,7 @@ async function guardarConfig() {
     document.getElementById('cfg-passwd').value = '';
     cargarConfig(); cargarStats();
   } else {
-    res.innerHTML = `<div class="alert alert-danger">Error: ${d.error}</div>`;
+    res.innerHTML = `<div class="alert alert-danger">Error: ${escHtml(d.error)}</div>`;
   }
 }
 
@@ -1510,7 +1510,7 @@ function renderCalSemana() {
       const dur = fmtDurCal(w.duracion);
       return `<div class="sesion-card${isRace?' race':''}">
         <div class="sesion-turno">${tipoIcon(w.tipo)} ${w.tipo || ''}</div>
-        <div style="font-weight:500;line-height:1.3">${w.nombre}</div>
+        <div style="font-weight:500;line-height:1.3">${escHtml(w.nombre)}</div>
         ${dur ? `<div style="font-family:var(--mono);font-size:.65rem;color:var(--muted);margin-top:.2rem">${dur}</div>` : ''}
       </div>`;
     }).join('');

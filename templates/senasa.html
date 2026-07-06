@@ -659,7 +659,7 @@ async function cargarEjes() {
     cont.innerHTML += `<div class="eje-card" style="cursor:default">
       <div style="flex:1">
         <div class="eje-num">EJE ${eje.id}</div>
-        <div class="eje-nombre">${eje.nombre}</div>
+        <div class="eje-nombre">${escHtml(eje.nombre)}</div>
         <div class="eje-desc">${eje.descripcion || ''}</div>
       </div>
       <div style="display:flex;flex-direction:column;gap:.3rem;align-items:flex-end">
@@ -771,10 +771,10 @@ async function generarMinuta() {
       }
       cargarMinutas();
     } else {
-      div.innerHTML = `<div class="alert" style="background:var(--danger-light);color:var(--danger)">Error: ${d.error}</div>`;
+      div.innerHTML = `<div class="alert" style="background:var(--danger-light);color:var(--danger)">Error: ${escHtml(d.error)}</div>`;
     }
   } catch(e) {
-    document.getElementById('minuta-resultado').innerHTML = `<div class="alert" style="background:var(--danger-light);color:var(--danger)">${e.message}</div>`;
+    document.getElementById('minuta-resultado').innerHTML = `<div class="alert" style="background:var(--danger-light);color:var(--danger)">${escHtml(e.message)}</div>`;
     document.getElementById('minuta-resultado').style.display = 'block';
   }
   btn.disabled = false;
@@ -797,7 +797,7 @@ async function cargarMinutas() {
   (d.rows || []).forEach(m => {
     body.innerHTML += `<tr>
       <td style="font-family:var(--mono);font-size:.75rem">${m.fecha}</td>
-      <td>${m.asunto}</td>
+      <td>${escHtml(m.asunto)}</td>
       <td>${m.lugar}</td>
       <td style="font-size:.75rem;color:var(--muted)">${m.creado_por}</td>
       <td>
@@ -822,7 +822,7 @@ async function cargarAcuerdos() {
     const tag = a.estado === 'Completado' ? 'tag-completado' : a.estado === 'En curso' ? 'tag-encurso' : 'tag-pendiente';
     cont.innerHTML += `<div class="acuerdo-card ${cls}">
       <div class="acuerdo-body">
-        <div class="acuerdo-desc">${a.descripcion}</div>
+        <div class="acuerdo-desc">${escHtml(a.descripcion)}</div>
         <div class="acuerdo-meta">
           ${a.responsable ? `<span>👤 ${a.responsable}</span>` : ''}
           ${a.fecha_compromiso ? `<span>📅 ${a.fecha_compromiso}</span>` : ''}
@@ -896,7 +896,7 @@ function loadIntegrantes() {
         <div class="equipo-grid">${personas.map(p => `
           <div class="persona-card" style="display:flex;align-items:flex-start;justify-content:space-between;gap:.4rem">
             <div>
-              <div style="font-size:.8rem;font-weight:600;color:var(--text)">${p.nombre}</div>
+              <div style="font-size:.8rem;font-weight:600;color:var(--text)">${escHtml(p.nombre)}</div>
               <div style="font-size:.7rem;color:var(--muted);margin-top:.1rem">${p.cargo}</div>
               ${p.email ? `<div style="font-family:var(--mono);font-size:.62rem;color:var(--accent);margin-top:.15rem">${p.email}</div>` : ''}
             </div>

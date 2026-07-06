@@ -710,7 +710,7 @@ function renderCategoriasDashboard() {
     return `<div class="cat-row">
       <span class="cat-dot" style="background:${c.color}"></span>
       <div class="cat-info">
-        <div style="font-size:.82rem;font-weight:500">${c.nombre}</div>
+        <div style="font-size:.82rem;font-weight:500">${esc(c.nombre)}</div>
         <div class="cat-nums"><span>${fmtMoney(c.gastado)}</span><span>${c.presupuesto_mensual > 0 ? fmtMoney(c.presupuesto_mensual) : 'sin presupuesto'}</span></div>
         ${pct !== null ? `<div class="presu-bar"><div class="presu-fill" style="width:${pct}%;background:${color}"></div></div>` : ''}
       </div>
@@ -772,12 +772,12 @@ async function procesarPDF() {
 
   try {
     const d = await (await fetch('/api/finanzas/upload', { method: 'POST', body: fd })).json();
-    if (!d.ok) { estado.innerHTML = `<div class="alert alert-danger">${d.error}</div>`; return; }
+    if (!d.ok) { estado.innerHTML = `<div class="alert alert-danger">${esc(d.error)}</div>`; return; }
     estado.innerHTML = '';
     _previewData = d;
     renderPreview();
   } catch (e) {
-    estado.innerHTML = `<div class="alert alert-danger">Error: ${e.message}</div>`;
+    estado.innerHTML = `<div class="alert alert-danger">Error: ${esc(e.message)}</div>`;
   }
 }
 
@@ -858,7 +858,7 @@ async function cargarMovimientos() {
   const tarjeta_id = document.getElementById('mov-tarjeta').value;
   const catsResp = await (await fetch('/api/finanzas/categorias')).json();
   const categorias = catsResp.ok ? catsResp.rows : [];
-  const catOptions = (selId) => categorias.map(c => `<option value="${c.id}" ${selId===c.id?'selected':''}>${c.nombre}</option>`).join('');
+  const catOptions = (selId) => categorias.map(c => `<option value="${c.id}" ${selId===c.id?'selected':''}>${esc(c.nombre)}</option>`).join('');
 
   let url = `/api/finanzas/movimientos?mes=${mesInput.value}`;
   if (tarjeta_id) url += `&tarjeta_id=${tarjeta_id}`;
@@ -911,7 +911,7 @@ async function cargarCategoriasSelect() {
   const d = await (await fetch('/api/finanzas/categorias')).json();
   if (!d.ok) return;
   document.getElementById('man-categoria').innerHTML =
-    '<option value="">— sin categoría —</option>' + d.rows.map(c => `<option value="${c.id}">${c.nombre}</option>`).join('');
+    '<option value="">— sin categoría —</option>' + d.rows.map(c => `<option value="${c.id}">${esc(c.nombre)}</option>`).join('');
   const dt = await (await fetch('/api/finanzas/tarjetas')).json();
   if (dt.ok) {
     document.getElementById('man-tarjeta').innerHTML = dt.rows.map(t => `<option value="${t.id}">${esc(t.nombre)}</option>`).join('');
@@ -977,7 +977,7 @@ async function cargarCategoriasPresupuesto() {
   document.getElementById('cat-presu-list').innerHTML = catsResp.rows.map(c => `
     <div class="cat-row">
       <span class="cat-dot" style="background:${c.color}"></span>
-      <div class="cat-info" style="font-size:.85rem">${c.nombre}</div>
+      <div class="cat-info" style="font-size:.85rem">${esc(c.nombre)}</div>
       <div style="display:flex;gap:.4rem;align-items:center">
         <input type="number" value="${c.presupuesto_mensual || ''}" placeholder="0" style="width:7rem;font-size:.75rem" id="presu-${c.id}">
         <button class="btn btn-outline btn-sm" onclick="guardarPresupuestoCategoria('${c.id}')">Guardar</button>
@@ -1013,7 +1013,7 @@ async function crearCategoria() {
     body: JSON.stringify({ nombre, color })
   })).json();
   if (d.ok) {
-    estado.innerHTML = `<div class="alert alert-ok">✓ Categoría "${nombre}" creada.</div>`;
+    estado.innerHTML = `<div class="alert alert-ok">✓ Categoría "${esc(nombre)}" creada.</div>`;
     document.getElementById('ncat-nombre').value = '';
     cargarCategoriasPresupuesto();
   } else {

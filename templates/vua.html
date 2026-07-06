@@ -710,7 +710,7 @@ function agregarParticipante(){
 function renderParticipantes(){
   document.getElementById('participantes-list').innerHTML=participantes.map((p,i)=>`
     <div class="participante-row">
-      <input type="text" value="${p.nombre}" readonly>
+      <input type="text" value="${esc(p.nombre)}" readonly>
       <input type="text" value="${p.cargo}" onchange="participantes[${i}].cargo=this.value">
       <button class="btn btn-outline btn-sm" onclick="participantes.splice(${i},1);renderParticipantes()">✕</button>
     </div>`).join('');
@@ -904,7 +904,7 @@ function loadEjes(){
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;margin-bottom:1rem;flex-wrap:wrap">
           <div>
             <div style="font-family:var(--mono);font-size:.65rem;color:var(--muted);margin-bottom:.2rem">EJE ${eje.id}</div>
-            <div style="font-size:.95rem;font-weight:600;color:var(--text)">${eje.nombre}</div>
+            <div style="font-size:.95rem;font-weight:600;color:var(--text)">${esc(eje.nombre)}</div>
           </div>
           <div style="display:flex;gap:.4rem;flex-shrink:0;flex-wrap:wrap">
             <span class="tag ${getTag(eje.estado)}">${eje.estado}</span>
@@ -913,7 +913,7 @@ function loadEjes(){
             <button class="btn btn-danger btn-sm" onclick="eliminarEje('${eje.id}')">✕</button>
           </div>
         </div>
-        ${eje.descripcion?`<div style="margin-bottom:.75rem"><div style="font-family:var(--mono);font-size:.62rem;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.1em;margin-bottom:.4rem">Descripción</div><p style="font-size:.82rem;color:var(--text-sub);line-height:1.6">${eje.descripcion}</p></div>`:''}
+        ${eje.descripcion?`<div style="margin-bottom:.75rem"><div style="font-family:var(--mono);font-size:.62rem;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.1em;margin-bottom:.4rem">Descripción</div><p style="font-size:.82rem;color:var(--text-sub);line-height:1.6">${esc(eje.descripcion)}</p></div>`:''}
         ${eje.propuesta_vucea?`<div style="background:var(--accent-light);border:1px solid rgba(26,86,219,.15);border-radius:var(--radius-sm);padding:.9rem;margin-bottom:.75rem"><div style="font-family:var(--mono);font-size:.62rem;color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:.1em;margin-bottom:.4rem">Propuesta de VUCEA</div><p style="font-size:.82rem;color:var(--text-sub);line-height:1.6">${eje.propuesta_vucea}</p></div>`:''}
         ${eje.postura_aduana?`<div style="background:var(--warn-light);border:1px solid rgba(217,119,6,.2);border-radius:var(--radius-sm);padding:.9rem;margin-bottom:.75rem"><div style="font-family:var(--mono);font-size:.62rem;color:var(--warn);font-weight:600;text-transform:uppercase;letter-spacing:.1em;margin-bottom:.4rem">Postura de Aduana</div><p style="font-size:.82rem;color:var(--text-sub);line-height:1.6">${eje.postura_aduana}</p></div>`:''}
         ${eje.recomendacion?`<div style="background:var(--accent2-light);border:1px solid rgba(5,122,85,.2);border-radius:var(--radius-sm);padding:.9rem"><div style="font-family:var(--mono);font-size:.62rem;color:var(--accent2);font-weight:600;text-transform:uppercase;letter-spacing:.1em;margin-bottom:.4rem">Recomendación DI REPA</div><p style="font-size:.82rem;color:var(--text-sub);line-height:1.6">${eje.recomendacion}</p></div>`:''}
@@ -944,7 +944,7 @@ function loadEquipo(){
         <div class="equipo-grid">${personas.map(p=>`
           <div class="persona-card" style="display:flex;align-items:flex-start;justify-content:space-between;gap:.4rem">
             <div>
-              <div style="font-size:.8rem;font-weight:600;color:var(--text)">${p.nombre}</div>
+              <div style="font-size:.8rem;font-weight:600;color:var(--text)">${esc(p.nombre)}</div>
               <div style="font-size:.7rem;color:var(--muted);margin-top:.1rem">${p.cargo}</div>
               ${p.email?`<div style="font-family:var(--mono);font-size:.62rem;color:var(--accent);margin-top:.15rem">${p.email}</div>`:''}
             </div>
@@ -1089,7 +1089,7 @@ function loadRiesgos(){
     el.innerHTML=riesgosData.map(r=>`
       <div class="riesgo-card">
         <div class="riesgo-header">
-          <div class="riesgo-titulo">${r.codigo} — ${r.titulo}</div>
+          <div class="riesgo-titulo">${esc(r.codigo)} — ${esc(r.titulo)}</div>
           <div style="display:flex;gap:.4rem;align-items:center;flex-wrap:wrap">
             <span class="badge-prob ${probCls[r.probabilidad]||'badge-medio'}">Prob: ${r.probabilidad}</span>
             <span class="badge-imp ${probCls[r.impacto]||'badge-medio'}">Imp: ${r.impacto}</span>
@@ -1097,7 +1097,7 @@ function loadRiesgos(){
             <button class="btn btn-danger btn-sm" style="padding:.2rem .5rem;font-size:.65rem" onclick="eliminarRiesgo(${r.id})">✕</button>
           </div>
         </div>
-        <div class="riesgo-desc">${r.descripcion}</div>
+        <div class="riesgo-desc">${esc(r.descripcion)}</div>
         <div class="riesgo-mitig">${r.mitigacion}</div>
       </div>`).join('');
   });
@@ -1159,10 +1159,10 @@ function loadConfigSections(){
     configData=data.rows||[];
     const cont=document.getElementById('config-sections-container');if(!cont)return;
     if(!configData.length){cont.innerHTML='<div class="card"><div style="color:var(--muted);font-size:.82rem">Sin datos.</div></div>';return}
-    cont.innerHTML=configData.map(s=>`<div class="card" style="margin-bottom:1rem"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem"><div class="card-title" style="margin:0">${s.titulo}</div><button class="btn btn-outline btn-sm" onclick="abrirEditor(this)" data-clave="${s.clave}" data-titulo="${s.titulo}">✏️ Editar</button></div><div style="font-size:.83rem;color:var(--text-sub);line-height:1.65;white-space:pre-line">${s.contenido}</div><div style="font-family:var(--mono);font-size:.6rem;color:var(--dim);margin-top:.5rem">Última modificación: ${(s.modificado||'').slice(0,16)}</div></div>`).join('');
+    cont.innerHTML=configData.map(s=>`<div class="card" style="margin-bottom:1rem"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem"><div class="card-title" style="margin:0">${esc(s.titulo)}</div><button class="btn btn-outline btn-sm" onclick="abrirEditor(this)" data-clave="${esc(s.clave)}" data-titulo="${esc(s.titulo)}">✏️ Editar</button></div><div style="font-size:.83rem;color:var(--text-sub);line-height:1.65;white-space:pre-line">${esc(s.contenido)}</div><div style="font-family:var(--mono);font-size:.6rem;color:var(--dim);margin-top:.5rem">Última modificación: ${esc((s.modificado||'').slice(0,16))}</div></div>`).join('');
     fetch('/api/vua/ejes').then(r=>r.json()).then(d=>{
       const tb=document.getElementById('ejes-resumen-estado');if(!tb)return;
-      tb.innerHTML=(d.rows||[]).map(e=>{const cls=e.estado.includes('Pendiente')?'tag-pendiente':e.estado.toLowerCase().includes('análisis')||e.estado.toLowerCase().includes('desarrollo')?'tag-encurso':'tag-completado';return `<tr><td style="font-size:.82rem">${e.nombre}</td><td><span class="tag ${cls}">${e.estado.slice(0,50)}${e.estado.length>50?'...':''}</span></td></tr>`;}).join('');
+      tb.innerHTML=(d.rows||[]).map(e=>{const cls=e.estado.includes('Pendiente')?'tag-pendiente':e.estado.toLowerCase().includes('análisis')||e.estado.toLowerCase().includes('desarrollo')?'tag-encurso':'tag-completado';return `<tr><td style="font-size:.82rem">${esc(e.nombre)}</td><td><span class="tag ${cls}">${esc(e.estado.slice(0,50))}${e.estado.length>50?'...':''}</span></td></tr>`;}).join('');
     });
   });
 }
