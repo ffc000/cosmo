@@ -1108,6 +1108,44 @@ def api_backup_download(clave):
         return jsonify({"ok": False, "error": "No hay backup disponible"}), 404
     return send_file(path, as_attachment=True, download_name=f"{clave}_backup.db")
 
+@app.route("/api/admin/backup/restaurar", methods=["POST"])
+@login_required
+@admin_required("bd")
+@limiter.limit("5 per hour", error_message="Demasiados intentos de restaurar backup.")
+def api_backup_restaurar():
+    import shutil
+    data = request.json or {}
+    clave = (data.get("clave") or "").strip()
+    if clave not in BACKUP_FUENTES:
+        return jsonify({"ok": False, "error": "Backup no válido"})
+    backup_path = os.path.join(BACKUP_DIR, f"{clave}_backup.db")
+    if not os.path.exists(backup_path):
+        return jsonify({"ok": False, "error": "No hay backup disponible para restaurar"})
+    destino = BACKUP_FUENTES[clave]()
+    try:
+        if os.path.exists(destino):
+            shutil.copy2(destino, destino + ".pre_restore")  # por si hay que deshacer
+        shutil.copy2(backup_path, destino)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+    logging.info(f"BACKUP RESTAURAR | clave={clave} | user={session.get('username')}")
+    notificar_telegram(f"♻️ Se restauró el backup de '{clave}' sobre la BD en uso — hecho por {session.get('username')}")
+    return jsonify({"ok": True})
+
+@app.route("/api/admin/backup/<clave>", methods=["DELETE"])
+@login_required
+@admin_required("bd")
+def api_backup_delete(clave):
+    if clave not in BACKUP_FUENTES:
+        return jsonify({"ok": False, "error": "Backup no válido"}), 404
+    path = os.path.join(BACKUP_DIR, f"{clave}_backup.db")
+    if not os.path.exists(path):
+        return jsonify({"ok": False, "error": "No hay backup para borrar"}), 404
+    os.remove(path)
+    logging.info(f"BACKUP DELETE | clave={clave} | user={session.get('username')}")
+    notificar_telegram(f"🗑️ Se eliminó el backup de '{clave}' — hecho por {session.get('username')}")
+    return jsonify({"ok": True})
+
 # ── Update CSV (async) ─────────────────────────────────────────────────────────
 @app.route("/api/update-csv", methods=["POST"])
 @login_required
@@ -1254,7 +1292,6 @@ def _procesar_csv(tmp_path, tabla, log, modo="reemplazar"):
             if not cur.fetchone():
                 cur.execute("CREATE TABLE RECHAZOS (PaisEmisor TEXT, Metodo TEXT, NroMic TEXT, Fecha TEXT, Mensaje TEXT, Fecha_ISO TEXT, Mes TEXT, Anio TEXT)")
             else:
-                cur.execute("DELETE FROM RECHAZOS")
                 for col in ["Fecha_ISO","Mes","Anio"]:
                     try: cur.execute(f"ALTER TABLE RECHAZOS ADD COLUMN {col} TEXT")
                     except: pass
