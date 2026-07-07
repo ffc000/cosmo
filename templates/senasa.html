@@ -16,6 +16,19 @@
     }
     return originalFetch(input, init);
   };
+  // Red de seguridad: si un fetch en cualquier parte de la página falla y nadie
+  // le puso .catch(), esto evita que la UI quede colgada en silencio (ej. en
+  // "Cargando...") sin que el usuario se entere de que algo falló.
+  window.addEventListener('unhandledrejection', function(e){
+    console.error('Error de red sin manejar:', e && e.reason);
+    if (window.__avisoErrorRed) return;
+    window.__avisoErrorRed = true;
+    var b = document.createElement('div');
+    b.textContent = 'Error de conexión con el servidor. Reintentá o recargá la página.';
+    b.style.cssText = 'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#B91C1C;color:#fff;padding:.6rem 1.1rem;border-radius:8px;font:600 .8rem sans-serif;z-index:99999;box-shadow:0 4px 16px rgba(0,0,0,.25)';
+    document.body.appendChild(b);
+    setTimeout(function(){ b.remove(); window.__avisoErrorRed = false; }, 6000);
+  });
 })();
 </script>
 <meta charset="UTF-8">
@@ -545,8 +558,8 @@ async function cargarCronologia() {
     const tag = row.estado === 'Completado' ? 'tag-completado' : row.estado === 'En curso' ? 'tag-encurso' : 'tag-pendiente';
     body.innerHTML += `<tr>
       <td style="white-space:nowrap;font-family:var(--mono);font-size:.75rem">${row.fecha}</td>
-      <td>${row.actividad}</td>
-      <td style="font-size:.75rem;color:var(--muted)">${row.participantes}</td>
+      <td>${escHtml(row.actividad)}</td>
+      <td style="font-size:.75rem;color:var(--muted)">${escHtml(row.participantes)}</td>
       <td><span class="tag ${tag}">${row.estado}</span></td>
       <td style="white-space:nowrap">
         <button class="btn btn-outline btn-sm" onclick="editarCrono(${row.id},'${esc(row.fecha)}','${esc(row.actividad)}','${esc(row.participantes)}','${row.estado}')">✏️</button>
@@ -798,7 +811,7 @@ async function cargarMinutas() {
     body.innerHTML += `<tr>
       <td style="font-family:var(--mono);font-size:.75rem">${m.fecha}</td>
       <td>${escHtml(m.asunto)}</td>
-      <td>${m.lugar}</td>
+      <td>${escHtml(m.lugar)}</td>
       <td style="font-size:.75rem;color:var(--muted)">${m.creado_por}</td>
       <td>
         <a href="/api/senasa/minutas/${m.id}/download" class="download-btn">⬇ Word</a>
@@ -824,7 +837,7 @@ async function cargarAcuerdos() {
       <div class="acuerdo-body">
         <div class="acuerdo-desc">${escHtml(a.descripcion)}</div>
         <div class="acuerdo-meta">
-          ${a.responsable ? `<span>👤 ${a.responsable}</span>` : ''}
+          ${a.responsable ? `<span>👤 ${escHtml(a.responsable)}</span>` : ''}
           ${a.fecha_compromiso ? `<span>📅 ${a.fecha_compromiso}</span>` : ''}
           <span class="tag ${tag}">${a.estado}</span>
         </div>
@@ -897,7 +910,7 @@ function loadIntegrantes() {
           <div class="persona-card" style="display:flex;align-items:flex-start;justify-content:space-between;gap:.4rem">
             <div>
               <div style="font-size:.8rem;font-weight:600;color:var(--text)">${escHtml(p.nombre)}</div>
-              <div style="font-size:.7rem;color:var(--muted);margin-top:.1rem">${p.cargo}</div>
+              <div style="font-size:.7rem;color:var(--muted);margin-top:.1rem">${escHtml(p.cargo)}</div>
               ${p.email ? `<div style="font-family:var(--mono);font-size:.62rem;color:var(--accent);margin-top:.15rem">${p.email}</div>` : ''}
             </div>
             <div style="display:flex;flex-direction:column;gap:.2rem">

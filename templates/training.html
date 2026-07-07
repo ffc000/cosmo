@@ -16,6 +16,19 @@
     }
     return originalFetch(input, init);
   };
+  // Red de seguridad: si un fetch en cualquier parte de la página falla y nadie
+  // le puso .catch(), esto evita que la UI quede colgada en silencio (ej. en
+  // "Cargando...") sin que el usuario se entere de que algo falló.
+  window.addEventListener('unhandledrejection', function(e){
+    console.error('Error de red sin manejar:', e && e.reason);
+    if (window.__avisoErrorRed) return;
+    window.__avisoErrorRed = true;
+    var b = document.createElement('div');
+    b.textContent = 'Error de conexión con el servidor. Reintentá o recargá la página.';
+    b.style.cssText = 'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#B91C1C;color:#fff;padding:.6rem 1.1rem;border-radius:8px;font:600 .8rem sans-serif;z-index:99999;box-shadow:0 4px 16px rgba(0,0,0,.25)';
+    document.body.appendChild(b);
+    setTimeout(function(){ b.remove(); window.__avisoErrorRed = false; }, 6000);
+  });
 })();
 </script>
 <meta charset="UTF-8">
@@ -1206,7 +1219,7 @@ async function cargarAnalisisPrev() {
         <strong>${r.tipo_analisis||'sesion'}</strong>
         <span style="font-family:var(--mono);font-size:.7rem;color:var(--muted)">${(r.fecha||'').substring(0,10)}</span>
       </div>
-      <div style="color:var(--text-sub);line-height:1.55;white-space:pre-wrap">${r.respuesta}</div>
+      <div style="color:var(--text-sub);line-height:1.55;white-space:pre-wrap">${escHtml(r.respuesta)}</div>
     </div>`).join('');
 }
 
@@ -1397,7 +1410,7 @@ async function cargarConfig() {
   const d = await (await fetch('/api/garmin/config')).json();
   const el = document.getElementById('config-estado');
   if (d.ok && d.usuario) {
-    el.innerHTML = `<div class="alert alert-ok">✓ Credenciales configuradas para <strong>${d.usuario}</strong></div>`;
+    el.innerHTML = `<div class="alert alert-ok">✓ Credenciales configuradas para <strong>${escHtml(d.usuario)}</strong></div>`;
     document.getElementById('cfg-usuario').value = d.usuario;
   } else if (d.error) {
     el.innerHTML = `<div class="alert alert-danger">⚠ ${escHtml(d.error)}</div>`;
@@ -1668,8 +1681,8 @@ async function enviarClaude() {
   document.getElementById('claude-loading').remove();
   btn.disabled = false;
   chat.innerHTML += d.ok
-    ? `<div class="claude-msg claude-resp">${d.respuesta}</div>`
-    : `<div class="claude-msg" style="background:var(--danger-light);color:var(--danger)">Error: ${d.error}</div>`;
+    ? `<div class="claude-msg claude-resp">${escHtml(d.respuesta)}</div>`
+    : `<div class="claude-msg" style="background:var(--danger-light);color:var(--danger)">Error: ${escHtml(d.error)}</div>`;
   chat.scrollTop = chat.scrollHeight;
 }
 

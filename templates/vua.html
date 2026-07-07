@@ -16,6 +16,19 @@
     }
     return originalFetch(input, init);
   };
+  // Red de seguridad: si un fetch en cualquier parte de la página falla y nadie
+  // le puso .catch(), esto evita que la UI quede colgada en silencio (ej. en
+  // "Cargando...") sin que el usuario se entere de que algo falló.
+  window.addEventListener('unhandledrejection', function(e){
+    console.error('Error de red sin manejar:', e && e.reason);
+    if (window.__avisoErrorRed) return;
+    window.__avisoErrorRed = true;
+    var b = document.createElement('div');
+    b.textContent = 'Error de conexión con el servidor. Reintentá o recargá la página.';
+    b.style.cssText = 'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#B91C1C;color:#fff;padding:.6rem 1.1rem;border-radius:8px;font:600 .8rem sans-serif;z-index:99999;box-shadow:0 4px 16px rgba(0,0,0,.25)';
+    document.body.appendChild(b);
+    setTimeout(function(){ b.remove(); window.__avisoErrorRed = false; }, 6000);
+  });
 })();
 </script>
 <meta charset="UTF-8">
@@ -711,7 +724,7 @@ function renderParticipantes(){
   document.getElementById('participantes-list').innerHTML=participantes.map((p,i)=>`
     <div class="participante-row">
       <input type="text" value="${esc(p.nombre)}" readonly>
-      <input type="text" value="${p.cargo}" onchange="participantes[${i}].cargo=this.value">
+      <input type="text" value="${esc(p.cargo)}" onchange="participantes[${i}].cargo=this.value">
       <button class="btn btn-outline btn-sm" onclick="participantes.splice(${i},1);renderParticipantes()">✕</button>
     </div>`).join('');
 }
@@ -914,9 +927,9 @@ function loadEjes(){
           </div>
         </div>
         ${eje.descripcion?`<div style="margin-bottom:.75rem"><div style="font-family:var(--mono);font-size:.62rem;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.1em;margin-bottom:.4rem">Descripción</div><p style="font-size:.82rem;color:var(--text-sub);line-height:1.6">${esc(eje.descripcion)}</p></div>`:''}
-        ${eje.propuesta_vucea?`<div style="background:var(--accent-light);border:1px solid rgba(26,86,219,.15);border-radius:var(--radius-sm);padding:.9rem;margin-bottom:.75rem"><div style="font-family:var(--mono);font-size:.62rem;color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:.1em;margin-bottom:.4rem">Propuesta de VUCEA</div><p style="font-size:.82rem;color:var(--text-sub);line-height:1.6">${eje.propuesta_vucea}</p></div>`:''}
-        ${eje.postura_aduana?`<div style="background:var(--warn-light);border:1px solid rgba(217,119,6,.2);border-radius:var(--radius-sm);padding:.9rem;margin-bottom:.75rem"><div style="font-family:var(--mono);font-size:.62rem;color:var(--warn);font-weight:600;text-transform:uppercase;letter-spacing:.1em;margin-bottom:.4rem">Postura de Aduana</div><p style="font-size:.82rem;color:var(--text-sub);line-height:1.6">${eje.postura_aduana}</p></div>`:''}
-        ${eje.recomendacion?`<div style="background:var(--accent2-light);border:1px solid rgba(5,122,85,.2);border-radius:var(--radius-sm);padding:.9rem"><div style="font-family:var(--mono);font-size:.62rem;color:var(--accent2);font-weight:600;text-transform:uppercase;letter-spacing:.1em;margin-bottom:.4rem">Recomendación DI REPA</div><p style="font-size:.82rem;color:var(--text-sub);line-height:1.6">${eje.recomendacion}</p></div>`:''}
+        ${eje.propuesta_vucea?`<div style="background:var(--accent-light);border:1px solid rgba(26,86,219,.15);border-radius:var(--radius-sm);padding:.9rem;margin-bottom:.75rem"><div style="font-family:var(--mono);font-size:.62rem;color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:.1em;margin-bottom:.4rem">Propuesta de VUCEA</div><p style="font-size:.82rem;color:var(--text-sub);line-height:1.6">${esc(eje.propuesta_vucea)}</p></div>`:''}
+        ${eje.postura_aduana?`<div style="background:var(--warn-light);border:1px solid rgba(217,119,6,.2);border-radius:var(--radius-sm);padding:.9rem;margin-bottom:.75rem"><div style="font-family:var(--mono);font-size:.62rem;color:var(--warn);font-weight:600;text-transform:uppercase;letter-spacing:.1em;margin-bottom:.4rem">Postura de Aduana</div><p style="font-size:.82rem;color:var(--text-sub);line-height:1.6">${esc(eje.postura_aduana)}</p></div>`:''}
+        ${eje.recomendacion?`<div style="background:var(--accent2-light);border:1px solid rgba(5,122,85,.2);border-radius:var(--radius-sm);padding:.9rem"><div style="font-family:var(--mono);font-size:.62rem;color:var(--accent2);font-weight:600;text-transform:uppercase;letter-spacing:.1em;margin-bottom:.4rem">Recomendación DI REPA</div><p style="font-size:.82rem;color:var(--text-sub);line-height:1.6">${esc(eje.recomendacion)}</p></div>`:''}
       </div>`).join('');
   });
 }
@@ -945,7 +958,7 @@ function loadEquipo(){
           <div class="persona-card" style="display:flex;align-items:flex-start;justify-content:space-between;gap:.4rem">
             <div>
               <div style="font-size:.8rem;font-weight:600;color:var(--text)">${esc(p.nombre)}</div>
-              <div style="font-size:.7rem;color:var(--muted);margin-top:.1rem">${p.cargo}</div>
+              <div style="font-size:.7rem;color:var(--muted);margin-top:.1rem">${esc(p.cargo)}</div>
               ${p.email?`<div style="font-family:var(--mono);font-size:.62rem;color:var(--accent);margin-top:.15rem">${p.email}</div>`:''}
             </div>
             <div style="display:flex;flex-direction:column;gap:.2rem">
@@ -990,7 +1003,7 @@ function renderGlosario(filtro){
   Object.entries(cats).forEach(([cat,label])=>{
     if(!porCat[cat])return;
     html+=`<div class="glosario-cat">${label}</div>`;
-    porCat[cat].forEach(r=>{html+=`<div class="glosario-item"><div class="glosario-term">${r.termino}</div><div class="glosario-def">${r.definicion}</div><div style="display:flex;flex-direction:column;gap:.2rem;flex-shrink:0"><button class="btn btn-outline btn-sm" style="padding:.2rem .4rem;font-size:.6rem" onclick="editarTerminoById(${r.id})">✏️</button><button class="btn btn-danger btn-sm" style="padding:.2rem .4rem;font-size:.6rem" onclick="eliminarTermino(${r.id})">✕</button></div></div>`;});
+    porCat[cat].forEach(r=>{html+=`<div class="glosario-item"><div class="glosario-term">${esc(r.termino)}</div><div class="glosario-def">${esc(r.definicion)}</div><div style="display:flex;flex-direction:column;gap:.2rem;flex-shrink:0"><button class="btn btn-outline btn-sm" style="padding:.2rem .4rem;font-size:.6rem" onclick="editarTerminoById(${r.id})">✏️</button><button class="btn btn-danger btn-sm" style="padding:.2rem .4rem;font-size:.6rem" onclick="eliminarTermino(${r.id})">✕</button></div></div>`;});
   });
   el.innerHTML=html;
 }
@@ -1098,7 +1111,7 @@ function loadRiesgos(){
           </div>
         </div>
         <div class="riesgo-desc">${esc(r.descripcion)}</div>
-        <div class="riesgo-mitig">${r.mitigacion}</div>
+        <div class="riesgo-mitig">${esc(r.mitigacion)}</div>
       </div>`).join('');
   });
 }

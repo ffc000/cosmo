@@ -16,6 +16,19 @@
     }
     return originalFetch(input, init);
   };
+  // Red de seguridad: si un fetch en cualquier parte de la página falla y nadie
+  // le puso .catch(), esto evita que la UI quede colgada en silencio (ej. en
+  // "Cargando...") sin que el usuario se entere de que algo falló.
+  window.addEventListener('unhandledrejection', function(e){
+    console.error('Error de red sin manejar:', e && e.reason);
+    if (window.__avisoErrorRed) return;
+    window.__avisoErrorRed = true;
+    var b = document.createElement('div');
+    b.textContent = 'Error de conexión con el servidor. Reintentá o recargá la página.';
+    b.style.cssText = 'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#B91C1C;color:#fff;padding:.6rem 1.1rem;border-radius:8px;font:600 .8rem sans-serif;z-index:99999;box-shadow:0 4px 16px rgba(0,0,0,.25)';
+    document.body.appendChild(b);
+    setTimeout(function(){ b.remove(); window.__avisoErrorRed = false; }, 6000);
+  });
 })();
 </script>
 <meta charset="UTF-8">
@@ -218,6 +231,7 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(26
 </div>
 
 <script>
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 // ── Sidebar ──
 const sidebar = document.getElementById('sidebar');
 const overlay = document.getElementById('sidebar-overlay');
@@ -393,7 +407,7 @@ function renderHistorial(rows) {
     tr.innerHTML = `
       <td style="padding:.5rem .75rem;font-weight:600;white-space:nowrap">${r.fecha_corte}</td>
       <td style="padding:.5rem .75rem;white-space:nowrap;color:var(--muted)">${fechaGen}</td>
-      <td style="padding:.5rem .75rem">${r.usuario || '—'}</td>
+      <td style="padding:.5rem .75rem">${esc(r.usuario || '—')}</td>
       <td style="padding:.5rem .75rem;text-align:center">${r.dias_tol}</td>
       <td style="padding:.5rem .75rem;text-align:center;font-weight:600">${r.total}</td>
       <td style="padding:.5rem .75rem;text-align:center;color:${SEM_COLOR.VERDE};font-weight:600">${r.verde}</td>

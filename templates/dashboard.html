@@ -16,6 +16,19 @@
     }
     return originalFetch(input, init);
   };
+  // Red de seguridad: si un fetch en cualquier parte de la página falla y nadie
+  // le puso .catch(), esto evita que la UI quede colgada en silencio (ej. en
+  // "Cargando...") sin que el usuario se entere de que algo falló.
+  window.addEventListener('unhandledrejection', function(e){
+    console.error('Error de red sin manejar:', e && e.reason);
+    if (window.__avisoErrorRed) return;
+    window.__avisoErrorRed = true;
+    var b = document.createElement('div');
+    b.textContent = 'Error de conexión con el servidor. Reintentá o recargá la página.';
+    b.style.cssText = 'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#B91C1C;color:#fff;padding:.6rem 1.1rem;border-radius:8px;font:600 .8rem sans-serif;z-index:99999;box-shadow:0 4px 16px rgba(0,0,0,.25)';
+    document.body.appendChild(b);
+    setTimeout(function(){ b.remove(); window.__avisoErrorRed = false; }, 6000);
+  });
 })();
 </script>
 <meta charset="UTF-8">
@@ -301,6 +314,7 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);display:flex
 </div>
 
 <script>
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function updateTime(){const el=document.getElementById('status-time');if(el)el.textContent=new Date().toLocaleString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'})}
 updateTime();setInterval(updateTime,30000);
 
@@ -317,6 +331,10 @@ fetch('/api/db-status').then(r=>r.json()).then(data=>{
   if(sDat)sDat.textContent=datCount.toLocaleString('es-AR');
   if(sRech)sRech.textContent=rechCount.toLocaleString('es-AR');
   if(sds&&datKey)sds.textContent=datKey;
+}).catch(()=>{
+  const sDat=document.getElementById('s-dat'),sRech=document.getElementById('s-rech'),sds=document.getElementById('s-dat-sub');
+  if(sDat)sDat.textContent='—'; if(sRech)sRech.textContent='—';
+  if(sds)sds.textContent='Error al cargar';
 });
 {% endif %}
 
@@ -334,12 +352,17 @@ fetch('/api/historial/completo').then(r=>r.json()).then(data=>{
     return `<div class="activity-item">
       <div class="activity-icon">${icon}</div>
       <div class="activity-body">
-        <div class="activity-title">${tipo} — ${r.descripcion||''}</div>
-        <div class="activity-meta">${r.usuario||''}</div>
+        <div class="activity-title">${tipo} — ${esc(r.descripcion||'')}</div>
+        <div class="activity-meta">${esc(r.usuario||'')}</div>
       </div>
       <div class="activity-time">${(r.fecha||'').slice(0,16)}</div>
     </div>`;
   }).join('');
+}).catch(()=>{
+  const sInf=document.getElementById('s-informes'),sMin=document.getElementById('s-minutas');
+  if(sInf)sInf.textContent='—'; if(sMin)sMin.textContent='—';
+  const el=document.getElementById('activity-list');
+  if(el)el.innerHTML='<div class="activity-empty">No se pudo cargar la actividad reciente.</div>';
 });
 </script>
 </body>
