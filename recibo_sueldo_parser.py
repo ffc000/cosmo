@@ -40,6 +40,13 @@ MESES = {
 PERIODO_RE = re.compile(
     r'\b(' + "|".join(MESES.keys()) + r')\s+(\d{4})\b', re.IGNORECASE
 )
+# "Fecha de Pago": aparece pegada a los datos bancarios, con el formato
+# "<sucursal> - <nro.cuenta> <DD/MM/AAAA> <código dependencia>", ej.
+# "GALICIA 1000 - 3000413046235 01/07/2026 AB0FFA0100 SEC. ...".
+# Es la fecha real de acreditación, y puede caer en un mes distinto al
+# "período" impreso arriba del recibo (ej. período JUNIO pero pago en julio)
+# — para el seguimiento mensual usamos esta, no el período.
+FECHA_PAGO_RE = re.compile(r'\d+\s*-\s*\d+\s+(\d{2})/(\d{2})/(\d{4})\s+[A-Z0-9]')
 
 
 def _to_float(token: str) -> float:
@@ -97,11 +104,18 @@ def parse_recibo_sueldo(paginas_texto: list[str]) -> dict:
     otros_conceptos = round(total_remuneraciones - serv_extraordinario, 2)
     neto_total = round(total_remuneraciones + total_descuentos, 2)
 
-    m_periodo = PERIODO_RE.search(texto_completo)
+    m_fecha_pago = FECHA_PAGO_RE.search(texto_completo)
     mes = None
-    if m_periodo:
-        nombre_mes, anio = m_periodo.group(1).upper(), m_periodo.group(2)
-        mes = f"{anio}-{MESES[nombre_mes]}"
+    if m_fecha_pago:
+        dia, mm, aaaa = m_fecha_pago.groups()
+        mes = f"{aaaa}-{mm}"
+    else:
+        # Fallback: si no se pudo ubicar la Fecha de Pago (formato distinto),
+        # usamos el período impreso ("JUNIO 2026") para no perder el recibo.
+        m_periodo = PERIODO_RE.search(texto_completo)
+        if m_periodo:
+            nombre_mes, anio = m_periodo.group(1).upper(), m_periodo.group(2)
+            mes = f"{anio}-{MESES[nombre_mes]}"
 
     return {
         "mes": mes,
