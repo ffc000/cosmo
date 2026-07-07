@@ -28,6 +28,7 @@ import io
 import pdfplumber
 import finanzas as fin
 from extracto_parser import parse_santander, parse_galicia, extraer_total_declarado
+from recibo_sueldo_parser import parse_recibo_sueldo
 
 fin.init_finanzas_db(HIST_DB)
 
@@ -468,27 +469,48 @@ def api_fin_set_presupuesto_total():
 @finanzas_owner_required
 def api_fin_get_ingresos():
     mes = request.args.get("mes") or date.today().isoformat()[:7]
-    return jsonify({"ok": True, "mes": mes, **fin.get_ingresos(HIST_DB, mes)})
+    return jsonify({"ok": True, "mes": mes, **fin.get_ingresos(HIST_DB, mes),
+                     "recibos": fin.listar_recibos_sueldo(HIST_DB, mes)})
 
 
-@finanzas_bp.route("/api/finanzas/ingresos", methods=["POST"])
+@finanzas_bp.route("/api/finanzas/recibo_sueldo", methods=["POST"])
 @login_required
 @finanzas_owner_required
-def api_fin_set_ingresos():
-    data = request.json or {}
-    mes = data.get("mes")
-    if not mes:
-        return jsonify({"ok": False, "error": "Falta mes"})
+@limiter.limit("30 per hour", error_message="Demasiados uploads de recibos.")
+def api_fin_recibo_sueldo():
+    """Sube un recibo de sueldo ARCA en PDF, lo parsea y lo guarda. La
+    categoría (sueldo/fondo/otros) y el mes se detectan solos del contenido
+    del PDF — no hace falta indicarlos."""
+    if "archivo" not in request.files:
+        return jsonify({"ok": False, "error": "No se recibió archivo"})
+    archivo = request.files["archivo"]
+    if not archivo.filename.lower().endswith(".pdf"):
+        return jsonify({"ok": False, "error": "El archivo debe ser un PDF"})
+
     try:
-        salario = float(data.get("salario") or 0)
-        fondo   = float(data.get("fondo") or 0)
-        otros   = float(data.get("otros") or 0)
-    except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "Los montos tienen que ser números"})
-    if salario < 0 or fondo < 0 or otros < 0:
-        return jsonify({"ok": False, "error": "Los montos no pueden ser negativos"})
-    fin.set_ingresos(HIST_DB, mes, salario, fondo, otros)
-    return jsonify({"ok": True})
+        paginas = _extraer_paginas_pdf(archivo)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"No se pudo leer el PDF: {e}"})
+
+    try:
+        r = parse_recibo_sueldo(paginas)
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)})
+    except Exception as e:
+        logging.error(f"FINANZAS RECIBO SUELDO PARSE ERROR | {e}")
+        return jsonify({"ok": False, "error": f"No se pudo parsear el recibo: {e}"})
+
+    if not r["mes"]:
+        return jsonify({"ok": False, "error": "No se pudo detectar el período (mes/año) en el recibo"})
+
+    fin.guardar_recibo_sueldo(
+        HIST_DB, r["mes"], r["categoria"], r["serv_extraordinario"],
+        r["otros_conceptos"], r["total_remuneraciones"], r["total_descuentos"],
+        r["neto_total"], archivo.filename)
+
+    logging.info(f"FINANZAS RECIBO SUELDO | user={session.get('username')} | "
+                 f"mes={r['mes']} | categoria={r['categoria']} | neto={r['neto_total']}")
+    return jsonify({"ok": True, **r})
 
 
 @finanzas_bp.route("/api/finanzas/resumen")
@@ -501,6 +523,7 @@ def api_fin_resumen():
         "resumen": fin.resumen_mes(HIST_DB, mes),
         "categorias": fin.gasto_por_categoria(HIST_DB, mes),
         "ingresos": fin.get_ingresos(HIST_DB, mes),
+        "recibos": fin.listar_recibos_sueldo(HIST_DB, mes),
     })
 
 
