@@ -814,6 +814,30 @@ REGLAS PARA LAS CALIFICACIONES EN SUBTÍTULOS:\n- Transmisión anticipada: basá
 
 
 # ── Verificación numérica (Paso 4) ──────────────────────────────────────────────
+def verificar_narrativa_denominadores(texto, pcts_cargados, pcts_lastre, log_fn):
+    """El bloque 'Estado de situación' (generar_narrativa_ia) no pasaba por
+    ninguna verificación numérica posterior — a diferencia de la Conclusión,
+    que sí la tiene. Esto permitía que un porcentaje de lastre quedara mal
+    etiquetado como "de los cargados" (o viceversa) sin que nada lo corrija.
+    Corrige quirúrgicamente el denominador cuando no coincide con el valor."""
+    if not texto:
+        return texto
+    correcciones = 0
+    mapeo = [(v, "de los cargados") for v in pcts_cargados if v] + \
+            [(v, "de lastre") for v in pcts_lastre if v]
+    for valor, etiqueta_correcta in mapeo:
+        patron = re.escape(valor) + r"(\s+de\s+(?:los\s+cargados|lastre|el\s+lastre))"
+        def _fix(m, correcta=etiqueta_correcta):
+            nonlocal correcciones
+            if correcta not in m.group(1):
+                correcciones += 1
+                return valor + " " + correcta
+            return m.group(0)
+        texto = re.sub(patron, _fix, texto)
+    if correcciones:
+        log_fn(f"  \u26a0 Estado de situaci\u00f3n: {correcciones} denominador(es) cargados/lastre corregido(s)")
+    return texto
+
 def verificar_conclusion(texto, datos_esperados, log_fn):
     """
     Verifica números y direcciones en el texto generado por la IA.
@@ -1439,6 +1463,13 @@ def generar_informe(ruta_db, pais, anio, mes_d, mes_h, usar_ia, api_key, carpeta
         }, api_key, contexto_extra)
         if narrativa_ia: log_fn("✓ Narrativa generada")
         else: log_fn("  Narrativa no disponible, usando texto est\u00e1ndar")
+
+        if narrativa_ia and len(narrativa_ia) >= 2:
+            narrativa_ia[1] = verificar_narrativa_denominadores(
+                narrativa_ia[1],
+                [pct(cT,cTot), pct(cN,cTot), pct(cTd,cTot)],
+                [pct(lT,lTot), pct(lN,lTot), pct(lTd,lTot)],
+                log_fn)
 
         log_fn("Generando conclusi\u00f3n con IA...")
         ult_t=n(datos_ult.get("total",0)) if datos_ult else 0
