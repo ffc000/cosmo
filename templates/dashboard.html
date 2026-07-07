@@ -2,35 +2,7 @@
 <html lang="es">
 <head>
 <meta name="csrf-token" content="{{ csrf_token() }}">
-<script>
-(function(){
-  var meta = document.querySelector('meta[name="csrf-token"]');
-  var token = meta ? meta.content : '';
-  var originalFetch = window.fetch;
-  window.fetch = function(input, init){
-    init = init || {};
-    var method = (init.method || 'GET').toUpperCase();
-    if (method !== 'GET' && method !== 'HEAD') {
-      init.headers = new Headers(init.headers || {});
-      if (!init.headers.has('X-CSRFToken')) init.headers.set('X-CSRFToken', token);
-    }
-    return originalFetch(input, init);
-  };
-  // Red de seguridad: si un fetch en cualquier parte de la página falla y nadie
-  // le puso .catch(), esto evita que la UI quede colgada en silencio (ej. en
-  // "Cargando...") sin que el usuario se entere de que algo falló.
-  window.addEventListener('unhandledrejection', function(e){
-    console.error('Error de red sin manejar:', e && e.reason);
-    if (window.__avisoErrorRed) return;
-    window.__avisoErrorRed = true;
-    var b = document.createElement('div');
-    b.textContent = 'Error de conexión con el servidor. Reintentá o recargá la página.';
-    b.style.cssText = 'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#B91C1C;color:#fff;padding:.6rem 1.1rem;border-radius:8px;font:600 .8rem sans-serif;z-index:99999;box-shadow:0 4px 16px rgba(0,0,0,.25)';
-    document.body.appendChild(b);
-    setTimeout(function(){ b.remove(); window.__avisoErrorRed = false; }, 6000);
-  });
-})();
-</script>
+<script src="/static/common.js"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CosmoTools</title>
