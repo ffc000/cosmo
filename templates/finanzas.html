@@ -265,15 +265,30 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
             </div>
           </div>
           <div class="form-row" style="margin-top:.6rem">
-            <div style="max-width:520px">
-              <label>Ingresos del mes</label>
-              <div style="display:flex;gap:.4rem;align-items:flex-end;flex-wrap:wrap">
-                <div><label style="font-size:.7rem;color:var(--muted)">Salario</label><input type="number" id="ing-salario" placeholder="0" style="width:8rem"></div>
-                <div><label style="font-size:.7rem;color:var(--muted)">Fondo</label><input type="number" id="ing-fondo" placeholder="0" style="width:8rem"></div>
-                <div><label style="font-size:.7rem;color:var(--muted)">Otros</label><input type="number" id="ing-otros" placeholder="0" style="width:8rem"></div>
-                <button class="btn btn-fin btn-sm" onclick="guardarIngresos()">Guardar</button>
+            <div style="max-width:640px">
+              <label>Ingresos del mes (recibos de sueldo ARCA)</label>
+              <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+                <input type="file" id="recibo-file" accept="application/pdf" style="max-width:220px">
+                <button class="btn btn-fin btn-sm" onclick="subirReciboSueldo()">Subir recibo</button>
+                <span id="recibo-estado" style="font-size:.75rem;color:var(--muted)"></span>
               </div>
-              <div style="font-size:.78rem;color:var(--muted);margin-top:.4rem">Total ingresos: <strong id="ing-total">$0,00</strong></div>
+              <div style="font-size:.78rem;color:var(--muted);margin-top:.4rem">
+                Sueldo: <strong id="ing-sueldo">$0,00</strong> ·
+                Fondo: <strong id="ing-fondo">$0,00</strong> ·
+                Otros: <strong id="ing-otros">$0,00</strong> ·
+                Total: <strong id="ing-total">$0,00</strong>
+              </div>
+              <table id="recibos-tabla" style="width:100%;margin-top:.5rem;font-size:.75rem;display:none">
+                <thead><tr>
+                  <th style="text-align:left">Categoría</th>
+                  <th style="text-align:right">Serv. Extraord.</th>
+                  <th style="text-align:right">Otros conceptos</th>
+                  <th style="text-align:right">Total Remun.</th>
+                  <th style="text-align:right">Total Desc.</th>
+                  <th style="text-align:right">Neto</th>
+                </tr></thead>
+                <tbody id="recibos-tbody"></tbody>
+              </table>
             </div>
           </div>
         </div>
@@ -592,11 +607,12 @@ async function cargarDashboard() {
   document.getElementById('dash-disponible').textContent = r.disponible !== null ? fmtMoney(r.disponible) : '— (sin presupuesto)';
   document.getElementById('dash-presu-input').value = r.presupuesto_total || '';
 
-  const ing = d.ingresos || {salario:0, fondo:0, otros:0, total:0};
-  document.getElementById('ing-salario').value = ing.salario || '';
-  document.getElementById('ing-fondo').value = ing.fondo || '';
-  document.getElementById('ing-otros').value = ing.otros || '';
+  const ing = d.ingresos || {sueldo:0, fondo:0, otros:0, total:0};
+  document.getElementById('ing-sueldo').textContent = fmtMoney(ing.sueldo);
+  document.getElementById('ing-fondo').textContent = fmtMoney(ing.fondo);
+  document.getElementById('ing-otros').textContent = fmtMoney(ing.otros);
   document.getElementById('ing-total').textContent = fmtMoney(ing.total);
+  renderRecibosSueldo(d.recibos || []);
 
   const sincat = document.getElementById('dash-sincat');
   if (r.movimientos_sin_categoria > 0) {
@@ -747,17 +763,39 @@ async function guardarPresupuestoTotal() {
   cargarDashboard();
 }
 
-async function guardarIngresos() {
-  const mes = document.getElementById('dash-mes').value || mesActual();
-  const salario = parseFloat(document.getElementById('ing-salario').value) || 0;
-  const fondo   = parseFloat(document.getElementById('ing-fondo').value) || 0;
-  const otros   = parseFloat(document.getElementById('ing-otros').value) || 0;
-  const d = await (await fetch('/api/finanzas/ingresos', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ mes, salario, fondo, otros })
-  })).json();
-  if (!d.ok) { alert(d.error); return; }
-  cargarDashboard();
+async function subirReciboSueldo() {
+  const fileInput = document.getElementById('recibo-file');
+  const estado = document.getElementById('recibo-estado');
+  if (!fileInput.files.length) { estado.textContent = 'Elegí un PDF primero.'; return; }
+  estado.textContent = 'Subiendo...';
+  const fd = new FormData();
+  fd.append('archivo', fileInput.files[0]);
+  try {
+    const resp = await fetch('/api/finanzas/recibo_sueldo', { method: 'POST', body: fd });
+    const d = await resp.json();
+    if (!d.ok) { estado.textContent = 'Error: ' + d.error; return; }
+    estado.textContent = `✓ ${d.categoria} — ${d.mes} — neto ${fmtMoney(d.neto_total)}`;
+    fileInput.value = '';
+    const mesActualDash = document.getElementById('dash-mes').value;
+    if (mesActualDash === d.mes) cargarDashboard();
+  } catch (e) {
+    estado.textContent = 'Error de red al subir el recibo.';
+  }
+}
+
+function renderRecibosSueldo(recibos) {
+  const tabla = document.getElementById('recibos-tabla');
+  const tbody = document.getElementById('recibos-tbody');
+  if (!recibos.length) { tabla.style.display = 'none'; tbody.innerHTML = ''; return; }
+  tabla.style.display = '';
+  tbody.innerHTML = recibos.map(r => `<tr>
+    <td>${esc(r.categoria)}</td>
+    <td style="text-align:right">${fmtMoney(r.serv_extraordinario)}</td>
+    <td style="text-align:right">${fmtMoney(r.otros_conceptos)}</td>
+    <td style="text-align:right">${fmtMoney(r.total_remuneraciones)}</td>
+    <td style="text-align:right">${fmtMoney(r.total_descuentos)}</td>
+    <td style="text-align:right"><strong>${fmtMoney(r.neto_total)}</strong></td>
+  </tr>`).join('');
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
