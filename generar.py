@@ -44,6 +44,21 @@ MESES  = {"01":"Enero","02":"Febrero","03":"Marzo","04":"Abril","05":"Mayo","06"
            "07":"Julio","08":"Agosto","09":"Septiembre","10":"Octubre","11":"Noviembre","12":"Diciembre"}
 C_TRANS="#1F7DC4"; C_NO_TRANS="#C0392B"; C_TARDIO="#E67E22"
 C_CARGADO="#2E86AB"; C_LASTRE="#A8DADC"
+
+# Glosario compartido entre generar_narrativa_ia y generar_conclusion_ia —
+# antes estaba duplicado en los dos prompts con redacciones levemente distintas.
+GLOSARIO = """GLOSARIO OBLIGATORIO — usá EXACTAMENTE estas siglas y denominaciones, sin inventar expansiones alternativas:
+- SINTIA: escribilo siempre como "SINTIA" sin expandir
+- MIC-DTA: "Manifiesto Internacional de Cargas - Declaración de Tránsito Aduanero"
+- MIC: "Manifiesto Internacional de Cargas" (NO "Manifiesto de Importación de Carga")
+- DTA: "Declaración de Tránsito Aduanero" (NO "Declaración Transitoria Aduanera")
+- PAD: la primera vez que lo uses escribí "Portal Aduanero (PAD)", luego solo "PAD"
+- ARCA: "Agencia de Recaudación y Control Aduanero"
+- CRT: "Carta de Porte Internacional por Carretera"
+- Terminología Argentina OBLIGATORIA: usar "despachantes de aduana" (NO "agentes aduanales", "agentes aduaneros" ni otras variantes foráneas); "declarante" o "transportista" según el contexto (documento de transporte internacional)
+- INDNCM: "indicador de Nomenclatura Común del Mercosur"
+- PATAI: "Presentación Anticipada de Transportes de Ingreso" (evento aduanero)
+- OFTAI: "Oficialización de Transportes de Ingreso" (evento aduanero)"""
 UMBRAL_VERDE=60.0; UMBRAL_AMARILLO=30.0
 
 CAT_LIKE = {
@@ -159,6 +174,10 @@ def grafico_torta(gT, gN, gTd):
     valores=[gT,gN,gTd]; total=gT+gN+gTd
     labels=[f'Transmitidos\n{fmt(gT)}',f'No transmitidos\n{fmt(gN)}',f'Tard\u00edos\n{fmt(gTd)}']
     colors=[C_TRANS,C_NO_TRANS,C_TARDIO]
+    # Si alguna porción es 0, se excluye del pie (si no, matplotlib le dibuja
+    # una etiqueta y un "0,0%" que se superponen con las porciones vecinas).
+    idx = [i for i,v in enumerate(valores) if v>0]
+    valores=[valores[i] for i in idx]; labels=[labels[i] for i in idx]; colors=[colors[i] for i in idx]
     wedges,texts,autotexts = ax.pie(valores,labels=labels,colors=colors,
         autopct=lambda v: f"{v:.1f}%".replace(".",",") if total>0 else "",
         startangle=90,pctdistance=0.75,wedgeprops=dict(edgecolor='white',linewidth=2))
@@ -205,7 +224,11 @@ def grafico_lineas_pct(ev_total,ev_trans,ev_tardio,ev_no_trans):
     ax.legend(fontsize=9); ax.yaxis.grid(True,alpha=0.3); ax.set_axisbelow(True)
     ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
     for i,t in enumerate(pt):
-        ax.annotate(f"{t:.0f}%",(i,t),textcoords="offset points",xytext=(0,7),ha='center',fontsize=7)
+        ax.annotate(f"{t:.0f}%",(i,t),textcoords="offset points",xytext=(0,7),ha='center',fontsize=7,color=C_TRANS)
+    for i,t in enumerate(pnt):
+        ax.annotate(f"{t:.0f}%",(i,t),textcoords="offset points",xytext=(0,-11),ha='center',fontsize=7,color=C_NO_TRANS)
+    for i,t in enumerate(ptd):
+        ax.annotate(f"{t:.0f}%",(i,t),textcoords="offset points",xytext=(0,7),ha='center',fontsize=7,color=C_TARDIO)
     fig.tight_layout(); return fig_to_bytes(fig)
 
 def grafico_rechazos_cat(rechazos_cat):
@@ -214,8 +237,7 @@ def grafico_rechazos_cat(rechazos_cat):
     labels=[r["Categoria"] for r in reversed(cats)]
     valores=[n(r.get("Rechazos",0)) for r in reversed(cats)]
     fig,ax=plt.subplots(figsize=(7,max(3,len(cats)*0.5+1)),facecolor='white')
-    colors=[C_TRANS if i%2==0 else C_CARGADO for i in range(len(labels))]
-    bars=ax.barh(labels,valores,color=colors,edgecolor='white',linewidth=0.5)
+    bars=ax.barh(labels,valores,color=C_NO_TRANS,edgecolor='white',linewidth=0.5)
     for bar,val in zip(bars,valores):
         ax.text(bar.get_width()+bar.get_width()*0.02,bar.get_y()+bar.get_height()/2,
                 fmt(val),va='center',fontsize=9,fontweight='bold')
@@ -392,6 +414,25 @@ def insertar_grafico(doc, img_bytes, width_cm=14):
     p=doc.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.CENTER
     p.add_run().add_picture(img_bytes, width=Cm(width_cm)); doc.add_paragraph()
 
+def _llamar_ia(client, prompt, max_tokens):
+    """temperature baja (no 0 para no matar toda variación de estilo, pero sí
+    reducir la chance de que se desvíe de las reglas estrictas del prompt) +
+    un reintento ante error transitorio (timeout/rate limit) de la API."""
+    import time
+    ultimo_error = None
+    for intento in range(2):
+        try:
+            return client.messages.create(
+                model="claude-haiku-4-5-20251001", max_tokens=max_tokens,
+                temperature=0.2,
+                messages=[{"role": "user", "content": prompt}])
+        except Exception as e:
+            ultimo_error = e
+            if intento == 0:
+                time.sleep(2)
+    raise ultimo_error
+
+
 def kpi_box(doc, kpis):
     table=doc.add_table(rows=1,cols=len(kpis)); table.alignment=WD_TABLE_ALIGNMENT.CENTER
     for i,(label,valor,sub) in enumerate(kpis):
@@ -407,18 +448,7 @@ def generar_narrativa_ia(datos, api_key, contexto_extra=""):
     try:
         client = anthropic.Anthropic(api_key=api_key, http_client=httpx.Client(follow_redirects=True))
         prompt = f"""ADVERTENCIA: los datos numéricos de este prompt son los ÚNICOS válidos. Si tu memoria de entrenamiento tiene números distintos para este informe, ignoralos completamente.\nSos un analista de comercio exterior de ARCA (Aduana Argentina).
-GLOSARIO OBLIGATORIO — usá EXACTAMENTE estas siglas y denominaciones, sin inventar expansiones alternativas:
-- SINTIA: escribilo siempre como "SINTIA" sin expandir
-- MIC-DTA: "Manifiesto Internacional de Cargas - Declaración de Tránsito Aduanero"
-- MIC: "Manifiesto Internacional de Cargas" (NO "Manifiesto de Importación de Carga")
-- DTA: "Declaración de Tránsito Aduanero" (NO "Declaración Transitoria Aduanera")
-- PAD: la primera vez que lo uses escribí "Portal Aduanero (PAD)", luego solo "PAD"
-- ARCA: "Agencia de Recaudación y Control Aduanero"
-- CRT: "Carta de Porte Internacional por Carretera"
-- Terminología Argentina OBLIGATORIA: usar "despachantes de aduana" (NO "agentes aduanales", "agentes aduaneros" ni otras variantes foráneas); "declarante" o "transportista" según el contexto (documento de transporte internacional)
-- INDNCM: "indicador de Nomenclatura Común del Mercosur"
-- PATAI: "Presentación Anticipada de Transportes de Ingreso" (evento aduanero)
-- OFTAI: "Oficialización de Transportes de Ingreso" (evento aduanero)
+{GLOSARIO}
 Redactá los párrafos narrativos para un informe formal sobre el estado de situación del sistema SINTIA.
 El informe describe la transmisión anticipada del MIC-DTA entre {datos['pais_nombre']} y Argentina durante {datos['periodo']}.
 """
@@ -461,8 +491,7 @@ Estilo: formal, t\u00e9cnico, espa\u00f1ol rioplatense, tono mesurado y profesio
 - Revisá la ortografía antes de responder. No uses gerundios mal formados ni palabras inventadas."""
         if contexto_extra:
             prompt += contexto_extra
-        msg = client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=1800,
-            messages=[{"role":"user","content":prompt}])
+        msg = _llamar_ia(client, prompt, 1800)
         raw_text = msg.content[0].text
         # Garantizar exactamente 3 bloques — si hay más, colapsar los extra al primero
         partes = [p.strip() for p in raw_text.split("---BLOQUE---") if p.strip()]
@@ -693,16 +722,7 @@ def generar_conclusion_ia(datos, api_key, contexto_extra=""):
         if datos.get("tiene_interanual"):
             interanual = f"\nComparativo interanual \u2014 mismo per\u00edodo {datos['anio_ant']}:\n- Total: {datos['g_total_ant']} | Trans: {datos['pct_trans_ant']} | No trans: {datos['pct_no_trans_ant']} | Tard\u00edo: {datos['pct_tardio_ant']}"
         prompt = f"""Sos un analista de comercio exterior de ARCA (Aduana Argentina).
-GLOSARIO OBLIGATORIO:
-- SINTIA: escribilo como "SINTIA" sin expandir
-- MIC-DTA: "Manifiesto Internacional de Cargas - Declaración de Tránsito Aduanero"
-- PAD: "Portal Aduanero" (NUNCA otra expansión)
-- ARCA: "Agencia de Recaudación y Control Aduanero"
-- CRT: "Carta de Porte Internacional por Carretera"
-- Terminología Argentina OBLIGATORIA: usar "despachantes de aduana" (NO "agentes aduanales", "agentes aduaneros" ni otras variantes foráneas); "declarante" o "transportista" según el contexto
-- INDNCM: "indicador de Nomenclatura Común del Mercosur"
-- PATAI: "Presentación Anticipada de Transportes de Ingreso"
-- OFTAI: "Oficialización de Transportes de Ingreso"
+{GLOSARIO}
 Redactá la secci\u00f3n "Conclusiones y estado actual" de un informe SINTIA para el circuito {datos['pais_nombre']}-Argentina.
 
 \u2550\u2550\u2550 DATOS DEL \u00daCTIMO MES: {datos['mes_ult_nombre']} \u2550\u2550\u2550
@@ -730,8 +750,7 @@ Total: {datos['g_total']} | Trans: {datos['g_trans']} ({datos['pct_trans']}) | N
 REGLAS PARA LAS CALIFICACIONES EN SUBTÍTULOS:\n- Transmisión anticipada: basá la calificación EXCLUSIVAMENTE en la variación del % de transmitidos vs mes anterior.\n  {datos['var_trans_pp']} pp = la diferencia. Regla:\n  * más de +5pp: \"mejora significativa\"\n  * +1 a +5pp: \"leve mejora\"\n  * -1 a +1pp: \"nivel estable\" (si ambos meses tienen 0,0% de transmisión, usá \"sin transmisión en el período\" en lugar de cualquier calificación de mejora/retroceso)\n  * -1 a -5pp: \"leve retroceso\"\n  * menos de -5pp: \"retroceso\"\n  CASO ESPECIAL: si ult_pct_trans es \"0,0%\" no uses frases como \"mejora\" si no hubo variación real. Describí la situación en términos neutrales, sin calificarla de crítica o de fallo — puede responder a la dinámica propia del circuito en ese período. Tampoco uses \"cayeron al 100%\" ni \"subieron al 0%\" — decí directamente los valores absolutos.\n- Rechazos: si bajaron vs mes anterior → mejora; si subieron → variación a revisar; siempre mencionar los duplicados.\n- La dirección del texto debe coincidir con la dirección de los números: si un indicador bajó, no uses \"repunte\" ni \"aumento\"; si subió, no uses \"baja\" ni \"caída\".\n- Para rechazos: si subieron de un mes a otro, descríbelo como un aumento que conviene revisar, sin necesidad de calificarlo como grave. Si bajaron los operativos reales, es una mejora.\n- Porcentajes mes-mes: si el % actual es mayor al del mes anterior, es una mejora; si es menor, es un retroceso. Verificá la dirección antes de escribir.\n\nEstilo general: mantené un tono profesional, mesurado y descriptivo, sin adjetivos alarmistas (evitá palabras como \"crítico\", \"grave\", \"alarmante\", \"fallo sistémico\", \"preocupante\"). Describí los hechos y, cuando corresponda, sugerí seguimiento con un lenguaje constructivo.\n\nRedactá la sección con esta estructura EXACTA (usá estos títulos en negrita):\n\n**Impacto del mes de {datos['mes_ult_nombre']} — {datos['pais_nombre']}/Argentina (SINTIA)**\n\n**Volumen operativo**\n[Párrafo: total operaciones, desglose impo/expo, comparación con mes anterior. Si junio tiene volumen notoriamente menor, aclará que es mes parcial.]\n\n**Transmisión anticipada — [calificación según regla arriba, en minúsculas]**\nESCRIBI el siguiente parrafo usando EXACTAMENTE estas frases del sistema (no las reformules). Los datos entre [corchetes] son FIJOS y deben aparecer textualmente:\nLa transmision en {datos["mes_ult_nombre"]} alcanzo {datos["ult_pct_trans"]} ({datos["ult_trans"]} de {datos["ult_total"]} operaciones), {datos["frase_trans_var"]}. Cargados: {datos["frase_carg_detalle"]}. Lastre: {datos["frase_lastre_detalle"]}. {datos["frase_lastre_trans_var"]}. {datos["frase_lastre_notrans_var"]}. Acumulado semestral: {datos["pct_trans"]}.\nPodes agregar 1-2 oraciones de contexto analitico pero SIN modificar los datos anteriores.\n\n**Rechazos — [calificación breve en minúsculas]**\n[Párrafo: total, duplicados vs operativos reales, top categorías]\n\n**Conclusión**\n[2-3 observaciones priorizadas con recomendaciones en forma impersonal o infinitivo, en tono constructivo. PROHIBIDO el imperativo voseante: NO uses "Coordiná", "Recomendá", "Implementá" ni similares. Usá infinitivo ("Coordinar con...", "Se recomienda...", "Conviene dar seguimiento a...") o forma impersonal.]\n\nEstilo: formal, técnico, español rioplatense, tono mesurado y profesional. Sin markdown extra, solo títulos en negrita. Evitar anglicismos. Revisá la ortografía y la gramática antes de responder. Palabras comunes mal escritas a evitar: "ingressadas" (correcto: "ingresadas"), "campña" (correcto: "campaña"), "sosteniéndose" (no "sosteniene"). Verificá la concordancia de número: sujetos plurales requieren verbos plurales (ej: "los despachantes dispongan", no "disponga"). Los meses se escriben en minúscula en español (enero, febrero... no Enero, Febrero). El período analizado es {datos['periodo']} — NO menciones meses fuera de ese rango. "trimestre final" no tiene sentido en un informe semestral — no lo uses. PROHIBIDO hacer proyecciones temporales con años futuros ("junio 2027", "primer trimestre 2027", etc.) — si mencionás seguimiento futuro, usá frases como "en los próximos meses" o "durante el segundo semestre de {datos['anio']}". PROHIBIDO usar frases como "un aumento de -N" o "una disminución de +N" — si el valor bajó usá "disminución de N" (positivo), si subió usá "aumento de N" (positivo). DISTINGUIR interanual de intermensual: "interanual" = comparación con el mismo período del año anterior (solo si tiene_interanual=True); "intermensual" o "respecto al mes anterior" = comparación con el mes inmediatamente anterior. PROHIBIDO usar "interanual" para comparaciones mes-a-mes."""
         if contexto_extra:
             prompt += contexto_extra
-        msg = client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=1600,
-            messages=[{"role":"user","content":prompt}])
+        msg = _llamar_ia(client, prompt, 1600)
         return msg.content[0].text.strip()
     except Exception:
         return None
