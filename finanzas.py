@@ -131,6 +131,14 @@ def init_finanzas_db(db_path: str):
     con.execute("""CREATE TABLE IF NOT EXISTS fin_ingresos (
         mes TEXT PRIMARY KEY, salario REAL DEFAULT 0, fondo REAL DEFAULT 0, otros REAL DEFAULT 0
     )""")
+    con.execute("""CREATE TABLE IF NOT EXISTS fin_recibos_sueldo (
+        id TEXT PRIMARY KEY, mes TEXT NOT NULL, categoria TEXT NOT NULL,
+        serv_extraordinario REAL DEFAULT 0, otros_conceptos REAL DEFAULT 0,
+        total_remuneraciones REAL DEFAULT 0, total_descuentos REAL DEFAULT 0,
+        neto_total REAL DEFAULT 0, archivo_nombre TEXT DEFAULT '',
+        creado TEXT DEFAULT (datetime('now')),
+        UNIQUE(mes, categoria)
+    )""")
     con.execute("""CREATE TABLE IF NOT EXISTS fin_ddjj (
         id TEXT PRIMARY KEY, anio INTEGER UNIQUE NOT NULL, fecha_cierre TEXT,
         valor_dolar REAL NOT NULL, estado TEXT DEFAULT 'borrador',
@@ -610,22 +618,57 @@ def set_presupuesto_total(db_path: str, mes: str, monto: float):
 
 
 def get_ingresos(db_path: str, mes: str):
-    """Devuelve {salario, fondo, otros, total} para ese mes (0 si no hay nada cargado)."""
+    """Devuelve {salario, fondo, otros, total} para ese mes, sumando el
+    neto_total de los recibos cargados en cada categoría (0 si no hay nada
+    cargado todavía para esa categoría ese mes)."""
     con = sqlite3.connect(db_path); con.row_factory = sqlite3.Row
-    row = con.execute("SELECT salario, fondo, otros FROM fin_ingresos WHERE mes=?", (mes,)).fetchone()
+    rows = con.execute(
+        "SELECT categoria, neto_total FROM fin_recibos_sueldo WHERE mes=?", (mes,)
+    ).fetchall()
     con.close()
-    if not row:
-        return {"salario": 0, "fondo": 0, "otros": 0, "total": 0}
-    d = dict(row)
-    d["total"] = d["salario"] + d["fondo"] + d["otros"]
+    d = {"sueldo": 0, "fondo": 0, "otros": 0}
+    for r in rows:
+        if r["categoria"] in d:
+            d[r["categoria"]] += r["neto_total"]
+    d["total"] = d["sueldo"] + d["fondo"] + d["otros"]
     return d
 
 
-def set_ingresos(db_path: str, mes: str, salario: float, fondo: float, otros: float):
+def guardar_recibo_sueldo(db_path: str, mes: str, categoria: str, serv_extraordinario: float,
+                           otros_conceptos: float, total_remuneraciones: float,
+                           total_descuentos: float, neto_total: float, archivo_nombre: str = ""):
+    """Guarda (o reemplaza, si ya había uno para ese mes+categoría) un recibo
+    ya parseado. Devuelve el id."""
+    rid = str(uuid.uuid4())[:12]
     con = sqlite3.connect(db_path)
-    con.execute("INSERT OR REPLACE INTO fin_ingresos (mes,salario,fondo,otros) VALUES (?,?,?,?)",
-                (mes, salario, fondo, otros))
+    con.execute("""INSERT INTO fin_recibos_sueldo
+        (id, mes, categoria, serv_extraordinario, otros_conceptos,
+         total_remuneraciones, total_descuentos, neto_total, archivo_nombre, creado)
+        VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))
+        ON CONFLICT(mes, categoria) DO UPDATE SET
+            id=excluded.id, serv_extraordinario=excluded.serv_extraordinario,
+            otros_conceptos=excluded.otros_conceptos,
+            total_remuneraciones=excluded.total_remuneraciones,
+            total_descuentos=excluded.total_descuentos, neto_total=excluded.neto_total,
+            archivo_nombre=excluded.archivo_nombre, creado=datetime('now')""",
+        (rid, mes, categoria, serv_extraordinario, otros_conceptos,
+         total_remuneraciones, total_descuentos, neto_total, archivo_nombre))
     con.commit(); con.close()
+    return rid
+
+
+def listar_recibos_sueldo(db_path: str, mes: str = None):
+    con = sqlite3.connect(db_path); con.row_factory = sqlite3.Row
+    if mes:
+        rows = con.execute(
+            "SELECT * FROM fin_recibos_sueldo WHERE mes=? ORDER BY categoria", (mes,)
+        ).fetchall()
+    else:
+        rows = con.execute(
+            "SELECT * FROM fin_recibos_sueldo ORDER BY mes DESC, categoria"
+        ).fetchall()
+    con.close()
+    return [dict(r) for r in rows]
 
 
 def set_presupuesto_categoria(db_path: str, categoria_id: str, monto: float):
