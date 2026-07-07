@@ -463,6 +463,34 @@ def api_fin_set_presupuesto_total():
     return jsonify({"ok": True})
 
 
+@finanzas_bp.route("/api/finanzas/ingresos", methods=["GET"])
+@login_required
+@finanzas_owner_required
+def api_fin_get_ingresos():
+    mes = request.args.get("mes") or date.today().isoformat()[:7]
+    return jsonify({"ok": True, "mes": mes, **fin.get_ingresos(HIST_DB, mes)})
+
+
+@finanzas_bp.route("/api/finanzas/ingresos", methods=["POST"])
+@login_required
+@finanzas_owner_required
+def api_fin_set_ingresos():
+    data = request.json or {}
+    mes = data.get("mes")
+    if not mes:
+        return jsonify({"ok": False, "error": "Falta mes"})
+    try:
+        salario = float(data.get("salario") or 0)
+        fondo   = float(data.get("fondo") or 0)
+        otros   = float(data.get("otros") or 0)
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Los montos tienen que ser números"})
+    if salario < 0 or fondo < 0 or otros < 0:
+        return jsonify({"ok": False, "error": "Los montos no pueden ser negativos"})
+    fin.set_ingresos(HIST_DB, mes, salario, fondo, otros)
+    return jsonify({"ok": True})
+
+
 @finanzas_bp.route("/api/finanzas/resumen")
 @login_required
 @finanzas_owner_required
@@ -472,6 +500,7 @@ def api_fin_resumen():
         "ok": True,
         "resumen": fin.resumen_mes(HIST_DB, mes),
         "categorias": fin.gasto_por_categoria(HIST_DB, mes),
+        "ingresos": fin.get_ingresos(HIST_DB, mes),
     })
 
 
