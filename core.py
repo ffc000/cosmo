@@ -12,6 +12,9 @@ sin que core.py necesite saber que existen.
 """
 import os
 import sqlite3
+import json
+import time
+import logging
 from functools import wraps
 from datetime import datetime, timedelta
 
@@ -181,3 +184,201 @@ def finanzas_owner_required(f):
             return redirect(url_for("index"))
         return f(*args, **kwargs)
     return decorated
+
+
+# ── Job queue (progreso de generación de informes en background) ────────────
+# job_status vivía solo en memoria del proceso: si la app corre con más de un
+# worker (gunicorn -w >1), el worker que crea el job y el que atiende el
+# polling de progreso pueden ser procesos distintos, y el segundo nunca ve el
+# job (se ve como "colgado" del lado del usuario, sin ningún error visible).
+# Cada cambio de estado se espeja a SQLite (tabla job_status_db), visible
+# desde cualquier worker. job_status en memoria es además la caché rápida
+# para el worker que efectivamente está corriendo el job.
+#
+# Vive en core.py (no en app.py) porque lo usan tanto app.py (informe SINTIA)
+# como los blueprints (vua, y los que sigan) para sus propios informes async.
+job_status = {}
+
+def _init_job_status_db():
+    try:
+        con = sqlite3.connect(HIST_DB, timeout=10)
+        con.execute("""CREATE TABLE IF NOT EXISTS job_status_db (
+            job_id TEXT PRIMARY KEY, status TEXT, log TEXT, files TEXT,
+            username TEXT, ts REAL)""")
+        con.commit(); con.close()
+    except Exception:
+        logging.exception("No se pudo crear la tabla job_status_db")
+
+_init_job_status_db()
+
+def _job_persist(job_id):
+    """Espeja el estado actual de job_status[job_id] a SQLite."""
+    info = job_status.get(job_id)
+    if info is None:
+        return
+    try:
+        con = sqlite3.connect(HIST_DB, timeout=10)
+        con.execute("""INSERT INTO job_status_db (job_id, status, log, files, username, ts)
+            VALUES (?,?,?,?,?,?)
+            ON CONFLICT(job_id) DO UPDATE SET
+                status=excluded.status, log=excluded.log, files=excluded.files, ts=excluded.ts""",
+            (job_id, info.get("status", "running"), json.dumps(list(info.get("log", []))),
+             json.dumps(info.get("files", [])), info.get("username", "?"), time.time()))
+        con.commit(); con.close()
+    except Exception:
+        logging.exception(f"job_status: no se pudo persistir job_id={job_id}")
+
+class _JobLog(list):
+    """Lista de progreso de un job. Persiste a SQLite en cada .append(), para
+    que el progreso sea visible en vivo desde cualquier worker, no solo el
+    que está corriendo el hilo de background."""
+    def __init__(self, job_id, inicial=None):
+        super().__init__(inicial or [])
+        self._job_id = job_id
+    def append(self, item):
+        super().append(item)
+        _job_persist(self._job_id)
+
+def job_create(job_id, primer_mensaje="", username="?", status="running"):
+    """Crea un job nuevo (en memoria + espejado en SQLite) y devuelve su dict,
+    para usar igual que antes: job["status"]=..., job["files"]=..., etc."""
+    job_status[job_id] = {
+        "status": status,
+        "log": _JobLog(job_id, [primer_mensaje] if primer_mensaje else []),
+        "files": [],
+        "username": username,
+        "_ts": time.time(),
+    }
+    _job_persist(job_id)
+    return job_status[job_id]
+
+def job_get(job_id):
+    """Lee el estado de un job: memoria primero (worker que lo creó, rápido);
+    si no está ahí, cae a SQLite (el polling llegó a otro worker, o el
+    proceso se reinició). Devuelve None si el job no existe en ningún lado."""
+    info = job_status.get(job_id)
+    if info is not None:
+        return info
+    try:
+        con = sqlite3.connect(HIST_DB, timeout=10)
+        row = con.execute(
+            "SELECT status, log, files, username FROM job_status_db WHERE job_id=?",
+            (job_id,)).fetchone()
+        con.close()
+        if not row:
+            return None
+        status, log_json, files_json, username = row
+        return {"status": status, "log": json.loads(log_json or "[]"),
+                "files": json.loads(files_json or "[]"), "username": username}
+    except Exception:
+        logging.exception(f"job_status: no se pudo leer job_id={job_id} de SQLite")
+        return None
+
+
+# ── Repositorio de documentos (contexto extra para prompts de IA) ───────────
+# Compartido por vua/senasa/sintia.
+MODULOS_REPOSITORIO = ("vua", "senasa", "sintia")
+MODULOS_CON_CRONOLOGIA = {"vua": "vua_cronologia", "senasa": "senasa_cronologia"}
+
+def get_api_key():
+    return os.environ.get("ANTHROPIC_API_KEY", "")
+
+def contexto_repositorio(modulo):
+    """Concatena el texto completo de todos los documentos subidos para ese
+    módulo, para inyectarlo como contexto adicional en los prompts de IA."""
+    if modulo not in MODULOS_REPOSITORIO:
+        return ""
+    try:
+        con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
+        rows = con.execute(
+            "SELECT nombre_archivo, contenido FROM doc_repositorio WHERE modulo=? ORDER BY creado",
+            (modulo,)).fetchall()
+        con.close()
+    except Exception:
+        return ""
+    if not rows:
+        return ""
+    bloques = [f"--- Documento: {r['nombre_archivo']} ---\n{r['contenido']}" for r in rows]
+    return ("\n\nContexto adicional: documentos de referencia subidos por el equipo "
+            "(pueden incluir informes, antecedentes u otro material no estructurado). "
+            "Usalos como información de fondo si son relevantes para la consulta:\n\n"
+            + "\n\n".join(bloques))
+
+def _extraer_texto_docx(file_storage):
+    """Extrae texto plano (párrafos + tablas) de un .docx subido."""
+    from docx import Document
+    doc = Document(file_storage)
+    partes = [p.text for p in doc.paragraphs if p.text.strip()]
+    for tabla in doc.tables:
+        for fila in tabla.rows:
+            celdas = [c.text.strip() for c in fila.cells]
+            if any(celdas):
+                partes.append(" | ".join(celdas))
+    return "\n".join(partes)
+
+def _extraer_cronologia_de_texto(texto, modulo):
+    """Le pide a la IA que identifique hechos con fecha (reuniones, hitos,
+    decisiones) dentro de un documento y devuelve una lista de entradas
+    {fecha, actividad, participantes} para sumar a la cronología del módulo."""
+    import anthropic, httpx
+    client = anthropic.Anthropic(api_key=get_api_key(), http_client=httpx.Client(follow_redirects=True))
+    prompt = (
+        "Del siguiente documento, identificá únicamente los hechos que tengan una fecha concreta "
+        "asociada (reuniones, hitos, decisiones, entregas, cambios de estado). Ignorá contenido sin fecha. "
+        "Devolvé SOLO un JSON: una lista de objetos con las claves \"fecha\" (formato DD/MM/AAAA si se puede "
+        "inferir, si no la fecha tal como aparece en el texto), \"actividad\" (resumen breve, una oración) y "
+        "\"participantes\" (si se mencionan, si no cadena vacía). Si no hay ningún hecho con fecha, devolvé [].\n\n"
+        f"Documento:\n{texto[:12000]}"
+    )
+    msg = client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=2000,
+        system="Respondés solo con JSON válido (una lista), sin texto adicional ni markdown.",
+        messages=[{"role": "user", "content": prompt}])
+    import json as _json, re as _re
+    texto_resp = msg.content[0].text.strip()
+    texto_resp = _re.sub(r'^```(?:json)?\s*|\s*```$', '', texto_resp, flags=_re.MULTILINE).strip()
+    try:
+        entradas = _json.loads(texto_resp)
+        return entradas if isinstance(entradas, list) else []
+    except Exception:
+        logging.error(f"No se pudo parsear JSON de cronología. Respuesta cruda: {texto_resp[:500]}")
+        return []
+
+
+# ── Fechas ────────────────────────────────────────────────────────────────────
+import re as _re_mod
+
+def _validar_fecha_ddmmaaaa(s):
+    """True si s es una fecha real en formato dd/mm/aaaa (o el sentinel 'A definir')."""
+    if s == "A definir":
+        return True
+    m = _re_mod.match(r'^(\d{2})/(\d{2})/(\d{4})$', s or "")
+    if not m:
+        return False
+    d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    try:
+        datetime(y, mo, d)
+        return True
+    except ValueError:
+        return False
+
+def _normalizar_fecha_a_ddmmaaaa(s):
+    """Intenta convertir distintos formatos comunes (aaaa-mm-dd, aaaa/mm/dd, dd-mm-aaaa)
+    al estándar dd/mm/aaaa. Si no puede, devuelve 'A definir'."""
+    s = (s or "").strip()
+    if not s:
+        return "A definir"
+    if _validar_fecha_ddmmaaaa(s):
+        return s
+    m = _re_mod.match(r'^(\d{4})[-/](\d{2})[-/](\d{2})$', s)
+    if m:
+        y, mo, d = m.groups()
+        cand = f"{d}/{mo}/{y}"
+        if _validar_fecha_ddmmaaaa(cand):
+            return cand
+    m = _re_mod.match(r'^(\d{2})-(\d{2})-(\d{4})$', s)
+    if m:
+        d, mo, y = m.groups()
+        cand = f"{d}/{mo}/{y}"
+        if _validar_fecha_ddmmaaaa(cand):
+            return cand
+    return "A definir"
