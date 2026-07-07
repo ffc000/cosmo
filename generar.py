@@ -170,7 +170,7 @@ def fig_to_bytes(fig):
 
 # ── Gráficos ────────────────────────────────────────────────────────────────────
 def grafico_torta(gT, gN, gTd):
-    fig, ax = plt.subplots(figsize=(5.5,4), facecolor='white')
+    fig, ax = plt.subplots(figsize=(7,4), facecolor='white')
     valores=[gT,gN,gTd]; total=gT+gN+gTd
     labels=[f'Transmitidos\n{fmt(gT)}',f'No transmitidos\n{fmt(gN)}',f'Tard\u00edos\n{fmt(gTd)}']
     colors=[C_TRANS,C_NO_TRANS,C_TARDIO]
@@ -252,7 +252,7 @@ def grafico_rechazos_mes(rechazos_mes):
     if not rechazos_mes: return None
     labels=[mes_label(r["periodo"]) for r in rechazos_mes]
     valores=[n(r.get("MIC_RECHAZOS",0)) for r in rechazos_mes]
-    fig,ax=plt.subplots(figsize=(6,3.5),facecolor='white')
+    fig,ax=plt.subplots(figsize=(7,4),facecolor='white')
     ax.bar(range(len(labels)),valores,color=C_NO_TRANS,edgecolor='white',linewidth=0.5)
     ax.set_xticks(range(len(labels))); ax.set_xticklabels(labels,fontsize=9)
     ax.set_ylabel("MICs rechazados",fontsize=9)
@@ -413,6 +413,60 @@ def insertar_grafico(doc, img_bytes, width_cm=14):
     if not img_bytes: return
     p=doc.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.CENTER
     p.add_run().add_picture(img_bytes, width=Cm(width_cm)); doc.add_paragraph()
+
+def _campo_word(p, instr):
+    """Inserta un campo de Word (PAGE, NUMPAGES, TOC, etc.) que se calcula solo
+    al abrir/actualizar el documento — no se puede calcular desde python-docx."""
+    r1 = p.add_run()
+    f1 = OxmlElement('w:fldChar'); f1.set(qn('w:fldCharType'), 'begin'); r1._r.append(f1)
+    r2 = p.add_run()
+    it = OxmlElement('w:instrText'); it.set(qn('xml:space'), 'preserve'); it.text = instr
+    r2._r.append(it)
+    r3 = p.add_run()
+    f2 = OxmlElement('w:fldChar'); f2.set(qn('w:fldCharType'), 'separate'); r3._r.append(f2)
+    r4 = p.add_run()
+    f3 = OxmlElement('w:fldChar'); f3.set(qn('w:fldCharType'), 'end'); r4._r.append(f3)
+    return r3
+
+def _insertar_toc(doc):
+    """Índice automático — Word lo completa al abrir el archivo (o con clic
+    derecho > Actualizar campo) usando los niveles de heading ya presentes."""
+    doc.add_heading("Índice", level=1)
+    p = doc.add_paragraph()
+    r3 = _campo_word(p, 'TOC \\o "1-2" \\h \\z \\u')
+    aviso = p.add_run(" (clic derecho sobre esta línea > Actualizar campo, para generar el índice)")
+    aviso.font.size = Pt(8); aviso.font.italic = True; aviso.font.color.rgb = RGBColor(0x80,0x80,0x80)
+    try:
+        settings_el = doc.settings.element
+        upd = OxmlElement('w:updateFields'); upd.set(qn('w:val'), 'true')
+        settings_el.append(upd)
+    except Exception:
+        pass
+    doc.add_page_break()
+
+def _agregar_pie_pagina(doc, clasificacion="Uso interno — ARCA / DI REPA"):
+    """Pie de página con clasificación y 'Página X de Y', repetido en cada hoja."""
+    section = doc.sections[0]
+    footer = section.footer
+    footer.is_linked_to_previous = False
+    p = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r0 = p.add_run(f"{clasificacion}   •   Página ")
+    r0.font.size = Pt(8); r0.font.color.rgb = RGBColor(0x80,0x80,0x80)
+    _campo_word(p, "PAGE")
+    r1 = p.add_run(" de ")
+    r1.font.size = Pt(8); r1.font.color.rgb = RGBColor(0x80,0x80,0x80)
+    _campo_word(p, "NUMPAGES")
+
+def _agregar_encabezado(doc, texto):
+    """Encabezado repetido en cada hoja (a falta de logo, texto de membrete)."""
+    section = doc.sections[0]
+    header = section.header
+    header.is_linked_to_previous = False
+    p = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    r = p.add_run(texto)
+    r.font.size = Pt(8); r.font.color.rgb = RGBColor(0x80,0x80,0x80)
 
 def _llamar_ia(client, prompt, max_tokens):
     """temperature baja (no 0 para no matar toda variación de estilo, pero sí
@@ -851,6 +905,8 @@ def _generar_word(pais, anio, mes_d, mes_h, version,
     for section in doc.sections:
         section.top_margin=Cm(2.5); section.bottom_margin=Cm(2.5)
         section.left_margin=Cm(3); section.right_margin=Cm(2.5)
+    _agregar_encabezado(doc, "ARCA — Dirección de Reingeniería de Procesos Aduaneros")
+    _agregar_pie_pagina(doc)
 
     # Portada
     titulo=doc.add_heading(f"ESTADO DE SITUACI\u00d3N SINTIA {anio} {pais}-AR",0)
@@ -859,9 +915,44 @@ def _generar_word(pais, anio, mes_d, mes_h, version,
         p=doc.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.CENTER
         run=p.add_run(txt); run.font.size=Pt(sz); run.font.color.rgb=RGBColor(0x40,0x40,0x40)
     doc.add_paragraph()
-    meta=doc.add_paragraph()
+    meta=doc.add_paragraph(); meta.alignment=WD_ALIGN_PARAGRAPH.CENTER
     meta.add_run("Versi\u00f3n: ").bold=True; meta.add_run(f"{version}   ")
     meta.add_run("\u00daltima modificaci\u00f3n: ").bold=True; meta.add_run(datetime.today().strftime("%d/%m/%Y"))
+    dest=doc.add_paragraph(); dest.alignment=WD_ALIGN_PARAGRAPH.CENTER
+    dest.add_run("Destinatario: ").bold=True; dest.add_run("Secci\u00f3n Simplificaci\u00f3n de Procesos Operativos — DI REPA")
+    clas=doc.add_paragraph(); clas.alignment=WD_ALIGN_PARAGRAPH.CENTER
+    r_clas=clas.add_run("USO INTERNO"); r_clas.bold=True; r_clas.font.size=Pt(9); r_clas.font.color.rgb=RGBColor(0xA0,0x30,0x30)
+    doc.add_page_break()
+
+    # Índice (se completa al abrir el documento en Word / actualizar campo)
+    _insertar_toc(doc)
+
+    # Resumen ejecutivo — KPIs + veredicto de una línea, calculado (no generado por IA)
+    # para que sea 100% determinístico y no dependa de la disponibilidad de la API.
+    doc.add_heading("Resumen Ejecutivo", level=1)
+    pct_trans_num = pct_f(gT, gTot) if gTot > 0 else 0
+    if pct_trans_num >= 80:
+        veredicto = "El circuito muestra un desempeño sólido en la transmisión anticipada del MIC-DTA, con un volumen acotado de rechazos."
+    elif pct_trans_num >= 50:
+        veredicto = "El circuito muestra un desempeño parcial en la transmisión anticipada del MIC-DTA, con margen de mejora en los indicadores de sincronización."
+    else:
+        veredicto = "El circuito evidencia baja transmisión anticipada del MIC-DTA en el período, un punto a seguir de cerca en los próximos meses."
+    doc.add_paragraph(veredicto)
+    kpi_box(doc, [
+        ("TOTAL INGRESOS",  fmt(gTot),          periodo),
+        ("TRANSMITIDOS",    fmt(gT),             pct(gT,gTot)),
+        ("NO TRANSMITIDOS", fmt(gN),             pct(gN,gTot)),
+        ("TARD\u00cdOS",         fmt(gTd),            pct(gTd,gTot)),
+        ("RECHAZOS ¹",        fmt(total_rechazos), pct(total_rechazos,gTot)),
+    ])
+    # Nota aclaratoria: rechazos no son categoría excluyente
+    nota = doc.add_paragraph()
+    nota_run1 = nota.add_run("¹ ")
+    nota_run1.bold = True
+    nota_run1.font.size = Pt(8)
+    nota_run2 = nota.add_run("Los rechazos son intentos fallidos de transmisión y pueden superponerse con las otras categorías. No representan una categoría excluyente del total de ingresos.")
+    nota_run2.font.size = Pt(8)
+    nota_run2.font.color.rgb = RGBColor(0x60, 0x60, 0x60)
     doc.add_page_break()
 
     # 1. Introducción
@@ -875,23 +966,9 @@ def _generar_word(pais, anio, mes_d, mes_h, version,
         doc.add_paragraph("En este contexto, el PAD constituye el sistema central de registro de las operaciones de ingreso y egreso terrestre del pa\u00eds, mientras que SINTIA cumple un rol clave en la transmisi\u00f3n anticipada del MIC-DTA, elemento fundamental para la correcta gesti\u00f3n operativa. La adecuada sincronizaci\u00f3n entre ambos sistemas resulta determinante para la optimizaci\u00f3n de los circuitos operativos y la mejora en los tiempos de registro, control y despacho.")
         doc.add_paragraph(f"Del an\u00e1lisis realizado se desprende que, durante el per\u00edodo bajo estudio, persisten desv\u00edos en el proceso de transmisi\u00f3n, con una proporci\u00f3n limitada de MICs transmitidos en forma anticipada ({pct(gT,gTot)}), presencia de transmisiones tard\u00edas ({pct(gTd,gTot)}) y un volumen significativo de operaciones no transmitidas ({pct(gN,gTot)}). Asimismo, se identificaron {fmt(total_rechazos)} MICs que por inconsistencias son rechazados.")
         doc.add_paragraph("A continuaci\u00f3n, se desarrollan en detalle los principales indicadores, su evoluci\u00f3n y los resultados estad\u00edsticos obtenidos, a fin de facilitar el an\u00e1lisis de la operatoria relevada.")
+    doc.add_paragraph("Metodolog\u00eda: los datos surgen del cruzamiento entre SINTIA y el Portal Aduanero (PAD) para el per\u00edodo y circuito indicados en la portada; los indicadores se calculan sobre el total de ingresos terrestres registrados, sin proyecciones ni estimaciones.").runs[0].font.size=Pt(9)
 
-    kpi_box(doc, [
-        ("TOTAL INGRESOS",  fmt(gTot),          periodo),
-        ("TRANSMITIDOS",    fmt(gT),             pct(gT,gTot)),
-        ("NO TRANSMITIDOS", fmt(gN),             pct(gN,gTot)),
-        ("TARD\u00cdOS",         fmt(gTd),            pct(gTd,gTot)),
-        ("RECHAZOS ¹",        fmt(total_rechazos), pct(total_rechazos,gTot)),
-    ])
 
-    # Nota aclaratoria: rechazos no son categoría excluyente
-    nota = doc.add_paragraph()
-    nota_run1 = nota.add_run("¹ ")
-    nota_run1.bold = True
-    nota_run1.font.size = Pt(8)
-    nota_run2 = nota.add_run("Los rechazos son intentos fallidos de transmisión y pueden superponerse con las otras categorías. No representan una categoría excluyente del total de ingresos.")
-    nota_run2.font.size = Pt(8)
-    nota_run2.font.color.rgb = RGBColor(0x60, 0x60, 0x60)
 
     # 2. Estado de situación
     doc.add_heading("2.  Estado de Situaci\u00f3n",level=1)
@@ -1235,6 +1312,28 @@ def _generar_word(pais, anio, mes_d, mes_h, version,
             [[f"{anio_ant}",fmt(ia_t),fmt(ia_tr),pct(ia_tr,ia_t),fmt(ia_nt),pct(ia_nt,ia_t),fmt(ia_td),pct(ia_td,ia_t)],
              [f"{anio}",fmt(gTot),fmt(gT),pct(gT,gTot),fmt(gN),pct(gN,gTot),fmt(gTd),pct(gTd,gTot)]],
             col_widths=[3.0,1.8,1.6,1.2,1.8,1.2,1.6,1.2], semaforo_col=2, semaforo_total_col=1)
+
+    # Apéndice — Glosario (texto fijo, no generado por IA, para que sea auditable)
+    doc.add_page_break()
+    doc.add_heading("Anexo — Glosario de siglas", level=1)
+    glosario_items = [
+        ("SINTIA", "Sistema de Información Aduanera — registro y control de la operatoria del circuito."),
+        ("PAD", "Portal Aduanero — sistema central de registro de ingreso/egreso terrestre."),
+        ("MIC", "Manifiesto Internacional de Cargas."),
+        ("MIC-DTA", "Manifiesto Internacional de Cargas - Declaración de Tránsito Aduanero."),
+        ("DTA", "Declaración de Tránsito Aduanero."),
+        ("ARCA", "Agencia de Recaudación y Control Aduanero."),
+        ("CRT", "Carta de Porte Internacional por Carretera."),
+        ("INDNCM", "Indicador de Nomenclatura Común del Mercosur."),
+        ("PATAI", "Presentación Anticipada de Transportes de Ingreso."),
+        ("OFTAI", "Oficialización de Transportes de Ingreso."),
+        ("Cargado", "Camión con mercadería declarada en el MIC-DTA."),
+        ("Lastre", "Camión sin carga (vacío) en el circuito."),
+    ]
+    for sigla, desc in glosario_items:
+        gp = doc.add_paragraph()
+        gp.add_run(f"{sigla}: ").bold = True
+        gp.add_run(desc)
 
     nombre=f"Informe_SINTIA_{pais}_{anio}_{mes_d}-{mes_h}_v{version}.docx"
     ruta=os.path.join(carpeta,nombre); doc.save(ruta); log_fn("✓ Informe Word generado")
