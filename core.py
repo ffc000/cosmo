@@ -13,9 +13,62 @@ sin que core.py necesite saber que existen.
 import os
 import sqlite3
 from functools import wraps
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from flask import session, redirect, url_for, request, jsonify
+from flask import Flask, session, redirect, url_for, request, jsonify
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from flask_wtf import CSRFProtect
+from werkzeug.middleware.proxy_fix import ProxyFix
+
+# ── App Flask + CSRF + rate limiter ─────────────────────────────────────────
+# Viven acá (no en app.py) para que los blueprints puedan hacer
+# `from core import app, limiter` sin generar un import circular con app.py,
+# y para garantizar que `limiter` ya exista antes de que se importe
+# cualquier blueprint que use @limiter.limit(...) en sus rutas.
+app = Flask(__name__)
+
+# Confía en 1 proxy (nginx) para X-Forwarded-For: reescribe request.remote_addr
+# de forma segura y evita que el cliente falsee su IP con headers propios.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=0, x_port=0, x_prefix=0)
+
+_secret = os.environ.get("SECRET_KEY")
+if not _secret:
+    raise RuntimeError("SECRET_KEY no está definida en las variables de entorno. "
+                       "Exportá una clave aleatoria antes de iniciar la aplicación.")
+app.secret_key = _secret
+app.permanent_session_lifetime = timedelta(minutes=10)
+app.config['MAX_CONTENT_LENGTH'] = None  # Sin límite en Flask — nginx maneja con client_max_body_size 2G
+app.config['SESSION_COOKIE_SECURE'] = True     # solo se envía por HTTPS
+app.config['SESSION_COOKIE_HTTPONLY'] = True   # no accesible desde JS
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # mitiga CSRF básico en navegación cruzada
+app.config['WTF_CSRF_TIME_LIMIT'] = None  # el timeout de sesión ya lo maneja login_required (10min)
+
+@app.after_request
+def _security_headers(resp):
+    """Headers de defensa en profundidad — no reemplazan la validación de
+    entrada/salida ya hecha, pero limitan el daño si algo se escapa:
+    - X-Frame-Options: evita que la app se embeba en un <iframe> ajeno (clickjacking).
+    - X-Content-Type-Options: evita que el navegador "adivine" un tipo de
+      contenido distinto al declarado (mitiga algunos vectores de XSS).
+    - Strict-Transport-Security: fuerza HTTPS en el navegador (la app ya
+      requiere cookies solo por HTTPS con SESSION_COOKIE_SECURE).
+    - Referrer-Policy: no filtra la URL completa (con tokens/ids) a terceros.
+    """
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return resp
+
+csrf = CSRFProtect(app)
+
+# storage_uri: en memoria por defecto (sirve con 1 solo worker). Si se corre con
+# más de un worker (gunicorn -w >1), cada worker llevaría su propia cuenta y el
+# límite dejaría de cumplirse — en ese caso definir RATELIMIT_STORAGE_URI=redis://...
+limiter = Limiter(key_func=get_remote_address, app=app,
+    default_limits=["300 per minute"],
+    storage_uri=os.environ.get("RATELIMIT_STORAGE_URI", "memory://"))
 
 # ── Rutas de datos (configurables por variable de entorno para poder
 # testear sin arriesgar la base real — ver tests/conftest.py) ─────────────────
