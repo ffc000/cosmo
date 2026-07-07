@@ -128,6 +128,9 @@ def init_finanzas_db(db_path: str):
         mes TEXT, categoria_id TEXT, monto REAL,
         PRIMARY KEY (mes, categoria_id)
     )""")
+    con.execute("""CREATE TABLE IF NOT EXISTS fin_ingresos (
+        mes TEXT PRIMARY KEY, salario REAL DEFAULT 0, fondo REAL DEFAULT 0, otros REAL DEFAULT 0
+    )""")
     con.execute("""CREATE TABLE IF NOT EXISTS fin_ddjj (
         id TEXT PRIMARY KEY, anio INTEGER UNIQUE NOT NULL, fecha_cierre TEXT,
         valor_dolar REAL NOT NULL, estado TEXT DEFAULT 'borrador',
@@ -603,6 +606,25 @@ def set_presupuesto_total(db_path: str, mes: str, monto: float):
     con = sqlite3.connect(db_path)
     con.execute("INSERT OR REPLACE INTO fin_presupuesto (mes,categoria_id,monto) VALUES (?,NULL,?)",
                 (mes, monto))
+    con.commit(); con.close()
+
+
+def get_ingresos(db_path: str, mes: str):
+    """Devuelve {salario, fondo, otros, total} para ese mes (0 si no hay nada cargado)."""
+    con = sqlite3.connect(db_path); con.row_factory = sqlite3.Row
+    row = con.execute("SELECT salario, fondo, otros FROM fin_ingresos WHERE mes=?", (mes,)).fetchone()
+    con.close()
+    if not row:
+        return {"salario": 0, "fondo": 0, "otros": 0, "total": 0}
+    d = dict(row)
+    d["total"] = d["salario"] + d["fondo"] + d["otros"]
+    return d
+
+
+def set_ingresos(db_path: str, mes: str, salario: float, fondo: float, otros: float):
+    con = sqlite3.connect(db_path)
+    con.execute("INSERT OR REPLACE INTO fin_ingresos (mes,salario,fondo,otros) VALUES (?,?,?,?)",
+                (mes, salario, fondo, otros))
     con.commit(); con.close()
 
 
