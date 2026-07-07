@@ -22,7 +22,9 @@ def _paginas_pdf_real():
 def test_parse_recibo_real_categoria_sueldo():
     r = rsp.parse_recibo_sueldo(_paginas_pdf_real())
     assert r["categoria"] == "sueldo"
-    assert r["mes"] == "2026-06"
+    # El PDF dice "período JUNIO 2026" pero la Fecha de Pago es 01/07/2026 —
+    # se archiva en el mes de pago, no en el período liquidado.
+    assert r["mes"] == "2026-07"
 
 
 def test_parse_recibo_real_totales_coinciden_con_el_pdf():
@@ -46,6 +48,29 @@ def test_parse_recibo_real_suma_serv_extraordinario():
 def _texto(lineas_detalle, total_rem, total_desc, periodo="JUNIO 2026"):
     cuerpo = "\n".join(lineas_detalle)
     return [f"{periodo}\n{cuerpo}\nTotal Remuneraciones {total_rem}\nTotal Descuentos {total_desc}"]
+
+
+def test_mes_usa_fecha_de_pago_no_el_periodo():
+    """La Fecha de Pago puede caer en un mes distinto al período liquidado
+    (ej. período junio, pago recién en julio) — debe primar la fecha de pago."""
+    paginas = [
+        "LIQUIDACIÓN CORRESPONDIENTE AL PERÍODO: JUNIO 2026\n"
+        "GALICIA 1000 - 3000413046235 01/07/2026 AB0FFA0100 SEC. EJEMPLO\n"
+        "3-001 TITULO UNIVERS. 5AÑOS INC. A) 25 % 56954.5\n"
+        "Total Remuneraciones 56954.5\nTotal Descuentos -5000"
+    ]
+    r = rsp.parse_recibo_sueldo(paginas)
+    assert r["mes"] == "2026-07"
+
+
+def test_mes_cae_a_periodo_si_no_hay_fecha_de_pago_reconocible():
+    """Si el formato no tiene la línea de datos bancarios (recibo distinto),
+    no se pierde el recibo: se usa el período impreso como respaldo."""
+    r = rsp.parse_recibo_sueldo(_texto(
+        ["3-001 TITULO UNIVERS. 5AÑOS INC. A) 25 % 56954.5"],
+        total_rem=56954.5, total_desc=-5000, periodo="JUNIO 2026",
+    ))
+    assert r["mes"] == "2026-06"
 
 
 def test_categoria_fondo_si_tiene_115_001():
