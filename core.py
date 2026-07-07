@@ -15,6 +15,9 @@ import sqlite3
 import json
 import time
 import logging
+import threading
+import urllib.request
+import urllib.parse
 from functools import wraps
 from datetime import datetime, timedelta
 
@@ -382,3 +385,25 @@ def _normalizar_fecha_a_ddmmaaaa(s):
         if _validar_fecha_ddmmaaaa(cand):
             return cand
     return "A definir"
+
+
+# ── Telegram ──────────────────────────────────────────────────────────────────
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+
+def notificar_telegram(msg: str):
+    """Envía un mensaje al bot de Telegram. No rompe el flujo si falla.
+    Corre en un hilo aparte para no bloquear la respuesta al usuario mientras
+    espera la llamada de red (hasta 3s si Telegram está lento/caído)."""
+    if not TELEGRAM_TOKEN:
+        return
+    def _enviar():
+        try:
+            urllib.request.urlopen(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+                f"?chat_id={TELEGRAM_CHAT_ID}&text=" + urllib.parse.quote(msg),
+                timeout=3
+            )
+        except Exception:
+            pass
+    threading.Thread(target=_enviar, daemon=True).start()
