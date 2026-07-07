@@ -3,7 +3,7 @@ CosmoTools — app.py v2
 Plataforma de herramientas DI REPA / ARCA
 """
 
-import os, sqlite3, io, uuid, threading, bcrypt, logging, subprocess, json, tempfile, re, secrets
+import os, sqlite3, io, uuid, threading, bcrypt, logging, subprocess, json, tempfile, re, secrets, time, shutil
 import xml.etree.ElementTree as ET
 import urllib.request
 import urllib.parse
@@ -188,8 +188,88 @@ def inject_session_vars():
     }
 
 # ── Job queue ──────────────────────────────────────────────────────────────────
+# job_status vivía solo en memoria del proceso: si la app corre con más de un
+# worker (gunicorn -w >1), el worker que crea el job y el que atiende el
+# polling de progreso pueden ser procesos distintos, y el segundo nunca ve el
+# job (se ve como "colgado" del lado del usuario, sin ningún error visible).
+# Ahora cada cambio de estado se espeja a SQLite (tabla job_status_db), que sí
+# es visible desde cualquier worker. job_status en memoria se mantiene además
+# como caché rápida para el worker que efectivamente está corriendo el job.
 job_status = {}
 import threading as _threading
+
+def _init_job_status_db():
+    try:
+        con = sqlite3.connect(HIST_DB, timeout=10)
+        con.execute("""CREATE TABLE IF NOT EXISTS job_status_db (
+            job_id TEXT PRIMARY KEY, status TEXT, log TEXT, files TEXT,
+            username TEXT, ts REAL)""")
+        con.commit(); con.close()
+    except Exception:
+        logging.exception("No se pudo crear la tabla job_status_db")
+
+def _job_persist(job_id):
+    """Espeja el estado actual de job_status[job_id] a SQLite."""
+    info = job_status.get(job_id)
+    if info is None:
+        return
+    try:
+        con = sqlite3.connect(HIST_DB, timeout=10)
+        con.execute("""INSERT INTO job_status_db (job_id, status, log, files, username, ts)
+            VALUES (?,?,?,?,?,?)
+            ON CONFLICT(job_id) DO UPDATE SET
+                status=excluded.status, log=excluded.log, files=excluded.files, ts=excluded.ts""",
+            (job_id, info.get("status", "running"), json.dumps(list(info.get("log", []))),
+             json.dumps(info.get("files", [])), info.get("username", "?"), time.time()))
+        con.commit(); con.close()
+    except Exception:
+        logging.exception(f"job_status: no se pudo persistir job_id={job_id}")
+
+class _JobLog(list):
+    """Lista de progreso de un job. Persiste a SQLite en cada .append(), para
+    que el progreso sea visible en vivo desde cualquier worker, no solo el
+    que está corriendo el hilo de background."""
+    def __init__(self, job_id, inicial=None):
+        super().__init__(inicial or [])
+        self._job_id = job_id
+    def append(self, item):
+        super().append(item)
+        _job_persist(self._job_id)
+
+def job_create(job_id, primer_mensaje="", username="?", status="running"):
+    """Crea un job nuevo (en memoria + espejado en SQLite) y devuelve su dict,
+    para usar igual que antes: job["status"]=..., job["files"]=..., etc."""
+    job_status[job_id] = {
+        "status": status,
+        "log": _JobLog(job_id, [primer_mensaje] if primer_mensaje else []),
+        "files": [],
+        "username": username,
+        "_ts": time.time(),
+    }
+    _job_persist(job_id)
+    return job_status[job_id]
+
+def job_get(job_id):
+    """Lee el estado de un job: memoria primero (worker que lo creó, rápido);
+    si no está ahí, cae a SQLite (el polling llegó a otro worker, o el
+    proceso se reinició). Devuelve None si el job no existe en ningún lado."""
+    info = job_status.get(job_id)
+    if info is not None:
+        return info
+    try:
+        con = sqlite3.connect(HIST_DB, timeout=10)
+        row = con.execute(
+            "SELECT status, log, files, username FROM job_status_db WHERE job_id=?",
+            (job_id,)).fetchone()
+        con.close()
+        if not row:
+            return None
+        status, log_json, files_json, username = row
+        return {"status": status, "log": json.loads(log_json or "[]"),
+                "files": json.loads(files_json or "[]"), "username": username}
+    except Exception:
+        logging.exception(f"job_status: no se pudo leer job_id={job_id} de SQLite")
+        return None
 
 # ── Recordatorio de servicios recurrentes (finanzas) ────────────────────────────
 def _mes_anterior_str(mes):
@@ -526,8 +606,7 @@ def repositorio_download(modulo, doc_id):
     return send_file(row[1], as_attachment=True, download_name=row[0])
 
 def _limpiar_jobs_viejos():
-    """Elimina jobs de más de 2 horas para evitar memory leak."""
-    import time
+    """Elimina jobs de más de 2 horas para evitar memory leak (en memoria y en SQLite)."""
     while True:
         time.sleep(3600)  # cada hora
         ahora = time.time()
@@ -535,6 +614,12 @@ def _limpiar_jobs_viejos():
                   if v.get('_ts', ahora) < ahora - 7200]
         for k in viejos:
             job_status.pop(k, None)
+        try:
+            con = sqlite3.connect(HIST_DB, timeout=10)
+            con.execute("DELETE FROM job_status_db WHERE ts < ?", (ahora - 7200,))
+            con.commit(); con.close()
+        except Exception:
+            logging.exception("No se pudo limpiar job_status_db")
 _threading.Thread(target=_limpiar_jobs_viejos, daemon=True).start()
 
 # ── Historial DB ───────────────────────────────────────────────────────────────
@@ -973,6 +1058,7 @@ def _migrar_fechas_cronologia():
     con.commit(); con.close()
 
 init_historial()
+_init_job_status_db()
 _migrar_fechas_cronologia()
 
 # WAL mejora mucho la concurrencia lectura/escritura de SQLite: con dos hilos de
@@ -1072,6 +1158,86 @@ def login():
             error = "Usuario o contraseña incorrectos"
     return render_template("login.html", error=error)
 
+
+@app.route("/health")
+def health_check():
+    """Chequeo mínimo, sin autenticación, pensado para monitoreo automático
+    (uptime checks, balanceador de carga). No expone detalles internos."""
+    try:
+        con = sqlite3.connect(HIST_DB, timeout=5)
+        con.execute("SELECT 1")
+        con.close()
+        return jsonify({"status": "ok", "ts": datetime.now().isoformat()})
+    except Exception:
+        return jsonify({"status": "error", "ts": datetime.now().isoformat()}), 503
+
+@app.route("/api/admin/health")
+@login_required
+@admin_required("sistema")
+def health_check_detalle():
+    """Chequeo detallado para admins: BD, disco, último backup, último
+    informe generado, configuración de Telegram y del rate limiter."""
+    detalle = {}
+
+    # Bases de datos
+    for nombre, ruta in [("historial_db", HIST_DB), ("pad_db", DB_PATH)]:
+        try:
+            if os.path.exists(ruta):
+                con = sqlite3.connect(ruta, timeout=5)
+                con.execute("SELECT 1")
+                con.close()
+                detalle[nombre] = {"ok": True, "size_mb": round(os.path.getsize(ruta)/1024/1024, 1)}
+            else:
+                detalle[nombre] = {"ok": False, "error": "archivo no existe"}
+        except Exception as e:
+            detalle[nombre] = {"ok": False, "error": str(e)}
+
+    # Espacio en disco
+    try:
+        uso = shutil.disk_usage(os.path.dirname(HIST_DB) or "/")
+        detalle["disco"] = {
+            "libre_gb": round(uso.free/1024/1024/1024, 1),
+            "total_gb": round(uso.total/1024/1024/1024, 1),
+            "pct_libre": round(100*uso.free/uso.total, 1),
+        }
+    except Exception as e:
+        detalle["disco"] = {"error": str(e)}
+
+    # Último backup
+    try:
+        con = sqlite3.connect(HIST_DB, timeout=5)
+        row = con.execute("SELECT fecha, origen FROM backups ORDER BY id DESC LIMIT 1").fetchone()
+        con.close()
+        detalle["ultimo_backup"] = {"fecha": row[0], "origen": row[1]} if row else None
+    except Exception as e:
+        detalle["ultimo_backup"] = {"error": str(e)}
+
+    # Último informe SINTIA generado
+    try:
+        con = sqlite3.connect(HIST_DB, timeout=5)
+        row = con.execute("SELECT fecha, usuario, descripcion FROM historial WHERE tipo='sintia' ORDER BY fecha DESC LIMIT 1").fetchone()
+        con.close()
+        detalle["ultimo_informe"] = {"fecha": row[0], "usuario": row[1], "descripcion": row[2]} if row else None
+    except Exception as e:
+        detalle["ultimo_informe"] = {"error": str(e)}
+
+    # Jobs corriendo ahora mismo (en este worker)
+    detalle["jobs_activos_este_worker"] = sum(1 for v in job_status.values() if v.get("status") == "running")
+
+    # Configuración
+    detalle["telegram_configurado"] = bool(TELEGRAM_TOKEN)
+    detalle["rate_limiter_storage"] = os.environ.get("RATELIMIT_STORAGE_URI", "memory://")
+    if detalle["rate_limiter_storage"] == "memory://":
+        detalle["aviso_rate_limiter"] = ("En memoria: si corren más de 1 worker, el límite de intentos "
+                                          "no se comparte entre procesos. Ver RATELIMIT_STORAGE_URI.")
+
+    ok_general = all([
+        detalle.get("historial_db", {}).get("ok"),
+        detalle.get("pad_db", {}).get("ok", True),  # puede no estar cargada aún, no es un fallo
+        detalle.get("disco", {}).get("pct_libre", 100) > 5,
+    ])
+    return jsonify({"status": "ok" if ok_general else "degraded", "detalle": detalle,
+                    "ts": datetime.now().isoformat()})
 
 @app.route("/logout")
 def logout():
@@ -1294,8 +1460,8 @@ def update_csv():
     f.save(tmp_path)
     size_kb = round(os.path.getsize(tmp_path)/1024,1)
     job_id = str(uuid.uuid4())[:8]
-    job_status[job_id] = {"status":"running","log":[f"Archivo recibido: {size_kb} KB"],"files":[],
-                           "username": session.get("username","?")}
+    job_create(job_id, f"Archivo recibido: {size_kb} KB",
+               username=session.get("username", "?"))
     logging.info(f"CSV UPLOAD | tabla={tabla} | size={size_kb}KB | modo={modo}")
     t = threading.Thread(target=_run_csv_job, args=(job_id, tmp_path, tabla, modo))
     t.start()
@@ -1307,11 +1473,13 @@ def _run_csv_job(job_id, tmp_path, tabla, modo="reemplazar"):
     try:
         _procesar_csv(tmp_path, tabla, log, modo)
         job_status[job_id]["status"] = "done"
+        _job_persist(job_id)
         ultimo = log[-1] if log else ""
         notificar_telegram(f"📄 Tabla {tabla} actualizada por {username}\n{ultimo}")
     except Exception as e:
         log.append(f"✗ Error: {e}")
         job_status[job_id]["status"] = "error"
+        _job_persist(job_id)
         notificar_telegram(f"⚠️ Error actualizando tabla {tabla} ({username}): {e}")
     finally:
         try: os.remove(tmp_path)
@@ -1518,9 +1686,11 @@ def run_job(job_id, pais, anio, mes_d, mes_h, usar_ia, username):
         logging.info(f"INFORME OK | user={username} | pais={pais} | {mes_d}-{mes_h}/{anio}")
         job_status[job_id]["status"] = "done"
         job_status[job_id]["files"]  = archivos
+        _job_persist(job_id)
     except Exception as e:
         log.append(f"✗ Error: {e}")
         job_status[job_id]["status"] = "error"
+        _job_persist(job_id)
 
 @app.route("/api/generar", methods=["POST"])
 @login_required
@@ -1536,7 +1706,7 @@ def api_generar():
     usar_ia = data.get("usar_ia",True) and bool(get_api_key())
     username = session.get("username","?")
     job_id  = str(uuid.uuid4())[:8]
-    job_status[job_id] = {"status":"running","log":["Iniciando generación..."],"files":[],"username":username}
+    job_create(job_id, "Iniciando generación...", username=username)
     t = threading.Thread(target=run_job, args=(job_id, pais, anio, mes_d, mes_h, usar_ia, username))
     t.start()
     return jsonify({"ok":True,"job_id":job_id})
@@ -1550,7 +1720,7 @@ def _job_autorizado(info):
 @app.route("/api/job/<job_id>")
 @login_required
 def job_poll(job_id):
-    info = job_status.get(job_id)
+    info = job_get(job_id)
     if not info: return jsonify({"error":"Job no encontrado"})
     if not _job_autorizado(info):
         return jsonify({"error":"Sin permiso"}), 403
@@ -1559,7 +1729,7 @@ def job_poll(job_id):
 @app.route("/api/download/<job_id>/<int:idx>")
 @login_required
 def download_file(job_id, idx):
-    info = job_status.get(job_id,{})
+    info = job_get(job_id) or {}
     if not _job_autorizado(info):
         return "Sin permiso",403
     files = info.get("files",[])
@@ -1976,7 +2146,7 @@ def vua_informe():
              "riesgos": riesgos, "minutas": minutas}
 
     job_id = str(uuid.uuid4())[:8]
-    job_status[job_id] = {"status": "running", "log": ["Generando informe VUA..."], "files": [], "_ts": __import__("time").time()}
+    job_create(job_id, "Generando informe VUA...", username=session.get("username", "?"))
 
     def _run_vua_informe(job_id, datos):
         log = job_status[job_id]["log"]
@@ -1995,6 +2165,7 @@ def vua_informe():
                 stdout_txt = result.stdout[:200] if result.stdout else "(sin stdout)"
                 log.append(f"✗ Error Node (rc={result.returncode}): {stderr_txt} | stdout: {stdout_txt}")
                 job_status[job_id]["status"] = "error"
+                _job_persist(job_id)
                 return
             fname = f"Informe_VUA_{datetime.today().strftime('%Y%m%d_%H%M')}_{job_id}.docx"
             os.makedirs(OUTPUT_FOLDER, exist_ok=True)
@@ -2006,14 +2177,17 @@ def vua_informe():
             job_status[job_id]["files"] = [dest]
             log.append(f"✓ Informe generado: {fname}")
             job_status[job_id]["status"] = "done"
+            _job_persist(job_id)
             try: os.unlink(json_path)
             except: pass
         except subprocess.TimeoutExpired:
             log.append("✗ Timeout generando informe")
             job_status[job_id]["status"] = "error"
+            _job_persist(job_id)
         except Exception as e:
             log.append(f"✗ {e}")
             job_status[job_id]["status"] = "error"
+            _job_persist(job_id)
 
     threading.Thread(target=_run_vua_informe, args=(job_id, datos)).start()
     return jsonify({"ok": True, "job_id": job_id})
@@ -2022,9 +2196,9 @@ def vua_informe():
 @login_required
 @modulo_required("vua")
 def vua_informe_download(job_id):
-    """Descarga el informe VUA. Busca primero en memoria, luego en disco por job_id."""
-    # 1. Verificar en memoria (caso normal: proceso no reiniciado)
-    job = job_status.get(job_id)
+    """Descarga el informe VUA. Busca primero en memoria/SQLite, luego en disco por job_id."""
+    # 1. Verificar estado del job (memoria del worker que lo creó, o SQLite si es otro worker)
+    job = job_get(job_id)
     if job:
         if job["status"] != "done":
             return jsonify({"ok": False, "status": job["status"], "log": job.get("log",[])}), 202
@@ -2947,7 +3121,7 @@ def senasa_informe():
     }
     con.close()
     job_id = str(uuid.uuid4())[:8]
-    job_status[job_id] = {"status": "running", "log": ["Generando informe SENASA..."], "files": [], "_ts": __import__("time").time()}
+    job_create(job_id, "Generando informe SENASA...", username=session.get("username", "?"))
 
     def _run(jid, datos):
         log = job_status[jid]["log"]
@@ -2975,9 +3149,11 @@ def senasa_informe():
             job_status[jid]["files"] = [dest]
             log.append(f"✓ Informe generado: {fname}")
             job_status[jid]["status"] = "done"
+            _job_persist(jid)
         except Exception as e:
             log.append(f"✗ {e}")
             job_status[jid]["status"] = "error"
+            _job_persist(jid)
 
     threading.Thread(target=_run, args=(job_id, datos)).start()
     return jsonify({"ok": True, "job_id": job_id})
@@ -2987,7 +3163,7 @@ def senasa_informe():
 @modulo_required("senasa")
 def senasa_informe_download(job_id):
     import glob
-    job = job_status.get(job_id)
+    job = job_get(job_id)
     if job and job.get("status") == "done" and job.get("files") and os.path.exists(job["files"][0]):
         return send_file(job["files"][0], as_attachment=True,
             download_name=os.path.basename(job["files"][0]),
