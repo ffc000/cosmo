@@ -106,3 +106,31 @@ def test_buscar_posible_duplicado_no_detecta_monto_distinto(db_path):
     }])
     duplicados = finanzas.buscar_posible_duplicado(db_path, tarjeta_id, "2026-05-11", 2000.0, dias=5)
     assert duplicados == []
+
+
+def test_ingresos_vacio_devuelve_ceros(db_path):
+    assert finanzas.get_ingresos(db_path, "2026-07") == {"salario": 0, "fondo": 0, "otros": 0, "total": 0}
+
+
+def test_ingresos_set_y_get(db_path):
+    finanzas.set_ingresos(db_path, "2026-07", 500000, 300000, 25000)
+    ing = finanzas.get_ingresos(db_path, "2026-07")
+    assert ing["salario"] == 500000
+    assert ing["fondo"] == 300000
+    assert ing["otros"] == 25000
+    assert ing["total"] == 825000
+
+
+def test_ingresos_set_actualiza_no_duplica(db_path):
+    finanzas.set_ingresos(db_path, "2026-07", 500000, 300000, 25000)
+    finanzas.set_ingresos(db_path, "2026-07", 550000, 300000, 0)
+    ing = finanzas.get_ingresos(db_path, "2026-07")
+    assert ing["salario"] == 550000
+    assert ing["otros"] == 0
+    assert ing["total"] == 850000
+
+
+def test_ingresos_no_afecta_otros_meses(db_path):
+    finanzas.set_ingresos(db_path, "2026-07", 500000, 300000, 0)
+    ing_agosto = finanzas.get_ingresos(db_path, "2026-08")
+    assert ing_agosto["total"] == 0
