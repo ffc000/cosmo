@@ -11,6 +11,7 @@ Al vivir acá, tanto app.py como cualquier blueprint importan de core.py
 sin que core.py necesite saber que existen.
 """
 import os
+import io
 import sqlite3
 import json
 import time
@@ -82,6 +83,48 @@ HIST_DB           = os.environ.get("HIST_DB", "/data/historial.db")
 DB_PATH           = os.environ.get("DB_PATH", "/data/pad.db")
 OUTPUT_FOLDER     = "/data/informes"
 STOCK_REPORTS_DIR = "/data/reports/stock"
+
+import contextlib
+
+@contextlib.contextmanager
+def get_db(db_path=None, timeout=10, row_factory=False):
+    """Context manager compartido para abrir una conexión SQLite.
+
+    Antes cada función (182 lugares repartidos entre app.py y los blueprints)
+    hacía su propio `con = sqlite3.connect(...)` con timeout copiado a mano,
+    y su propio `con.commit(); con.close()` al final. Funciona, pero cualquier
+    cambio que deba aplicar a TODAS las conexiones (agregar
+    `PRAGMA foreign_keys=ON`, cambiar el timeout, sumar logging de queries
+    lentas) implica tocar esos 182 lugares uno por uno.
+
+    Este helper no cambia el modelo de concurrencia (sigue siendo una
+    conexión nueva por operación, no un pool) — solo centraliza la apertura.
+    Uso:
+        with get_db() as con:
+            con.execute("INSERT INTO ...", (...))
+        # commit automático si no hubo excepción, rollback si la hubo,
+        # con.close() siempre se ejecuta.
+
+        with get_db(DB_PATH, row_factory=True) as con:
+            rows = con.execute("SELECT * FROM ...").fetchall()  # sqlite3.Row
+
+    Migrar los 182 call-sites existentes a esto es mecánico pero no
+    automático (a propósito no se hizo de una sola vez acá, para no tocar
+    ~40 archivos en un solo cambio sin poder correr los tests de cada uno) —
+    conviene ir módulo por módulo, corriendo los tests de ese blueprint
+    después de cada migración, igual que se hizo al extraer los blueprints
+    de app.py."""
+    con = sqlite3.connect(db_path or HIST_DB, timeout=timeout)
+    if row_factory:
+        con.row_factory = sqlite3.Row
+    try:
+        yield con
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
 
 
 # ── Migraciones ───────────────────────────────────────────────────────────────
@@ -262,6 +305,33 @@ ESTADOS_TAREA = ("Pendiente", "En curso", "Completado")
 NIVELES_PROBABILIDAD = ("Alta", "Media", "Baja")
 NIVELES_IMPACTO = ("Alto", "Medio", "Bajo")
 
+def _exportar_xlsx(cols, rows):
+    """Genera un Excel en memoria con los datos recibidos. Genérica (no
+    específica de ningún módulo) — vive acá porque tanto app.py (export de
+    SINTIA) como blueprints/finanzas.py (export de movimientos) la necesitan.
+    Bug encontrado en revisión: antes vivía solo en app.py, y
+    blueprints/finanzas.py la llamaba sin importarla de ningún lado — tiraba
+    NameError apenas se pedía exportar movimientos a Excel."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    wb = Workbook()
+    ws = wb.active
+    ws.append(cols)
+    for cell in ws[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="1E2A3B")
+        cell.alignment = Alignment(horizontal="center")
+    for row in rows:
+        ws.append(row)
+    for col in ws.columns:
+        max_len = max((len(str(c.value or "")) for c in col), default=8)
+        ws.column_dimensions[col[0].column_letter].width = min(max_len + 2, 40)
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
 def validar_enum(valor, permitidos, nombre_campo):
     """Devuelve (ok, error). ok=True si valor está entre los permitidos
     (o no vino, en cuyo caso no hay nada que validar — el default lo pone
@@ -301,6 +371,51 @@ def _init_job_status_db():
 
 _init_job_status_db()
 
+_MARCA_HUERFANO_LOG_TXT = "✗ Proceso interrumpido: el servidor se reinició mientras este job corría."
+
+def _marcar_jobs_huerfanos():
+    """Si el proceso se reinició (deploy, crash, systemctl restart) a mitad de
+    un job en background, ese job queda para siempre en status='running' en
+    job_status_db — nadie lo va a terminar, y el usuario ve la barra de
+    progreso colgada sin ningún error visible.
+
+    Se corre una vez al importar core.py (o sea, una vez por worker). No basta
+    con "¿está en running?" para decidir que está huérfano: con más de un
+    worker (gunicorn -w >1), cada worker importa core.py por separado, y un
+    worker que arranca unos segundos después de otro vería como "huérfano" un
+    job que el primero recién empezó a correr — falso positivo por carrera de
+    arranque, no por reinicio real.
+
+    Por eso se usa una ventana de inactividad: un job que sigue 'running' pero
+    no actualizó su 'ts' (se refresca en cada línea de log, ver
+    _JobLog.append) hace más de UMBRAL_HUERFANO_SEG no tiene ningún thread
+    vivo detrás, sea cual sea el motivo. Un job recién creado por otro worker
+    tiene ts fresco y no se toca."""
+    UMBRAL_HUERFANO_SEG = 20 * 60  # 20 min: más que el informe más largo esperado
+    try:
+        con = sqlite3.connect(HIST_DB, timeout=10)
+        con.row_factory = sqlite3.Row
+        limite = time.time() - UMBRAL_HUERFANO_SEG
+        rows = con.execute(
+            "SELECT job_id, log FROM job_status_db WHERE status='running' AND ts < ?",
+            (limite,)).fetchall()
+        for r in rows:
+            try:
+                log = json.loads(r["log"] or "[]")
+            except Exception:
+                log = []
+            log.append(_MARCA_HUERFANO_LOG_TXT)
+            con.execute("UPDATE job_status_db SET status='error', log=? WHERE job_id=?",
+                        (json.dumps(log), r["job_id"]))
+        if rows:
+            logging.warning(f"JOBS HUÉRFANOS | {len(rows)} job(s) en 'running' sin actividad "
+                             f"hace más de {UMBRAL_HUERFANO_SEG}s — marcados como 'error' al arrancar.")
+        con.commit(); con.close()
+    except Exception:
+        logging.exception("No se pudo revisar jobs huérfanos en job_status_db")
+
+_marcar_jobs_huerfanos()
+
 # Progreso (%) estimado a partir del texto de los mensajes que ya emite
 # generar.py (log_fn(...)) — no hace falta tocar ese archivo. Cubre además
 # los mensajes típicos de VUA/SENASA/Stock ("Generando...", "completado",
@@ -335,16 +450,15 @@ def _job_persist(job_id):
     if info is None:
         return
     try:
-        con = sqlite3.connect(HIST_DB, timeout=10)
-        con.execute("""INSERT INTO job_status_db (job_id, status, log, files, username, ts, progreso)
-            VALUES (?,?,?,?,?,?,?)
-            ON CONFLICT(job_id) DO UPDATE SET
-                status=excluded.status, log=excluded.log, files=excluded.files,
-                ts=excluded.ts, progreso=excluded.progreso""",
-            (job_id, info.get("status", "running"), json.dumps(list(info.get("log", []))),
-             json.dumps(info.get("files", [])), info.get("username", "?"), time.time(),
-             info.get("progreso", 0)))
-        con.commit(); con.close()
+        with get_db(HIST_DB) as con:
+            con.execute("""INSERT INTO job_status_db (job_id, status, log, files, username, ts, progreso)
+                VALUES (?,?,?,?,?,?,?)
+                ON CONFLICT(job_id) DO UPDATE SET
+                    status=excluded.status, log=excluded.log, files=excluded.files,
+                    ts=excluded.ts, progreso=excluded.progreso""",
+                (job_id, info.get("status", "running"), json.dumps(list(info.get("log", []))),
+                 json.dumps(info.get("files", [])), info.get("username", "?"), time.time(),
+                 info.get("progreso", 0)))
     except Exception:
         logging.exception(f"job_status: no se pudo persistir job_id={job_id}")
 
@@ -385,11 +499,10 @@ def job_get(job_id):
     if info is not None:
         return info
     try:
-        con = sqlite3.connect(HIST_DB, timeout=10)
-        row = con.execute(
-            "SELECT status, log, files, username, progreso FROM job_status_db WHERE job_id=?",
-            (job_id,)).fetchone()
-        con.close()
+        with get_db(HIST_DB, row_factory=True) as con:
+            row = con.execute(
+                "SELECT status, log, files, username, progreso FROM job_status_db WHERE job_id=?",
+                (job_id,)).fetchone()
         if not row:
             return None
         status, log_json, files_json, username, progreso = row
@@ -415,11 +528,10 @@ def contexto_repositorio(modulo):
     if modulo not in MODULOS_REPOSITORIO:
         return ""
     try:
-        con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-        rows = con.execute(
-            "SELECT nombre_archivo, contenido FROM doc_repositorio WHERE modulo=? ORDER BY creado",
-            (modulo,)).fetchall()
-        con.close()
+        with get_db(HIST_DB, row_factory=True) as con:
+            rows = con.execute(
+                "SELECT nombre_archivo, contenido FROM doc_repositorio WHERE modulo=? ORDER BY creado",
+                (modulo,)).fetchall()
     except Exception:
         return ""
     if not rows:

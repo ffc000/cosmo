@@ -10,6 +10,7 @@ import urllib.parse
 from datetime import datetime, timedelta, date
 from functools import wraps
 from flask import render_template, request, jsonify, send_file, session, redirect, url_for
+from werkzeug.utils import secure_filename
 
 # app, csrf y limiter viven en core.py — ahí también los necesitan los
 # blueprints, y así evitamos que "limiter" no exista todavía cuando se
@@ -33,7 +34,7 @@ app.register_blueprint(finanzas_bp)
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 from core import (
-    HIST_DB, DB_PATH, OUTPUT_FOLDER, STOCK_REPORTS_DIR,
+    HIST_DB, DB_PATH, OUTPUT_FOLDER, STOCK_REPORTS_DIR, get_db, TELEGRAM_TOKEN, _exportar_xlsx,
     login_required, admin_required, modulo_required, finanzas_owner_required,
     tiene_permiso_admin, registrar_sesion, actualizar_sesion, token_revocado,
 )
@@ -71,54 +72,16 @@ def inject_session_vars():
 import threading as _threading
 
 # ── Recordatorio de servicios recurrentes (finanzas) ────────────────────────────
-def _mes_anterior_str(mes):
-    a, mm = int(mes[:4]), int(mes[5:7]) - 1
-    if mm <= 0:
-        mm += 12; a -= 1
-    return f"{a:04d}-{mm:02d}"
-
-def _buscar_match_servicio(con, patrones, mes):
-    if not patrones:
-        return None
-    condiciones = " OR ".join(["LOWER(descripcion) LIKE ?"] * len(patrones))
-    params = [f"%{p.lower()}%" for p in patrones]
-    return con.execute(
-        f"SELECT fecha, descripcion, monto_ars FROM fin_movimientos "
-        f"WHERE substr(fecha,1,7)=? AND ({condiciones}) ORDER BY fecha LIMIT 1",
-        [mes] + params).fetchone()
-
-def _estado_servicios_mes(con, mes):
-    """Para cada servicio activo, busca si hay un movimiento de ese mes cuya
-    descripción coincide con alguno de sus patrones (o si fue marcado pagado
-    a mano cuando no hay coincidencia automática). También compara el monto
-    contra el del mes anterior, para marcar posibles aumentos de tarifa."""
-    con.row_factory = sqlite3.Row
-    servicios = con.execute(
-        "SELECT * FROM fin_servicios WHERE activo=1 ORDER BY orden").fetchall()
-    mes_ant = _mes_anterior_str(mes)
-    resultado = []
-    for s in servicios:
-        patrones = [p.strip() for p in (s["patron"] or "").split(",") if p.strip()]
-        match = _buscar_match_servicio(con, patrones, mes)
-        match_ant = _buscar_match_servicio(con, patrones, mes_ant)
-        manual = con.execute(
-            "SELECT pagado, fecha_pago FROM fin_servicios_pagos WHERE servicio_id=? AND mes=?",
-            (s["id"], mes)).fetchone()
-        pagado_manual = bool(manual and manual["pagado"])
-        variacion_pct = None
-        if match and match_ant and match_ant["monto_ars"] > 0:
-            variacion_pct = round((match["monto_ars"] - match_ant["monto_ars"]) / match_ant["monto_ars"] * 100, 1)
-        resultado.append({
-            "id": s["id"], "nombre": s["nombre"], "patron": s["patron"],
-            "pagado": bool(match) or pagado_manual,
-            "automatico": bool(match),
-            "movimiento": dict(match) if match else None,
-            "pagado_manual": pagado_manual,
-            "monto_mes_anterior": match_ant["monto_ars"] if match_ant else None,
-            "variacion_pct": variacion_pct,
-            "posible_aumento_tarifa": variacion_pct is not None and variacion_pct >= 15,
-        })
-    return resultado
+# _mes_anterior_str / _buscar_match_servicio / _estado_servicios_mes vivían acá,
+# pero blueprints/finanzas.py también las necesita (para /api/finanzas/servicios)
+# y no las podía importar de app.py sin generar un import circular (app.py ya
+# importa finanzas_bp DESDE blueprints.finanzas). Bug encontrado en revisión:
+# blueprints/finanzas.py las llamaba sin importarlas de ningún lado — tiraban
+# NameError apenas se pedía GET /api/finanzas/servicios. Se movieron las tres
+# a blueprints/finanzas.py (que es además donde pertenecen conceptualmente:
+# son lógica de negocio de finanzas, no infraestructura genérica) y acá se
+# importan en la dirección que ya existía (app.py -> blueprints.finanzas).
+from blueprints.finanzas import _estado_servicios_mes
 
 def _chequear_recordatorio_servicios():
     while True:
@@ -263,7 +226,13 @@ def repositorio_upload(modulo):
         return jsonify({"ok": False, "error": "El documento no tiene texto extraíble"})
     repo_dir = os.path.join("/data/repositorio", modulo)
     os.makedirs(repo_dir, exist_ok=True)
-    ruta_archivo = os.path.join(repo_dir, f"{uuid.uuid4().hex[:12]}_{f.filename}")
+    # secure_filename() saca separadores de ruta, "..", y caracteres raros del
+    # nombre original (antes se usaba f.filename crudo en el path — con un
+    # nombre tipo "x/../../../etc/algo" se podía escribir fuera de repo_dir).
+    # El nombre ORIGINAL (sin sanear) se sigue guardando en la BD para mostrarlo
+    # al usuario tal cual lo subió; ruta_archivo es lo único que toca el disco.
+    nombre_seguro = secure_filename(f.filename) or "documento.docx"
+    ruta_archivo = os.path.join(repo_dir, f"{uuid.uuid4().hex[:12]}_{nombre_seguro}")
     with open(ruta_archivo, "wb") as out:
         out.write(data_bytes)
     con = sqlite3.connect(HIST_DB)
@@ -332,6 +301,67 @@ def _limpiar_jobs_viejos():
         except Exception:
             logging.exception("No se pudo limpiar job_status_db")
 _threading.Thread(target=_limpiar_jobs_viejos, daemon=True).start()
+
+# ── Limpieza de archivos huérfanos en disco ─────────────────────────────────
+# Informes (Word/Excel), minutas y reportes de stock se guardan en disco con
+# la ruta completa registrada en una columna de la base (ver ruta_archivo,
+# archivo_word/excel, archivo, file_path más abajo). Si esa fila se borra
+# (admin borra un item del historial, un usuario borra una minuta, un reporte
+# de stock se regenera y pisa el registro con INSERT OR REPLACE) el archivo
+# viejo se queda en disco para siempre — nada lo borraba hasta ahora.
+_LIMPIEZA_ARCHIVOS = [
+    # (directorio, [(tabla, columna), ...], recorrer subcarpetas)
+    ("/data/repositorio",  [("doc_repositorio", "ruta_archivo")],                          True),
+    (OUTPUT_FOLDER,        [("historial", "archivo_word"), ("historial", "archivo_excel")], False),
+    (STOCK_REPORTS_DIR,    [("stock_reportes", "file_path")],                              False),
+    ("/data/minutas",      [("vua_minutas", "archivo")],                                   False),
+    ("/data/minutas_senasa", [("senasa_minutas", "archivo")],                              False),
+]
+
+def _limpiar_archivos_huerfanos():
+    """Corre una vez por día. Por seguridad:
+    - Solo borra archivos con más de 48hs de antigüedad (mtime) — evita pisar
+      un archivo recién escrito cuyo INSERT a la base todavía no commiteó
+      (hay una ventana entre "escribir el archivo" y "guardar la fila").
+    - Nunca borra ni toca filas de la base: si una fila referencia un archivo
+      que ya no está en disco, solo se loguea (puede ser intencional — por
+      ejemplo alguien lo borró a mano en el servidor)."""
+    while True:
+        time.sleep(86400)  # una vez por día
+        limite_mtime = time.time() - 48 * 3600
+        for directorio, tabla_col, recursivo in _LIMPIEZA_ARCHIVOS:
+            if not os.path.isdir(directorio):
+                continue
+            try:
+                referenciados = set()
+                with get_db(HIST_DB) as con:
+                    for tabla, columna in tabla_col:
+                        q = f"SELECT {columna} FROM {tabla} WHERE {columna} IS NOT NULL AND {columna} != ''"
+                        for (ruta,) in con.execute(q):
+                            referenciados.add(os.path.normpath(ruta))
+
+                if recursivo:
+                    encontrados = [os.path.join(r, n) for r, _d, fs in os.walk(directorio) for n in fs]
+                else:
+                    encontrados = [os.path.join(directorio, n) for n in os.listdir(directorio)]
+
+                borrados = 0
+                for ruta_disco in encontrados:
+                    ruta_disco = os.path.normpath(ruta_disco)
+                    if not os.path.isfile(ruta_disco) or ruta_disco in referenciados:
+                        continue
+                    try:
+                        if os.path.getmtime(ruta_disco) < limite_mtime:
+                            os.remove(ruta_disco)
+                            borrados += 1
+                    except FileNotFoundError:
+                        pass
+                if borrados:
+                    logging.info(f"LIMPIEZA ARCHIVOS | {directorio} | {borrados} archivo(s) huérfano(s) eliminados")
+            except Exception:
+                logging.exception(f"Error limpiando archivos huérfanos en {directorio}")
+
+_threading.Thread(target=_limpiar_archivos_huerfanos, daemon=True).start()
 
 # ── Historial DB ───────────────────────────────────────────────────────────────
 # ── Seeds separados ────────────────────────────────────────────────────────────
@@ -549,7 +579,17 @@ def init_historial():
     cur = con.cursor()
     cur.execute("SELECT COUNT(*) FROM vua_cronologia")
     if cur.fetchone()[0] == 0:
-        _seed_cronologia_vua(con)
+        # Bug encontrado en revisión: acá se llamaba a _seed_cronologia_vua(con),
+        # una función que nunca llegó a existir en el código (a diferencia de
+        # sus hermanas _seed_feriados/_seed_ref_dira/_seed_ref_aduanas, que sí
+        # están definidas más arriba). En una instalación EXISTENTE nunca se
+        # notó porque vua_cronologia ya tiene filas y este bloque se salteaba;
+        # pero en una instalación NUEVA (base vacía) esto tiraba NameError acá
+        # mismo, dentro de init_historial(), rompiendo el arranque de toda la
+        # app. No se inventan acá datos históricos falsos de la cronología VUA
+        # real (son hechos fechados específicos del proyecto, no algo que se
+        # pueda adivinar) — se deja vacía y se carga desde el módulo VUA.
+        logging.info("vua_cronologia está vacía — se deja sin sembrar (cargar desde el módulo VUA).")
     cur.execute("SELECT COUNT(*) FROM vua_ejes")
     if cur.fetchone()[0] == 0:
         ejes = [
@@ -2160,29 +2200,7 @@ def sintia_rec_query():
         return jsonify({"ok": False, "error": str(e)})
 
 
-def _exportar_xlsx(cols, rows):
-    """Genera un Excel en memoria con los datos recibidos."""
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment
-    wb = Workbook()
-    ws = wb.active
-    # Encabezado
-    ws.append(cols)
-    for cell in ws[1]:
-        cell.font = Font(bold=True, color="FFFFFF")
-        cell.fill = PatternFill("solid", fgColor="1E2A3B")
-        cell.alignment = Alignment(horizontal="center")
-    # Datos
-    for row in rows:
-        ws.append(row)
-    # Ajustar ancho
-    for col in ws.columns:
-        max_len = max((len(str(c.value or "")) for c in col), default=8)
-        ws.column_dimensions[col[0].column_letter].width = min(max_len + 2, 40)
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    return buf
+# _exportar_xlsx ahora vive en core.py (la comparten app.py y blueprints/finanzas.py).
 
 
 @app.route("/api/sintia/dat/export", methods=["POST"])
