@@ -203,7 +203,9 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(26
 </div>
 
 <script>
-function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+// esc(): alias histórico de escHtml (definida ahora en common.js, compartida
+// entre todas las plantillas — antes era una copia local idéntica acá).
+const esc = escHtml;
 // ── Sidebar ──
 const sidebar = document.getElementById('sidebar');
 const overlay = document.getElementById('sidebar-overlay');

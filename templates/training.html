@@ -701,8 +701,7 @@ document.getElementById('sidebar-overlay').onclick = () => {
   document.getElementById('sidebar-overlay').classList.remove('visible');
 };
 
-function abrirModal(id) { document.getElementById(id).classList.add('visible'); }
-function cerrarModal(id) { document.getElementById(id).classList.remove('visible'); }
+// abrirModal()/cerrarModal() genéricos ahora viven en common.js.
 
 // ══════════════════════════════════════════════════════════════════════════════
 // GARMIN — Helpers
@@ -1515,7 +1514,7 @@ function renderCalSemana() {
 async function cargarSemanas() { cargarCalendario(); }
 
 function esc(s) { return (s||'').replace(/'/g,"\\'").replace(/\n/g,' '); }
-function escHtml(s) { return String(s??'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+// escHtml() ahora vive en common.js (compartida entre todas las plantillas).
 
 function editarSesion(id, desc, notas, dia, turno, fechaInicio) {
   document.getElementById('ses-id').value = id;

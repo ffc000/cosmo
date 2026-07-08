@@ -286,7 +286,9 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);display:flex
 </div>
 
 <script>
-function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+// esc(): alias histórico de escHtml (definida ahora en common.js, compartida
+// entre todas las plantillas — antes era una copia local idéntica acá).
+const esc = escHtml;
 function updateTime(){const el=document.getElementById('status-time');if(el)el.textContent=new Date().toLocaleString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'})}
 updateTime();setInterval(updateTime,30000);
 

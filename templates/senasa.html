@@ -445,7 +445,7 @@ function showTab(name) {
   if (name === 'repositorio') cargarRepositorio('senasa');
 }
 
-function escHtml(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+// escHtml() ahora vive en common.js (compartida entre todas las plantillas).
 function cargarRepositorio(modulo){
   fetch(`/api/repositorio/${modulo}`).then(r=>r.json()).then(data=>{
     const el=document.getElementById('repo-lista');if(!el)return;
@@ -522,8 +522,9 @@ document.querySelectorAll('.nav-item[data-tab]').forEach(item => {
   item.addEventListener('click', () => showTab(item.dataset.tab));
 });
 
-function cerrarModal(id) { document.getElementById(id).classList.remove('visible'); }
-function abrirModal(id)  { document.getElementById(id).classList.add('visible'); }
+// abrirModal()/cerrarModal() genéricos ahora viven en common.js. Los
+// abrirModalX() específicos de más abajo (abrirModalCrono, etc.) siguen acá
+// porque hacen setup adicional además de mostrar el modal.
 
 // ── Cronología ────────────────────────────────────────────────────────────────
 async function cargarCronologia() {

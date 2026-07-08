@@ -835,7 +835,9 @@ async function procesarPDF() {
   }
 }
 
-function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+// esc(): alias histórico de escHtml (definida ahora en common.js, compartida
+// entre todas las plantillas — antes era una copia local idéntica acá).
+const esc = escHtml;
 
 async function renderPreview() {
   const catsResp = await (await fetch('/api/finanzas/categorias')).json();

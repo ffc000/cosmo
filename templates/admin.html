@@ -561,7 +561,7 @@ function renderHistorial(){
   rows.forEach(r=>{
     const tipo=r.tipo==='minuta'?'<span class="tag tag-minuta">📋 Minuta</span>':'<span class="tag tag-sintia">📊 SINTIA</span>';
     const dl=r.tipo==='minuta'?`<a href="/api/vua/minutas/${r.id}/download" class="download-btn" style="padding:.25rem .6rem;font-size:.65rem">📥</a>`:`${r.archivo_word?`<a href="/api/historial/${r.id}/download/word" class="download-btn" style="padding:.25rem .6rem;font-size:.65rem">📄</a>`:''} ${r.archivo_excel?`<a href="/api/historial/${r.id}/download/excel" class="download-btn" style="padding:.25rem .6rem;font-size:.65rem">📊</a>`:''}`;
-    html+=`<tr><td style="font-family:var(--mono);font-size:.68rem;white-space:nowrap">${(r.fecha||'').slice(0,16)}</td><td>${tipo}</td><td style="font-size:.78rem">${r.descripcion||''}</td><td class="col-hide-mobile" style="font-size:.72rem;color:var(--muted)">${r.usuario||''}</td><td style="display:flex;gap:.3rem;flex-wrap:wrap">${dl}</td><td><button class="btn btn-danger btn-sm" onclick="eliminarHist('${r.id}','${r.tipo}')">🗑</button></td></tr>`;
+    html+=`<tr><td style="font-family:var(--mono);font-size:.68rem;white-space:nowrap">${(r.fecha||'').slice(0,16)}</td><td>${tipo}</td><td style="font-size:.78rem">${esc(r.descripcion||'')}</td><td class="col-hide-mobile" style="font-size:.72rem;color:var(--muted)">${esc(r.usuario||'')}</td><td style="display:flex;gap:.3rem;flex-wrap:wrap">${dl}</td><td><button class="btn btn-danger btn-sm" onclick="eliminarHist('${r.id}','${r.tipo}')">🗑</button></td></tr>`;
   });
   el.innerHTML=html+'</tbody></table></div>';
 }
@@ -572,9 +572,9 @@ function eliminarHist(id,tipo){
   fetch(url,opts).then(()=>loadHistorial());
 }
 
-function esc(s){
-  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
+// esc(): alias histórico de escHtml (definida ahora en common.js, compartida
+// entre todas las plantillas — antes era una copia local idéntica acá).
+const esc = escHtml;
 let _usuariosCache={};
 function loadUsuarios(){
   fetch('/api/admin/usuarios').then(r=>r.json()).then(data=>{
@@ -686,8 +686,7 @@ function guardarPrompt(){
     .then(r=>r.json()).then(d=>{if(d.ok){cerrarModal('modal-prompt');loadPrompts();alert('✓ Prompt guardado.')}else{errEl.textContent=d.error;errEl.style.display='block'}});
 }
 
-function cerrarModal(id){document.getElementById(id).classList.remove('visible')}
-document.querySelectorAll('.modal-overlay').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)m.classList.remove('visible')}));
+// cerrarModal() y el listener de click-fuera-para-cerrar ahora viven en common.js.
 function showMsg(id,msg,type){const el=document.getElementById(id);if(!el)return;const c={ok:'var(--accent2)',warn:'var(--warn)',err:'var(--danger)',info:'var(--muted)'};el.style.color=c[type]||'var(--text)';el.textContent=msg}
 
 let REF_ADUANAS_DIRA_NOMBRES = {};

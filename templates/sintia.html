@@ -964,7 +964,7 @@ async function _fetchDashboard() {
 }
 
 // ── Repositorio de documentos (contexto IA) ──
-function escHtml(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+// escHtml() ahora vive en common.js (compartida entre todas las plantillas).
 function cargarRepositorio(modulo){
   fetch(`/api/repositorio/${modulo}`).then(r=>r.json()).then(data=>{
     const el=document.getElementById('repo-lista');if(!el)return;
