@@ -294,6 +294,9 @@ input:checked+.slider::before{transform:translateX(18px)}
           </div>
           <button class="btn btn-primary btn-full" id="btn-generar" {% if not db_exists %}disabled{% endif %}>Generar informe</button>
         </div>
+        <div class="progress-outer" id="progress-outer" style="display:none;height:6px;background:var(--border,#e2e8f0);border-radius:4px;overflow:hidden;margin:.5rem 0">
+          <div class="progress-inner" id="progress-inner" style="height:100%;width:0%;background:var(--accent,#1a56db);transition:width .4s ease"></div>
+        </div>
         <div class="log-box" id="log-box"></div>
         <div class="download-area" id="download-area"></div>
       </div>
@@ -576,7 +579,9 @@ document.getElementById('btn-generar').addEventListener('click',()=>{
         mes_d=document.getElementById('mes_d').value,mes_h=document.getElementById('mes_h').value,
         usar_ia=document.getElementById('usar_ia').checked;
   const logBox=document.getElementById('log-box'),dlArea=document.getElementById('download-area');
+  const progOuter=document.getElementById('progress-outer'),progInner=document.getElementById('progress-inner');
   logBox.classList.add('visible');logBox.innerHTML='';dlArea.classList.remove('visible');dlArea.innerHTML='';
+  progOuter.style.display='block';progInner.style.width='0%';
   const btn=document.getElementById('btn-generar');btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Generando...';
   addLog(logBox,'Iniciando generación...');
   fetch('/api/generar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pais,anio,mes_d,mes_h,usar_ia})})
@@ -587,9 +592,11 @@ document.getElementById('btn-generar').addEventListener('click',()=>{
 });
 function pollJob(jobId,logBox,dlArea,btn){
   let lastLen=0;
+  const progInner=document.getElementById('progress-inner');
   const iv=setInterval(()=>{
     fetch('/api/job/'+jobId).then(r=>r.json()).then(data=>{
       (data.log||[]).slice(lastLen).forEach(l=>addLog(logBox,l));lastLen=(data.log||[]).length;
+      if(progInner) progInner.style.width=(data.status==='done'?100:(data.progreso||0))+'%';
       if(data.status==='done'){
         clearInterval(iv);resetBtn(btn);
         (data.files||[]).forEach((f,i)=>{const a=document.createElement('a');a.href=`/api/download/${jobId}/${i}`;a.className='download-btn';a.textContent=f.endsWith('.docx')?'📄 Descargar Word':'📊 Descargar Excel';dlArea.appendChild(a)});

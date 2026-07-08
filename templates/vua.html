@@ -590,6 +590,9 @@ select option{background:var(--surface)}
           <button class="download-btn" id="btn-informe" onclick="generarInformeVUA()">📄 Generar Informe Word</button>
           <div id="informe-status" style="display:none;margin-top:1rem;font-size:.82rem;color:var(--muted)">
             <span id="informe-status-txt">⏳ Generando informe...</span>
+            <div class="progress-outer" style="height:6px;background:var(--border,#e2e8f0);border-radius:4px;overflow:hidden;margin-top:.4rem">
+              <div class="progress-inner" id="informe-progress-inner" style="height:100%;width:0%;background:var(--accent,#1a56db);transition:width .4s ease"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -1202,6 +1205,7 @@ async function generarInformeVUA(){
   const statusDiv=document.getElementById('informe-status');
   const statusTxt=document.getElementById('informe-status-txt');
   btn.disabled=true;btn.textContent='⏳ Generando...';statusDiv.style.display='block';statusTxt.textContent='⏳ Generando informe, por favor esperá...';
+  const progInner=document.getElementById('informe-progress-inner');progInner.style.width='0%';
   try{
     const r=await fetch('/api/vua/informe');
     const ct=r.headers.get('content-type')||'';
@@ -1214,6 +1218,7 @@ async function generarInformeVUA(){
           const sr=await fetch(`/api/job/${jobId}`);const sct=sr.headers.get('content-type')||'';
           if(!sct.includes('application/json')){clearInterval(interval);reject(new Error('Error de servidor — revisá los logs'));return;}
           const sd=await sr.json();
+          progInner.style.width=(sd.status==='done'?100:(sd.progreso||0))+'%';
           if(sd.status==='done'){clearInterval(interval);resolve();}
           else if(sd.status==='error'){clearInterval(interval);reject(new Error((sd.log||['Error desconocido']).join(' | ')));}
           else{const log=sd.log||[];if(log.length)statusTxt.textContent='⏳ '+log[log.length-1];}
