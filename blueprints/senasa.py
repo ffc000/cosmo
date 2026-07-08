@@ -21,7 +21,7 @@ from flask import Blueprint, request, jsonify, render_template, session, send_fi
 
 from core import (
     HIST_DB, OUTPUT_FOLDER, login_required, modulo_required,
-    get_api_key, contexto_repositorio,
+    get_api_key, contexto_repositorio, notificar_telegram,
     job_status, job_create, job_get, _job_persist,
 )
 
@@ -337,10 +337,12 @@ def senasa_informe():
             log.append(f"✓ Informe generado: {fname}")
             job_status[jid]["status"] = "done"
             _job_persist(jid)
+            notificar_telegram(f"✓ Informe SENASA listo ({job_status[jid].get('username','?')})")
         except Exception as e:
             log.append(f"✗ {e}")
             job_status[jid]["status"] = "error"
             _job_persist(jid)
+            notificar_telegram(f"⚠️ Informe SENASA falló ({job_status[jid].get('username','?')}): {e}")
 
     threading.Thread(target=_run, args=(job_id, datos)).start()
     return jsonify({"ok": True, "job_id": job_id})

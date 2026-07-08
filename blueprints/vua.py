@@ -29,7 +29,7 @@ from flask import (Blueprint, request, jsonify, render_template, session,
 
 from core import (
     HIST_DB, OUTPUT_FOLDER, login_required, modulo_required, admin_required,
-    get_api_key, contexto_repositorio,
+    get_api_key, contexto_repositorio, notificar_telegram,
     job_status, job_create, job_get, _job_persist,
 )
 
@@ -373,16 +373,19 @@ def vua_informe():
             log.append(f"✓ Informe generado: {fname}")
             job_status[job_id]["status"] = "done"
             _job_persist(job_id)
+            notificar_telegram(f"✓ Informe VUA listo ({job_status[job_id].get('username','?')})")
             try: os.unlink(json_path)
             except: pass
         except subprocess.TimeoutExpired:
             log.append("✗ Timeout generando informe")
             job_status[job_id]["status"] = "error"
             _job_persist(job_id)
+            notificar_telegram(f"⚠️ Informe VUA falló por timeout ({job_status[job_id].get('username','?')})")
         except Exception as e:
             log.append(f"✗ {e}")
             job_status[job_id]["status"] = "error"
             _job_persist(job_id)
+            notificar_telegram(f"⚠️ Informe VUA falló ({job_status[job_id].get('username','?')}): {e}")
 
     threading.Thread(target=_run_vua_informe, args=(job_id, datos)).start()
     return jsonify({"ok": True, "job_id": job_id})
