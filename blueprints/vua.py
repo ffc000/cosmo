@@ -31,6 +31,7 @@ from core import (
     HIST_DB, OUTPUT_FOLDER, login_required, modulo_required, admin_required,
     get_api_key, contexto_repositorio, notificar_telegram,
     job_status, job_create, job_get, _job_persist,
+    validar_enum, ESTADOS_TAREA, NIVELES_PROBABILIDAD, NIVELES_IMPACTO,
 )
 
 vua_bp = Blueprint("vua", __name__)
@@ -444,6 +445,8 @@ def vua_cronologia_get():
 @modulo_required("vua")
 def vua_cronologia_add():
     data=request.json or {}
+    ok, err = validar_enum(data.get("estado"), ESTADOS_TAREA, "estado")
+    if not ok: return jsonify({"ok": False, "error": err}), 400
     fecha = _normalizar_fecha_a_ddmmaaaa(data.get("fecha","A definir")) if data.get("fecha") else "A definir"
     con=sqlite3.connect(HIST_DB); cur=con.cursor()
     cur.execute("SELECT MAX(orden) FROM vua_cronologia")
@@ -460,6 +463,8 @@ def vua_cronologia_update(item_id):
     data=request.json or {}
     if "fecha" in data and not _validar_fecha_ddmmaaaa(data["fecha"]):
         return jsonify({"ok":False,"error":f"Fecha inválida: '{data['fecha']}'. Formato requerido: dd/mm/aaaa."}), 400
+    ok, err = validar_enum(data.get("estado"), ESTADOS_TAREA, "estado")
+    if not ok: return jsonify({"ok": False, "error": err}), 400
     campos = {k: v for k, v in data.items() if k in ("fecha","actividad","participantes","estado")}
     if not campos:
         return jsonify({"ok":False,"error":"Nada para actualizar"}), 400
@@ -742,6 +747,10 @@ def vua_riesgos_list():
 @modulo_required("vua")
 def vua_riesgos_update(rid):
     data = request.json or {}
+    ok, err = validar_enum(data.get("probabilidad"), NIVELES_PROBABILIDAD, "probabilidad")
+    if not ok: return jsonify({"ok": False, "error": err}), 400
+    ok, err = validar_enum(data.get("impacto"), NIVELES_IMPACTO, "impacto")
+    if not ok: return jsonify({"ok": False, "error": err}), 400
     con = sqlite3.connect(HIST_DB)
     fields = []; params = []
     for f in ["titulo","descripcion","mitigacion","probabilidad","impacto","activo"]:
@@ -757,6 +766,10 @@ def vua_riesgos_update(rid):
 @modulo_required("vua")
 def vua_riesgos_create():
     data = request.json or {}
+    ok, err = validar_enum(data.get("probabilidad"), NIVELES_PROBABILIDAD, "probabilidad")
+    if not ok: return jsonify({"ok": False, "error": err}), 400
+    ok, err = validar_enum(data.get("impacto"), NIVELES_IMPACTO, "impacto")
+    if not ok: return jsonify({"ok": False, "error": err}), 400
     con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
     max_orden = con.execute("SELECT MAX(orden) FROM vua_riesgos").fetchone()[0] or 0
     max_id = con.execute("SELECT MAX(id) FROM vua_riesgos").fetchone()[0] or 0

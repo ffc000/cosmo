@@ -23,6 +23,7 @@ from core import (
     HIST_DB, OUTPUT_FOLDER, login_required, modulo_required,
     get_api_key, contexto_repositorio, notificar_telegram,
     job_status, job_create, job_get, _job_persist,
+    validar_enum, ESTADOS_TAREA,
 )
 
 senasa_bp = Blueprint("senasa", __name__)
@@ -56,6 +57,8 @@ def senasa_crono_list():
 @modulo_required("senasa")
 def senasa_crono_add():
     data = request.json or {}
+    ok, err = validar_enum(data.get("estado"), ESTADOS_TAREA, "estado")
+    if not ok: return jsonify({"ok": False, "error": err}), 400
     fecha = _normalizar_fecha_a_ddmmaaaa(data.get("fecha","")) if data.get("fecha") else "A definir"
     con = sqlite3.connect(HIST_DB); cur = con.cursor()
     cur.execute("SELECT MAX(orden) FROM senasa_cronologia")
@@ -73,6 +76,8 @@ def senasa_crono_update(iid):
     data = request.json or {}
     if "fecha" in data and not _validar_fecha_ddmmaaaa(data["fecha"]):
         return jsonify({"ok": False, "error": f"Fecha inválida: '{data['fecha']}'. Formato requerido: dd/mm/aaaa."}), 400
+    ok, err = validar_enum(data.get("estado"), ESTADOS_TAREA, "estado")
+    if not ok: return jsonify({"ok": False, "error": err}), 400
     campos = {k: v for k, v in data.items() if k in ("fecha","actividad","participantes","estado")}
     if not campos:
         return jsonify({"ok": False, "error": "Nada para actualizar"}), 400
@@ -262,6 +267,8 @@ def senasa_acuerdos_list():
 @modulo_required("senasa")
 def senasa_acuerdos_add():
     data = request.json or {}
+    ok, err = validar_enum(data.get("estado"), ESTADOS_TAREA, "estado")
+    if not ok: return jsonify({"ok": False, "error": err}), 400
     con = sqlite3.connect(HIST_DB); cur = con.cursor()
     cur.execute("SELECT MAX(orden) FROM senasa_acuerdos")
     max_o = cur.fetchone()[0] or 0
@@ -276,6 +283,8 @@ def senasa_acuerdos_add():
 @modulo_required("senasa")
 def senasa_acuerdos_update(iid):
     data = request.json or {}
+    ok, err = validar_enum(data.get("estado"), ESTADOS_TAREA, "estado")
+    if not ok: return jsonify({"ok": False, "error": err}), 400
     con = sqlite3.connect(HIST_DB)
     con.execute("UPDATE senasa_acuerdos SET descripcion=?,responsable=?,fecha_compromiso=?,estado=? WHERE id=?",
         (data.get("descripcion",""), data.get("responsable",""),
