@@ -21,7 +21,7 @@ from datetime import datetime, date, timedelta
 
 from flask import Blueprint, request, jsonify, render_template, session, redirect, url_for, send_file
 
-from core import HIST_DB, login_required, modulo_required, limiter
+from core import HIST_DB, login_required, modulo_required, limiter, app
 import garmin_auth
 
 training_bp = Blueprint("training", __name__)

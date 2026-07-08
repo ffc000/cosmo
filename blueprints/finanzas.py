@@ -19,7 +19,7 @@ from flask import Blueprint, request, jsonify, render_template, session, send_fi
 
 from core import (
     HIST_DB, login_required, modulo_required, finanzas_owner_required,
-    notificar_telegram, limiter,
+    notificar_telegram, limiter, app,
 )
 
 finanzas_bp = Blueprint("finanzas", __name__)
