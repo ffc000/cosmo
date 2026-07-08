@@ -39,6 +39,11 @@ def app_module():
 def client(app_module):
     app_module.app.config["TESTING"] = True
     app_module.app.config["WTF_CSRF_ENABLED"] = False  # los tests no arman el token CSRF
+    try:
+        import core
+        core.limiter.reset()  # cada test arranca con el rate limiter limpio
+    except Exception:
+        pass
     with app_module.app.test_client() as c:
         yield c
 
@@ -55,7 +60,7 @@ def test_user(app_module):
     con.execute(
         "INSERT INTO usuarios (username, password_hash, rol, modulos, activo) "
         "VALUES (?,?,?,?,1)",
-        (username, pw_hash, "admin", "sintia,vua,senasa,finanzas"))
+        (username, pw_hash, "admin", "sintia,vua,senasa,finanzas,training,stock"))
     con.commit()
     con.close()
     return {"username": username, "password": password}
