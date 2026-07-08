@@ -883,7 +883,7 @@ async function confirmarGuardado() {
     document.getElementById('up-archivo').value = '';
     _previewData = null;
   } else {
-    estado.innerHTML = `<div class="alert alert-danger">${d.error}</div>`;
+    estado.innerHTML = `<div class="alert alert-danger">${esc(d.error)}</div>`;
   }
 }
 
@@ -995,7 +995,7 @@ async function guardarManual() {
     document.getElementById('man-desc').value = '';
     document.getElementById('man-monto').value = '';
   } else {
-    estado.innerHTML = `<div class="alert alert-danger">${d.error}</div>`;
+    estado.innerHTML = `<div class="alert alert-danger">${esc(d.error)}</div>`;
   }
 }
 
@@ -1071,7 +1071,7 @@ async function crearCategoria() {
     document.getElementById('ncat-nombre').value = '';
     cargarCategoriasPresupuesto();
   } else {
-    estado.innerHTML = `<div class="alert alert-danger">${d.error}</div>`;
+    estado.innerHTML = `<div class="alert alert-danger">${esc(d.error)}</div>`;
   }
 }
 
