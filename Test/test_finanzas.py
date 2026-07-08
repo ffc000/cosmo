@@ -10,7 +10,7 @@ import tempfile
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import finanzas  # noqa: E402
+import finanzas_datos as finanzas  # noqa: E402
 
 
 @pytest.fixture()
