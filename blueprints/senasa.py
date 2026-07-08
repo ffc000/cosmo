@@ -12,6 +12,7 @@ queda en app.py.
 import os
 import re
 import json
+import uuid
 import logging
 import sqlite3
 import threading
@@ -23,6 +24,7 @@ from core import (
     HIST_DB, OUTPUT_FOLDER, login_required, modulo_required,
     get_api_key, contexto_repositorio, notificar_telegram,
     job_status, job_create, job_get, _job_persist,
+    _normalizar_fecha_a_ddmmaaaa, _validar_fecha_ddmmaaaa,
     validar_enum, ESTADOS_TAREA,
 )
 

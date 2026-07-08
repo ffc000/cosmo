@@ -19,14 +19,17 @@ from flask import Blueprint, request, jsonify, render_template, session, send_fi
 
 from core import (
     HIST_DB, login_required, modulo_required, finanzas_owner_required,
-    notificar_telegram, limiter, app,
+    notificar_telegram, limiter, app, _exportar_xlsx,
 )
 
 finanzas_bp = Blueprint("finanzas", __name__)
 
 import io
 import pdfplumber
-import finanzas as fin
+import finanzas_datos as fin  # antes 'finanzas' — renombrado para no compartir
+                               # nombre de archivo con este blueprint (ver nota
+                               # de la conversación: ambos se llamaban 'finanzas.py'
+                               # y eso causaba un import circular al aplanar rutas)
 from extracto_parser import parse_santander, parse_galicia, extraer_total_declarado
 from recibo_sueldo_parser import parse_recibo_sueldo
 
@@ -314,6 +317,61 @@ def api_fin_movimientos_export():
 
 
 # ── Servicios recurrentes ──────────────────────────────────────────────────────
+# _mes_anterior_str / _buscar_match_servicio / _estado_servicios_mes: movidas
+# acá desde app.py (Bug encontrado en revisión: este archivo ya las llamaba
+# más abajo sin definirlas ni importarlas de ningún lado — vivían en app.py,
+# que a su vez las necesita para el recordatorio automático por Telegram, y
+# no se podían importar de acá hacia allá sin ciclo. app.py ahora las importa
+# desde acá, que es además donde pertenecen conceptualmente).
+def _mes_anterior_str(mes):
+    a, mm = int(mes[:4]), int(mes[5:7]) - 1
+    if mm <= 0:
+        mm += 12; a -= 1
+    return f"{a:04d}-{mm:02d}"
+
+def _buscar_match_servicio(con, patrones, mes):
+    if not patrones:
+        return None
+    condiciones = " OR ".join(["LOWER(descripcion) LIKE ?"] * len(patrones))
+    params = [f"%{p.lower()}%" for p in patrones]
+    return con.execute(
+        f"SELECT fecha, descripcion, monto_ars FROM fin_movimientos "
+        f"WHERE substr(fecha,1,7)=? AND ({condiciones}) ORDER BY fecha LIMIT 1",
+        [mes] + params).fetchone()
+
+def _estado_servicios_mes(con, mes):
+    """Para cada servicio activo, busca si hay un movimiento de ese mes cuya
+    descripción coincide con alguno de sus patrones (o si fue marcado pagado
+    a mano cuando no hay coincidencia automática). También compara el monto
+    contra el del mes anterior, para marcar posibles aumentos de tarifa."""
+    con.row_factory = sqlite3.Row
+    servicios = con.execute(
+        "SELECT * FROM fin_servicios WHERE activo=1 ORDER BY orden").fetchall()
+    mes_ant = _mes_anterior_str(mes)
+    resultado = []
+    for s in servicios:
+        patrones = [p.strip() for p in (s["patron"] or "").split(",") if p.strip()]
+        match = _buscar_match_servicio(con, patrones, mes)
+        match_ant = _buscar_match_servicio(con, patrones, mes_ant)
+        manual = con.execute(
+            "SELECT pagado, fecha_pago FROM fin_servicios_pagos WHERE servicio_id=? AND mes=?",
+            (s["id"], mes)).fetchone()
+        pagado_manual = bool(manual and manual["pagado"])
+        variacion_pct = None
+        if match and match_ant and match_ant["monto_ars"] > 0:
+            variacion_pct = round((match["monto_ars"] - match_ant["monto_ars"]) / match_ant["monto_ars"] * 100, 1)
+        resultado.append({
+            "id": s["id"], "nombre": s["nombre"], "patron": s["patron"],
+            "pagado": bool(match) or pagado_manual,
+            "automatico": bool(match),
+            "movimiento": dict(match) if match else None,
+            "pagado_manual": pagado_manual,
+            "monto_mes_anterior": match_ant["monto_ars"] if match_ant else None,
+            "variacion_pct": variacion_pct,
+            "posible_aumento_tarifa": variacion_pct is not None and variacion_pct >= 15,
+        })
+    return resultado
+
 @finanzas_bp.route("/api/finanzas/servicios")
 @login_required
 @finanzas_owner_required

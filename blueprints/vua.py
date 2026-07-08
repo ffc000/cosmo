@@ -21,6 +21,7 @@ import time
 import logging
 import sqlite3
 import tempfile
+import threading
 import subprocess
 from datetime import datetime, date, timedelta
 
@@ -31,6 +32,7 @@ from core import (
     HIST_DB, OUTPUT_FOLDER, login_required, modulo_required, admin_required,
     get_api_key, contexto_repositorio, notificar_telegram,
     job_status, job_create, job_get, _job_persist,
+    _normalizar_fecha_a_ddmmaaaa, _validar_fecha_ddmmaaaa,
     validar_enum, ESTADOS_TAREA, NIVELES_PROBABILIDAD, NIVELES_IMPACTO,
 )
 
