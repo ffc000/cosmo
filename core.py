@@ -249,6 +249,33 @@ def finanzas_owner_required(f):
     return decorated
 
 
+# ── Enums de estado (compartidos entre módulos con <select> de opciones fijas
+# en el frontend — VUA y SENASA). Antes el backend guardaba estos campos como
+# texto libre (data.get("estado", "Pendiente")), aunque el HTML solo ofrece
+# 3 opciones: nada impedía que alguien mandara cualquier string por la API
+# directamente (sin pasar por el <select>). El escape en el HTML ya evita que
+# eso se ejecute como XSS, pero esto cierra el problema en el origen para los
+# campos que SÍ son un enum real (no confundir con eje.estado, que es texto
+# libre a propósito en ambos módulos — placeholder "En análisis, Pendiente,
+# Completado..." — y por eso queda fuera de esta validación).
+ESTADOS_TAREA = ("Pendiente", "En curso", "Completado")
+NIVELES_PROBABILIDAD = ("Alta", "Media", "Baja")
+NIVELES_IMPACTO = ("Alto", "Medio", "Bajo")
+
+def validar_enum(valor, permitidos, nombre_campo):
+    """Devuelve (ok, error). ok=True si valor está entre los permitidos
+    (o no vino, en cuyo caso no hay nada que validar — el default lo pone
+    el INSERT/UPDATE). Usar así en cada endpoint:
+        ok, err = validar_enum(data.get("estado"), ESTADOS_TAREA, "estado")
+        if not ok: return jsonify({"ok": False, "error": err}), 400
+    """
+    if valor is None:
+        return True, None
+    if valor not in permitidos:
+        return False, f"Valor no permitido para '{nombre_campo}': '{valor}'. Opciones válidas: {', '.join(permitidos)}."
+    return True, None
+
+
 # ── Job queue (progreso de generación de informes en background) ────────────
 # job_status vivía solo en memoria del proceso: si la app corre con más de un
 # worker (gunicorn -w >1), el worker que crea el job y el que atiende el
