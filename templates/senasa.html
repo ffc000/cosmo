@@ -537,9 +537,9 @@ async function cargarCronologia() {
       <td style="white-space:nowrap;font-family:var(--mono);font-size:.75rem">${row.fecha}</td>
       <td>${escHtml(row.actividad)}</td>
       <td style="font-size:.75rem;color:var(--muted)">${escHtml(row.participantes)}</td>
-      <td><span class="tag ${tag}">${row.estado}</span></td>
+      <td><span class="tag ${tag}">${escHtml(row.estado)}</span></td>
       <td style="white-space:nowrap">
-        <button class="btn btn-outline btn-sm" onclick="editarCrono(${row.id},'${esc(row.fecha)}','${esc(row.actividad)}','${esc(row.participantes)}','${row.estado}')">✏️</button>
+        <button class="btn btn-outline btn-sm" onclick="editarCrono(${row.id},'${esc(row.fecha)}','${esc(row.actividad)}','${esc(row.participantes)}','${esc(row.estado)}')">✏️</button>
         <button class="btn btn-danger btn-sm" onclick="eliminarCrono(${row.id})">🗑</button>
       </td>
     </tr>`;
@@ -650,10 +650,10 @@ async function cargarEjes() {
       <div style="flex:1">
         <div class="eje-num">EJE ${eje.id}</div>
         <div class="eje-nombre">${escHtml(eje.nombre)}</div>
-        <div class="eje-desc">${eje.descripcion || ''}</div>
+        <div class="eje-desc">${escHtml(eje.descripcion || '')}</div>
       </div>
       <div style="display:flex;flex-direction:column;gap:.3rem;align-items:flex-end">
-        <span class="tag ${tag}" style="white-space:nowrap">${eje.estado}</span>
+        <span class="tag ${tag}" style="white-space:nowrap">${escHtml(eje.estado)}</span>
         <div style="display:flex;gap:.3rem">
           <button class="btn btn-outline btn-sm" style="padding:.2rem .4rem;font-size:.65rem" onclick="editarEje('${eje.id}','${esc(eje.nombre)}','${esc(eje.descripcion||'')}','${esc(eje.estado)}')">✏️</button>
           <button class="btn btn-danger btn-sm" style="padding:.2rem .4rem;font-size:.65rem" onclick="eliminarEje(${eje.id})">✕</button>
@@ -754,7 +754,7 @@ async function generarMinuta() {
         div.innerHTML += `<div class="alert alert-info" style="margin-top:.5rem">
           ¿Agregar esta reunión a la cronología?
           <button class="btn btn-outline btn-sm" style="margin-left:.5rem"
-            onclick="agregarACronologia('${esc(s.fecha)}','${esc(s.actividad)}','${esc(s.participantes)}','${s.estado}')">
+            onclick="agregarACronologia('${esc(s.fecha)}','${esc(s.actividad)}','${esc(s.participantes)}','${esc(s.estado)}')">
             + Agregar
           </button>
         </div>`;
@@ -816,11 +816,11 @@ async function cargarAcuerdos() {
         <div class="acuerdo-meta">
           ${a.responsable ? `<span>👤 ${escHtml(a.responsable)}</span>` : ''}
           ${a.fecha_compromiso ? `<span>📅 ${a.fecha_compromiso}</span>` : ''}
-          <span class="tag ${tag}">${a.estado}</span>
+          <span class="tag ${tag}">${escHtml(a.estado)}</span>
         </div>
       </div>
       <div style="display:flex;flex-direction:column;gap:.3rem;flex-shrink:0">
-        <button class="btn btn-outline btn-sm" onclick="editarAcuerdo(${a.id},'${esc(a.descripcion)}','${esc(a.responsable)}','${esc(a.fecha_compromiso||'')}','${a.estado}')">✏️</button>
+        <button class="btn btn-outline btn-sm" onclick="editarAcuerdo(${a.id},'${esc(a.descripcion)}','${esc(a.responsable)}','${esc(a.fecha_compromiso||'')}','${esc(a.estado)}')">✏️</button>
         <button class="btn btn-danger btn-sm" onclick="eliminarAcuerdo(${a.id})">🗑</button>
       </div>
     </div>`;
