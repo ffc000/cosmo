@@ -870,6 +870,45 @@ def login():
     return render_template("login.html", error=error)
 
 
+@app.route("/api/perfil/cambiar_password", methods=["POST"])
+@login_required
+@limiter.limit("10 per hour", error_message="Demasiados intentos de cambio de contraseña.")
+def cambiar_password_propia():
+    """Cada usuario puede cambiar su propia contraseña (antes solo un admin
+    podía hacerlo, vía /api/admin/usuarios/<id>). Pide la contraseña actual
+    para confirmar identidad, y revoca las demás sesiones activas de este
+    usuario por seguridad (cualquier otro dispositivo logueado tiene que
+    volver a entrar con la contraseña nueva)."""
+    data = request.json or {}
+    actual = data.get("actual", "")
+    nueva = data.get("nueva", "")
+    username = session.get("username")
+
+    user = get_user(username)
+    if not user or not check_password(actual, user["password_hash"]):
+        return jsonify({"ok": False, "error": "La contraseña actual no es correcta"}), 403
+
+    if len(nueva) < 8:
+        return jsonify({"ok": False, "error": "La contraseña nueva debe tener al menos 8 caracteres"})
+    if nueva == actual:
+        return jsonify({"ok": False, "error": "La contraseña nueva tiene que ser distinta de la actual"})
+
+    hashed = bcrypt.hashpw(nueva.encode(), bcrypt.gensalt()).decode()
+    con = sqlite3.connect(HIST_DB)
+    con.execute("UPDATE usuarios SET password_hash=? WHERE username=?", (hashed, username))
+    # Revocar todas las sesiones de este usuario (incluida la actual) — todos
+    # los dispositivos tienen que volver a loguearse con la contraseña nueva.
+    tokens = [r[0] for r in con.execute("SELECT token FROM sesiones WHERE username=?", (username,))]
+    for t in tokens:
+        con.execute("INSERT OR IGNORE INTO tokens_revocados (token) VALUES (?)", (t,))
+    con.commit(); con.close()
+
+    session.clear()
+    logging.info(f"PASSWORD PROPIO CAMBIADO | user={username}")
+    notificar_telegram(f"🔑 {username} cambió su contraseña")
+    return jsonify({"ok": True})
+
+
 @app.route("/health")
 def health_check():
     """Chequeo mínimo, sin autenticación, pensado para monitoreo automático
@@ -1378,6 +1417,7 @@ def _procesar_csv(tmp_path, tabla, log, modo="reemplazar"):
 # ── Generar informe (async) ────────────────────────────────────────────────────
 def run_job(job_id, pais, anio, mes_d, mes_h, usar_ia, username):
     log = job_status[job_id]["log"]
+    inicio = time.time()
     try:
         from generar import generar_informe
         archivos = generar_informe(
@@ -1398,10 +1438,15 @@ def run_job(job_id, pais, anio, mes_d, mes_h, usar_ia, username):
         job_status[job_id]["status"] = "done"
         job_status[job_id]["files"]  = archivos
         _job_persist(job_id)
+        duracion = round((time.time() - inicio) / 60, 1)
+        if duracion >= 2:  # avisar solo si tardó lo suficiente como para que valga la pena
+            notificar_telegram(f"✓ Informe SINTIA {pais} {mes_d}-{mes_h}/{anio} listo "
+                                f"({duracion} min) — {username}")
     except Exception as e:
         log.append(f"✗ Error: {e}")
         job_status[job_id]["status"] = "error"
         _job_persist(job_id)
+        notificar_telegram(f"⚠️ Informe SINTIA {pais} {mes_d}-{mes_h}/{anio} falló ({username}): {e}")
 
 @app.route("/api/generar", methods=["POST"])
 @login_required
@@ -1749,6 +1794,9 @@ def admin_usuarios_update(uid):
         if f in data: fields.append(f + "=?"); params.append(data[f])
     cambia_pass = "password" in data and data["password"]
     if cambia_pass:
+        if len(data["password"]) < 8:
+            con.close()
+            return jsonify({"ok": False, "error": "La contraseña debe tener al menos 8 caracteres"})
         hashed = bcrypt.hashpw(data["password"].encode(), bcrypt.gensalt()).decode()
         fields.append("password_hash=?"); params.append(hashed)
     if fields:

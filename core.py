@@ -84,6 +84,66 @@ OUTPUT_FOLDER     = "/data/informes"
 STOCK_REPORTS_DIR = "/data/reports/stock"
 
 
+# ── Migraciones ───────────────────────────────────────────────────────────────
+def run_migrations(db_path, migrations_dir=None):
+    """Sistema de migraciones numeradas (migrations/NNN_*.sql).
+
+    001_init.sql es la línea base: un volcado del esquema tal como lo dejaban
+    las funciones init_*_db() de siempre (core.py, finanzas.py,
+    blueprints/stock.py). En una instalación EXISTENTE (la base ya tiene esas
+    tablas, creadas por esas mismas funciones) se marca como aplicada sin
+    ejecutarla — ejecutar sus CREATE TABLE de nuevo fallaría porque las
+    tablas ya existen. En una base nueva y vacía, si esto corre antes que las
+    init_*_db(), sí las crea.
+
+    Lo que importa de acá en adelante es que cualquier cambio de esquema
+    futuro se agregue como 002_*.sql, 003_*.sql, etc. — eso sí se ejecuta
+    siempre (una sola vez, registrado en la tabla schema_migrations), en vez
+    de sumar un CREATE TABLE IF NOT EXISTS más disperso por el código."""
+    import glob as _glob
+    if migrations_dir is None:
+        migrations_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "migrations")
+    if not os.path.isdir(migrations_dir):
+        return
+    try:
+        con = sqlite3.connect(db_path, timeout=10)
+        con.execute("""CREATE TABLE IF NOT EXISTS schema_migrations (
+            version TEXT PRIMARY KEY, aplicada TEXT DEFAULT (datetime('now')))""")
+        ya_aplicadas = {r[0] for r in con.execute("SELECT version FROM schema_migrations")}
+
+        if not ya_aplicadas:
+            hay_tablas_previas = con.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' "
+                "AND name NOT IN ('schema_migrations','sqlite_sequence')"
+            ).fetchone()[0] > 0
+            if hay_tablas_previas:
+                con.execute("INSERT INTO schema_migrations (version) VALUES ('001_init.sql')")
+                con.commit()
+                ya_aplicadas.add("001_init.sql")
+
+        for ruta in sorted(_glob.glob(os.path.join(migrations_dir, "*.sql"))):
+            nombre = os.path.basename(ruta)
+            if nombre in ya_aplicadas:
+                continue
+            with open(ruta, encoding="utf-8") as f:
+                sql = f.read()
+            try:
+                con.executescript(sql)
+                con.execute("INSERT INTO schema_migrations (version) VALUES (?)", (nombre,))
+                con.commit()
+                logging.info(f"Migración aplicada: {nombre}")
+            except Exception:
+                con.rollback()
+                logging.exception(f"Migración FALLÓ: {nombre} — no se marca como aplicada")
+                raise
+        con.close()
+    except Exception:
+        logging.exception("run_migrations: error inesperado")
+
+run_migrations(HIST_DB)
+
+
+
 # ── Sesiones ─────────────────────────────────────────────────────────────────
 def registrar_sesion(username, token, ip, ua):
     try:
@@ -207,12 +267,40 @@ def _init_job_status_db():
         con = sqlite3.connect(HIST_DB, timeout=10)
         con.execute("""CREATE TABLE IF NOT EXISTS job_status_db (
             job_id TEXT PRIMARY KEY, status TEXT, log TEXT, files TEXT,
-            username TEXT, ts REAL)""")
+            username TEXT, ts REAL, progreso INTEGER DEFAULT 0)""")
         con.commit(); con.close()
     except Exception:
         logging.exception("No se pudo crear la tabla job_status_db")
 
 _init_job_status_db()
+
+# Progreso (%) estimado a partir del texto de los mensajes que ya emite
+# generar.py (log_fn(...)) — no hace falta tocar ese archivo. Cubre además
+# los mensajes típicos de VUA/SENASA/Stock ("Generando...", "completado",
+# etc.), aunque el detalle fino (0-100 con hitos nombrados) es más preciso
+# para los informes de generar.py. El progreso nunca retrocede.
+_HITOS_PROGRESO = [
+    ("proceso completado", 100), ("informe generado", 97), ("informe word generado", 90),
+    ("planilla excel generada", 95), ("generando archivos", 88),
+    ("gráficos generados", 85), ("generando gráficos", 75),
+    ("conclusión generada", 68), ("conclusión no disponible", 68),
+    ("generando conclusión", 58),
+    ("narrativa generada", 50), ("narrativa no disponible", 50),
+    ("generando narrativa", 40),
+    ("queries completadas", 30), ("corriendo queries", 15),
+    ("conectando a la bd", 5),
+]
+
+def _pct_desde_mensaje(mensaje, pct_actual):
+    m = (mensaje or "").lower()
+    if m.startswith("✗") or "error" in m:
+        return pct_actual  # un error no debe hacer parecer que avanzó
+    for clave, pct in _HITOS_PROGRESO:
+        if clave in m:
+            return max(pct_actual, pct)
+    # Sin hito reconocido: igual dar una sensación de avance leve y acotada,
+    # para que la barra no quede clavada en 0 en módulos sin hitos mapeados.
+    return min(80, pct_actual + 3)
 
 def _job_persist(job_id):
     """Espeja el estado actual de job_status[job_id] a SQLite."""
@@ -221,12 +309,14 @@ def _job_persist(job_id):
         return
     try:
         con = sqlite3.connect(HIST_DB, timeout=10)
-        con.execute("""INSERT INTO job_status_db (job_id, status, log, files, username, ts)
-            VALUES (?,?,?,?,?,?)
+        con.execute("""INSERT INTO job_status_db (job_id, status, log, files, username, ts, progreso)
+            VALUES (?,?,?,?,?,?,?)
             ON CONFLICT(job_id) DO UPDATE SET
-                status=excluded.status, log=excluded.log, files=excluded.files, ts=excluded.ts""",
+                status=excluded.status, log=excluded.log, files=excluded.files,
+                ts=excluded.ts, progreso=excluded.progreso""",
             (job_id, info.get("status", "running"), json.dumps(list(info.get("log", []))),
-             json.dumps(info.get("files", [])), info.get("username", "?"), time.time()))
+             json.dumps(info.get("files", [])), info.get("username", "?"), time.time(),
+             info.get("progreso", 0)))
         con.commit(); con.close()
     except Exception:
         logging.exception(f"job_status: no se pudo persistir job_id={job_id}")
@@ -234,12 +324,16 @@ def _job_persist(job_id):
 class _JobLog(list):
     """Lista de progreso de un job. Persiste a SQLite en cada .append(), para
     que el progreso sea visible en vivo desde cualquier worker, no solo el
-    que está corriendo el hilo de background."""
+    que está corriendo el hilo de background. También actualiza el % de
+    avance estimado a partir del mensaje agregado."""
     def __init__(self, job_id, inicial=None):
         super().__init__(inicial or [])
         self._job_id = job_id
     def append(self, item):
         super().append(item)
+        info = job_status.get(self._job_id)
+        if info is not None:
+            info["progreso"] = _pct_desde_mensaje(item, info.get("progreso", 0))
         _job_persist(self._job_id)
 
 def job_create(job_id, primer_mensaje="", username="?", status="running"):
@@ -250,6 +344,7 @@ def job_create(job_id, primer_mensaje="", username="?", status="running"):
         "log": _JobLog(job_id, [primer_mensaje] if primer_mensaje else []),
         "files": [],
         "username": username,
+        "progreso": 0,
         "_ts": time.time(),
     }
     _job_persist(job_id)
@@ -265,14 +360,15 @@ def job_get(job_id):
     try:
         con = sqlite3.connect(HIST_DB, timeout=10)
         row = con.execute(
-            "SELECT status, log, files, username FROM job_status_db WHERE job_id=?",
+            "SELECT status, log, files, username, progreso FROM job_status_db WHERE job_id=?",
             (job_id,)).fetchone()
         con.close()
         if not row:
             return None
-        status, log_json, files_json, username = row
+        status, log_json, files_json, username, progreso = row
         return {"status": status, "log": json.loads(log_json or "[]"),
-                "files": json.loads(files_json or "[]"), "username": username}
+                "files": json.loads(files_json or "[]"), "username": username,
+                "progreso": progreso or 0}
     except Exception:
         logging.exception(f"job_status: no se pudo leer job_id={job_id} de SQLite")
         return None
