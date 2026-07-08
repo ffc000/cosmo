@@ -570,7 +570,13 @@ def generar_html(registros: list, fecha_max: str, serie: list = None, tendencia:
         razon_e        = _html.escape(str(r[6]))
         cuit_e         = _html.escape(str(r[7]))
         freg_e, fstock_e = _html.escape(str(r[3])), _html.escape(str(r[4]))
-        coment_e       = _html.escape(str(r[11]))
+        coment_title_e = _html.escape(str(r[11]))
+        # Todo el texto se escapa (por si algún día trae datos externos), y
+        # recién después se "desescapa" puntualmente el <strong>PLAN BARRIDO</strong>
+        # que agrega el propio código (línea ~382) — nunca viene de datos externos.
+        coment_e       = (coment_title_e
+            .replace('&lt;strong&gt;', '<strong>')
+            .replace('&lt;/strong&gt;', '</strong>'))
         filas_html.append(
             f'<tr data-sem="{sem}" data-idx="{idx}" data-adu="{adu_e}" data-lot="{lot_e}">'
             f'<td>{adu_e}</td>'
@@ -583,7 +589,7 @@ def generar_html(registros: list, fecha_max: str, serie: list = None, tendencia:
             f'<td>{freg_e}</td>'
             f'<td>{fstock_e}</td>'
             f'<td style="white-space:nowrap">{barras}</td>'
-            f'<td style="font-size:.75rem;color:#555" title="{coment_e}">{coment_e}</td>'
+            f'<td style="font-size:.75rem;color:#555" title="{coment_title_e}">{coment_e}</td>'
             f'</tr>'
         )
 
