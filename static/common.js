@@ -48,3 +48,36 @@
     setTimeout(function () { b.remove(); window.__avisoErrorRed = false; }, 6000);
   });
 })();
+
+// escHtml: escapa texto para insertarlo de forma segura en HTML. Antes estaba
+// copiado y pegado, idéntico, en 8 de las 9 plantillas (a veces como 'esc',
+// a veces como 'escHtml') — el mismo problema que el interceptor CSRF de
+// arriba, solo que nunca se terminó de unificar. senasa.html y training.html
+// tienen ADEMÁS su propio 'esc()' local con un propósito distinto (escapar
+// comillas dentro de atributos onclick, no HTML) — ese se mantiene aparte
+// a propósito, no se toca acá.
+function escHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
+// abrirModal/cerrarModal: togglean la clase 'visible' de un .modal-overlay.
+// También estaban duplicadas letra por letra en varias plantillas.
+function abrirModal(id) {
+  document.getElementById(id).classList.add('visible');
+}
+function cerrarModal(id) {
+  document.getElementById(id).classList.remove('visible');
+}
+
+// Cerrar cualquier modal abierto al hacer click en el fondo oscuro (fuera del
+// cuadro de diálogo). Se espera a DOMContentLoaded porque common.js se carga
+// en <head>, antes de que exista en el DOM el HTML de los modales.
+document.addEventListener('DOMContentLoaded', function () {
+  document.querySelectorAll('.modal-overlay').forEach(function (m) {
+    m.addEventListener('click', function (e) {
+      if (e.target === m) m.classList.remove('visible');
+    });
+  });
+});
