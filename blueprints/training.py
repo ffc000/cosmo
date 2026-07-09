@@ -170,11 +170,19 @@ def get_analisis(actividad_id=None, tipo=None):
 
 def guardar_analisis(data: dict):
     aid = str(uuid.uuid4())[:12]
+    tipo = data.get("tipo", "sesion")
     with get_db(HIST_DB) as con:
+        if tipo == "sesion" and data.get("actividad_id"):
+            # Guardar solo el último análisis por actividad — antes se
+            # acumulaba uno nuevo cada vez que se apretaba "Analizar sesión"
+            # (ej. después de agregar la nota manual), dejando versiones
+            # viejas dando vueltas en la base sin ningún uso.
+            con.execute("DELETE FROM garmin_analisis WHERE tipo='sesion' AND actividad_id=?",
+                        (data["actividad_id"],))
         con.execute("""INSERT INTO garmin_analisis
             (id,tipo,fecha_desde,fecha_hasta,actividad_id,prompt_usado,respuesta,creado)
             VALUES (?,?,?,?,?,?,?,?)""",
-            (aid, data.get("tipo","sesion"), data.get("fecha_desde"), data.get("fecha_hasta"),
+            (aid, tipo, data.get("fecha_desde"), data.get("fecha_hasta"),
              data.get("actividad_id"), data.get("prompt_usado",""), data.get("respuesta",""),
              datetime.now().isoformat()))
     return aid
@@ -703,10 +711,13 @@ def api_analizar():
     act_id  = data.get("actividad_id")
     tipo_an = data.get("tipo", "sesion")  # sesion | progresion
 
-    # Verificar caché
-    existentes = get_analisis(actividad_id=act_id) if act_id else []
-    if existentes and tipo_an == "sesion":
-        return jsonify({"ok": True, "respuesta": existentes[0]["respuesta"], "cached": True})
+    # "Analizar sesión" es una acción explícita del usuario (botón), no algo
+    # que se dispara solo al abrir la pantalla — así que siempre debe volver
+    # a llamar a la IA con los datos actuales. Antes, si ya existía un
+    # análisis guardado para esa actividad, se devolvía ese sin recalcular
+    # nada — por eso agregar la nota manual (ver nota_real) después de haber
+    # analizado una vez no tenía ningún efecto: el botón "Analizar" seguía
+    # mostrando el análisis viejo, que nunca había visto la nota.
 
     key = _api_key()
     if not key:
