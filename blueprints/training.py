@@ -12,7 +12,6 @@ import json
 import uuid
 import time
 import logging
-import sqlite3
 import threading
 import threading as _threading
 import urllib.request
@@ -21,7 +20,7 @@ from datetime import datetime, date, timedelta
 
 from flask import Blueprint, request, jsonify, render_template, session, redirect, url_for, send_file
 
-from core import HIST_DB, login_required, modulo_required, limiter, app
+from core import HIST_DB, login_required, modulo_required, limiter, app, get_db
 import garmin_auth
 
 training_bp = Blueprint("training", __name__)
@@ -51,58 +50,55 @@ def normalizar_tipo(tipo_garmin):
 
 # ── BD ────────────────────────────────────────────────────────────────────────
 def init_garmin_db():
-    con = sqlite3.connect(HIST_DB)
-    con.execute("""CREATE TABLE IF NOT EXISTS garmin_config (
-        clave TEXT PRIMARY KEY,
-        valor TEXT DEFAULT '',
-        modificado TEXT DEFAULT (datetime('now'))
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS garmin_actividades (
-        id            TEXT PRIMARY KEY,
-        tipo          TEXT,
-        fecha         TEXT,
-        nombre        TEXT,
-        duracion_seg  INTEGER,
-        distancia_m   REAL,
-        fc_media      INTEGER,
-        fc_max        INTEGER,
-        calorias      INTEGER,
-        tss           REAL,
-        cadencia_media INTEGER,
-        velocidad_media REAL,
-        desnivel_pos  REAL,
-        potencia_media INTEGER,
-        normalizada_w INTEGER,
-        zonas_fc      TEXT,
-        laps          TEXT,
-        metadata      TEXT,
-        archivo_path  TEXT,
-        sincronizado  TEXT
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS garmin_detalle (
-        actividad_id  TEXT PRIMARY KEY,
-        serie_tiempo  TEXT,
-        ruta_gps      TEXT,
-        obtenido      TEXT
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS garmin_analisis (
-        id            TEXT PRIMARY KEY,
-        tipo          TEXT,
-        fecha_desde   TEXT,
-        fecha_hasta   TEXT,
-        actividad_id  TEXT,
-        prompt_usado  TEXT,
-        respuesta     TEXT,
-        creado        TEXT
-    )""")
-    con.commit()
-    con.close()
+    with get_db(HIST_DB) as con:
+        con.execute("""CREATE TABLE IF NOT EXISTS garmin_config (
+            clave TEXT PRIMARY KEY,
+            valor TEXT DEFAULT '',
+            modificado TEXT DEFAULT (datetime('now'))
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS garmin_actividades (
+            id            TEXT PRIMARY KEY,
+            tipo          TEXT,
+            fecha         TEXT,
+            nombre        TEXT,
+            duracion_seg  INTEGER,
+            distancia_m   REAL,
+            fc_media      INTEGER,
+            fc_max        INTEGER,
+            calorias      INTEGER,
+            tss           REAL,
+            cadencia_media INTEGER,
+            velocidad_media REAL,
+            desnivel_pos  REAL,
+            potencia_media INTEGER,
+            normalizada_w INTEGER,
+            zonas_fc      TEXT,
+            laps          TEXT,
+            metadata      TEXT,
+            archivo_path  TEXT,
+            sincronizado  TEXT
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS garmin_detalle (
+            actividad_id  TEXT PRIMARY KEY,
+            serie_tiempo  TEXT,
+            ruta_gps      TEXT,
+            obtenido      TEXT
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS garmin_analisis (
+            id            TEXT PRIMARY KEY,
+            tipo          TEXT,
+            fecha_desde   TEXT,
+            fecha_hasta   TEXT,
+            actividad_id  TEXT,
+            prompt_usado  TEXT,
+            respuesta     TEXT,
+            creado        TEXT
+        )""")
 
 init_garmin_db()
 
 # ── Helpers BD ────────────────────────────────────────────────────────────────
 def get_actividades(limit=50, tipo=None, desde=None, hasta=None):
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
     q = "SELECT * FROM garmin_actividades WHERE 1=1"
     params = []
     if tipo and tipo != "todas":
@@ -113,69 +109,63 @@ def get_actividades(limit=50, tipo=None, desde=None, hasta=None):
         q += " AND fecha <= ?"; params.append(hasta + "T23:59:59")
     q += " ORDER BY fecha DESC LIMIT ?"
     params.append(limit)
-    rows = [dict(r) for r in con.execute(q, params).fetchall()]
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute(q, params).fetchall()]
     return rows
 
 def get_actividad(act_id):
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    row = con.execute("SELECT * FROM garmin_actividades WHERE id=?", (act_id,)).fetchone()
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        row = con.execute("SELECT * FROM garmin_actividades WHERE id=?", (act_id,)).fetchone()
     return dict(row) if row else None
 
 def guardar_actividad(data: dict):
-    con = sqlite3.connect(HIST_DB)
-    con.execute("""INSERT OR REPLACE INTO garmin_actividades
-        (id,tipo,fecha,nombre,duracion_seg,distancia_m,fc_media,fc_max,
-         calorias,tss,cadencia_media,velocidad_media,desnivel_pos,
-         potencia_media,normalizada_w,zonas_fc,laps,metadata,archivo_path,sincronizado)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (data.get("id"), data.get("tipo"), data.get("fecha"), data.get("nombre"),
-         data.get("duracion_seg"), data.get("distancia_m"), data.get("fc_media"),
-         data.get("fc_max"), data.get("calorias"), data.get("tss"),
-         data.get("cadencia_media"), data.get("velocidad_media"), data.get("desnivel_pos"),
-         data.get("potencia_media"), data.get("normalizada_w"),
-         json.dumps(data.get("zonas_fc") or {}),
-         json.dumps(data.get("laps") or []),
-         json.dumps(data.get("metadata") or {}),
-         data.get("archivo_path"), datetime.now().isoformat()))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        con.execute("""INSERT OR REPLACE INTO garmin_actividades
+            (id,tipo,fecha,nombre,duracion_seg,distancia_m,fc_media,fc_max,
+             calorias,tss,cadencia_media,velocidad_media,desnivel_pos,
+             potencia_media,normalizada_w,zonas_fc,laps,metadata,archivo_path,sincronizado)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (data.get("id"), data.get("tipo"), data.get("fecha"), data.get("nombre"),
+             data.get("duracion_seg"), data.get("distancia_m"), data.get("fc_media"),
+             data.get("fc_max"), data.get("calorias"), data.get("tss"),
+             data.get("cadencia_media"), data.get("velocidad_media"), data.get("desnivel_pos"),
+             data.get("potencia_media"), data.get("normalizada_w"),
+             json.dumps(data.get("zonas_fc") or {}),
+             json.dumps(data.get("laps") or []),
+             json.dumps(data.get("metadata") or {}),
+             data.get("archivo_path"), datetime.now().isoformat()))
 
 def get_detalle_cache(act_id):
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    row = con.execute("SELECT * FROM garmin_detalle WHERE actividad_id=?", (act_id,)).fetchone()
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        row = con.execute("SELECT * FROM garmin_detalle WHERE actividad_id=?", (act_id,)).fetchone()
     return dict(row) if row else None
 
 def guardar_detalle_cache(act_id, serie_tiempo, ruta_gps):
-    con = sqlite3.connect(HIST_DB)
-    con.execute("""INSERT OR REPLACE INTO garmin_detalle (actividad_id,serie_tiempo,ruta_gps,obtenido)
-        VALUES (?,?,?,?)""",
-        (act_id, json.dumps(serie_tiempo or []), json.dumps(ruta_gps or []), datetime.now().isoformat()))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        con.execute("""INSERT OR REPLACE INTO garmin_detalle (actividad_id,serie_tiempo,ruta_gps,obtenido)
+            VALUES (?,?,?,?)""",
+            (act_id, json.dumps(serie_tiempo or []), json.dumps(ruta_gps or []), datetime.now().isoformat()))
 
 def get_analisis(actividad_id=None, tipo=None):
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    if actividad_id:
-        rows = con.execute(
-            "SELECT * FROM garmin_analisis WHERE actividad_id=? ORDER BY creado DESC",
-            (actividad_id,)).fetchall()
-    else:
-        q = "SELECT * FROM garmin_analisis WHERE tipo=? ORDER BY creado DESC LIMIT 20"
-        rows = con.execute(q, (tipo or "sesion",)).fetchall()
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        if actividad_id:
+            rows = con.execute(
+                "SELECT * FROM garmin_analisis WHERE actividad_id=? ORDER BY creado DESC",
+                (actividad_id,)).fetchall()
+        else:
+            q = "SELECT * FROM garmin_analisis WHERE tipo=? ORDER BY creado DESC LIMIT 20"
+            rows = con.execute(q, (tipo or "sesion",)).fetchall()
     return [dict(r) for r in rows]
 
 def guardar_analisis(data: dict):
     aid = str(uuid.uuid4())[:12]
-    con = sqlite3.connect(HIST_DB)
-    con.execute("""INSERT INTO garmin_analisis
-        (id,tipo,fecha_desde,fecha_hasta,actividad_id,prompt_usado,respuesta,creado)
-        VALUES (?,?,?,?,?,?,?,?)""",
-        (aid, data.get("tipo","sesion"), data.get("fecha_desde"), data.get("fecha_hasta"),
-         data.get("actividad_id"), data.get("prompt_usado",""), data.get("respuesta",""),
-         datetime.now().isoformat()))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        con.execute("""INSERT INTO garmin_analisis
+            (id,tipo,fecha_desde,fecha_hasta,actividad_id,prompt_usado,respuesta,creado)
+            VALUES (?,?,?,?,?,?,?,?)""",
+            (aid, data.get("tipo","sesion"), data.get("fecha_desde"), data.get("fecha_hasta"),
+             data.get("actividad_id"), data.get("prompt_usado",""), data.get("respuesta",""),
+             datetime.now().isoformat()))
     return aid
 
 # ── Credenciales Garmin (cifrado/almacenamiento aislado en garmin_auth.py) ────
@@ -431,9 +421,8 @@ def _sync_worker(job_id: str, user: str, modo: str, semana_offset: int = 0):
             act_id = str(act.get("activityId", ""))
             _sync_status[job_id]["progreso"] = i + 1
 
-            con = sqlite3.connect(HIST_DB)
-            existe = con.execute("SELECT 1 FROM garmin_actividades WHERE id=?", (act_id,)).fetchone()
-            con.close()
+            with get_db(HIST_DB) as con:
+                existe = con.execute("SELECT 1 FROM garmin_actividades WHERE id=?", (act_id,)).fetchone()
             if existe:
                 continue
 
@@ -742,15 +731,14 @@ def api_analisis_progresion():
 @login_required
 @modulo_required("training")
 def api_garmin_stats():
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    total = con.execute("SELECT COUNT(*) FROM garmin_actividades").fetchone()[0]
-    por_tipo = [dict(r) for r in con.execute(
-        "SELECT tipo, COUNT(*) as n FROM garmin_actividades GROUP BY tipo ORDER BY n DESC"
-    ).fetchall()]
-    ultima = con.execute(
-        "SELECT sincronizado FROM garmin_actividades ORDER BY sincronizado DESC LIMIT 1"
-    ).fetchone()
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        total = con.execute("SELECT COUNT(*) FROM garmin_actividades").fetchone()[0]
+        por_tipo = [dict(r) for r in con.execute(
+            "SELECT tipo, COUNT(*) as n FROM garmin_actividades GROUP BY tipo ORDER BY n DESC"
+        ).fetchall()]
+        ultima = con.execute(
+            "SELECT sincronizado FROM garmin_actividades ORDER BY sincronizado DESC LIMIT 1"
+        ).fetchone()
     return jsonify({
         "ok": True,
         "total": total,
@@ -789,16 +777,15 @@ def api_config_set():
 @modulo_required("training")
 def api_carga_semanal():
     """ATL (fatiga aguda 7d) y CTL (forma crónica 42d) basados en carga diaria."""
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = con.execute("""
-        SELECT DATE(fecha) as dia,
-               SUM(COALESCE(CAST(json_extract(metadata,'$.load_primario') AS REAL), 0)) as carga,
-               COUNT(*) as sesiones
-        FROM garmin_actividades
-        WHERE fecha >= DATE('now', '-90 days')
-        GROUP BY dia ORDER BY dia
-    """).fetchall()
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = con.execute("""
+            SELECT DATE(fecha) as dia,
+                   SUM(COALESCE(CAST(json_extract(metadata,'$.load_primario') AS REAL), 0)) as carga,
+                   COUNT(*) as sesiones
+            FROM garmin_actividades
+            WHERE fecha >= DATE('now', '-90 days')
+            GROUP BY dia ORDER BY dia
+        """).fetchall()
 
     from datetime import date, timedelta
     datos = {r["dia"]: {"carga": r["carga"], "sesiones": r["sesiones"]} for r in rows}
@@ -921,13 +908,12 @@ def api_historial_calendario():
     else:
         hasta = f"{anio:04d}-{mes+1:02d}-01"
 
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = con.execute(
-        "SELECT id,tipo,fecha,nombre,duracion_seg,distancia_m,fc_media,tss,metadata "
-        "FROM garmin_actividades WHERE fecha >= ? AND fecha < ? ORDER BY fecha",
-        (desde, hasta)
-    ).fetchall()
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = con.execute(
+            "SELECT id,tipo,fecha,nombre,duracion_seg,distancia_m,fc_media,tss,metadata "
+            "FROM garmin_actividades WHERE fecha >= ? AND fecha < ? ORDER BY fecha",
+            (desde, hasta)
+        ).fetchall()
 
     dias = {}
     for r in rows:
@@ -1086,148 +1072,181 @@ def api_actividad_detalle_curvas(act_id):
 
 # ── BD ────────────────────────────────────────────────────────────────────────
 def init_training_db():
-    con = sqlite3.connect(HIST_DB)
-    con.execute("""CREATE TABLE IF NOT EXISTS entrenamiento_plan (
-        id          TEXT PRIMARY KEY,
-        semana_num  INTEGER,
-        fecha_inicio TEXT,
-        fase        TEXT,
-        es_descarga INTEGER DEFAULT 0,
-        dia_semana  TEXT,
-        turno       TEXT,
-        descripcion TEXT,
-        notas       TEXT DEFAULT '',
-        creado      TEXT DEFAULT (datetime('now')),
-        modificado  TEXT DEFAULT (datetime('now'))
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS entrenamiento_semanas (
-        semana_num   INTEGER PRIMARY KEY,
-        fecha_inicio TEXT,
-        fase         TEXT,
-        es_descarga  INTEGER DEFAULT 0,
-        objetivo     TEXT DEFAULT '',
-        notas        TEXT DEFAULT ''
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS entrenamiento_log (
-        id           TEXT PRIMARY KEY,
-        fecha        TEXT,
-        tipo         TEXT,
-        descripcion  TEXT,
-        duracion_min INTEGER,
-        notas        TEXT DEFAULT '',
-        completado   INTEGER DEFAULT 1,
-        garmin_id    TEXT,
-        plan_id      TEXT,
-        creado       TEXT DEFAULT (datetime('now'))
-    )""")
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        con.execute("""CREATE TABLE IF NOT EXISTS entrenamiento_plan (
+            id          TEXT PRIMARY KEY,
+            semana_num  INTEGER,
+            fecha_inicio TEXT,
+            fase        TEXT,
+            es_descarga INTEGER DEFAULT 0,
+            dia_semana  TEXT,
+            turno       TEXT,
+            descripcion TEXT,
+            notas       TEXT DEFAULT '',
+            creado      TEXT DEFAULT (datetime('now')),
+            modificado  TEXT DEFAULT (datetime('now'))
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS entrenamiento_semanas (
+            semana_num   INTEGER PRIMARY KEY,
+            fecha_inicio TEXT,
+            fase         TEXT,
+            es_descarga  INTEGER DEFAULT 0,
+            objetivo     TEXT DEFAULT '',
+            notas        TEXT DEFAULT ''
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS entrenamiento_log (
+            id           TEXT PRIMARY KEY,
+            fecha        TEXT,
+            tipo         TEXT,
+            descripcion  TEXT,
+            duracion_min INTEGER,
+            notas        TEXT DEFAULT '',
+            completado   INTEGER DEFAULT 1,
+            garmin_id    TEXT,
+            plan_id      TEXT,
+            creado       TEXT DEFAULT (datetime('now'))
+        )""")
+        # Glosario de ejercicios: alias (como los nombra Fer/como los llama la
+        # máquina/app) -> término estándar (el nombre real del ejercicio,
+        # reconocible por la IA). Mismo patrón que vua_glosario — se inyecta
+        # como contexto cuando se manda una rutina a analizar, en vez de
+        # intentar reemplazar palabras en el texto (más frágil: se rompe con
+        # cualquier variación de redacción).
+        con.execute("""CREATE TABLE IF NOT EXISTS entrenamiento_glosario (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            alias            TEXT NOT NULL,
+            termino_estandar TEXT NOT NULL,
+            notas            TEXT DEFAULT '',
+            orden            INTEGER DEFAULT 0,
+            creado           TEXT DEFAULT (datetime('now'))
+        )""")
+        # Rutinas cargadas a mano en texto libre (ejercicios que Garmin no
+        # registra). Tabla separada de entrenamiento_log a propósito: acá el
+        # contenido central es el bloque de texto completo de la rutina, no
+        # una descripción corta — mezclarlo con el log le cambiaba el uso
+        # a ese campo para las demás sesiones (las que sí vienen de Garmin).
+        con.execute("""CREATE TABLE IF NOT EXISTS entrenamiento_rutinas_manuales (
+            id          TEXT PRIMARY KEY,
+            fecha       TEXT,
+            titulo      TEXT DEFAULT '',
+            texto       TEXT NOT NULL,
+            creado      TEXT DEFAULT (datetime('now'))
+        )""")
+        if not con.execute("SELECT 1 FROM entrenamiento_glosario LIMIT 1").fetchone():
+            con.executemany(
+                "INSERT INTO entrenamiento_glosario (alias, termino_estandar, orden) VALUES (?,?,?)",
+                [
+                    ("Máquina de remo", "Row erg (remo en máquina)", 1),
+                    ("Tirones de polea (de pie)", "Ski Erg", 2),
+                    ("Zancadas alternada hacia adelante", "Lunges avanzando (estilo Hyrox)", 3),
+                    ("Sentadilla con balón medicinal", "Wall Ball", 4),
+                ])
 
 def _seed_plan():
     """Importa el plan Post-Hyrox 2026 desde los datos del xlsx."""
-    con = sqlite3.connect(HIST_DB)
-    n = con.execute("SELECT COUNT(*) FROM entrenamiento_semanas").fetchone()[0]
-    if n > 0:
-        con.close(); return
+    with get_db(HIST_DB) as con:
+        n = con.execute("SELECT COUNT(*) FROM entrenamiento_semanas").fetchone()[0]
+        if n > 0:
+            return
 
-    FASES = {
-        **{i: ("FASE 1 — Foco 21K", 0) for i in range(1, 8)},
-        8:  ("FASE 2 — Transición (descarga)", 1),
-        9:  ("FASE 2 — Transición", 0),
-        10: ("FASE 3 — Descarga pre-21K", 0),
-        **{i: ("FASE 4 — Foco Hybrid Race", 0) for i in range(11, 15)},
-    }
-    FECHAS = {
-        1: "2026-06-14", 2: "2026-06-21", 3: "2026-06-28", 4: "2026-07-05",
-        5: "2026-07-12", 6: "2026-07-19", 7: "2026-07-26", 8: "2026-08-02",
-        9: "2026-08-09", 10: "2026-08-16", 11: "2026-08-23", 12: "2026-08-30",
-        13: "2026-09-06", 14: "2026-09-13",
-    }
-    OBJETIVOS = {
-        1: "Arranque del plan. Calibrar intensidad del bloque HX matutino.",
-        4: "DESCARGA 65% — Recuperación activa.",
-        8: "DESCARGA 65% — Inicio transición hacia fase Hybrid Race.",
-        10: "Descarga total pre-21K. Domingo 23/08: 21K Buenos Aires 8hs.",
-        11: "Post 21K. Evaluar recuperación antes de retomar máxima intensidad HX.",
-        14: "Semana de carrera. Sábado 12/09: HYBRID RACE INDIVIDUAL.",
-    }
+        FASES = {
+            **{i: ("FASE 1 — Foco 21K", 0) for i in range(1, 8)},
+            8:  ("FASE 2 — Transición (descarga)", 1),
+            9:  ("FASE 2 — Transición", 0),
+            10: ("FASE 3 — Descarga pre-21K", 0),
+            **{i: ("FASE 4 — Foco Hybrid Race", 0) for i in range(11, 15)},
+        }
+        FECHAS = {
+            1: "2026-06-14", 2: "2026-06-21", 3: "2026-06-28", 4: "2026-07-05",
+            5: "2026-07-12", 6: "2026-07-19", 7: "2026-07-26", 8: "2026-08-02",
+            9: "2026-08-09", 10: "2026-08-16", 11: "2026-08-23", 12: "2026-08-30",
+            13: "2026-09-06", 14: "2026-09-13",
+        }
+        OBJETIVOS = {
+            1: "Arranque del plan. Calibrar intensidad del bloque HX matutino.",
+            4: "DESCARGA 65% — Recuperación activa.",
+            8: "DESCARGA 65% — Inicio transición hacia fase Hybrid Race.",
+            10: "Descarga total pre-21K. Domingo 23/08: 21K Buenos Aires 8hs.",
+            11: "Post 21K. Evaluar recuperación antes de retomar máxima intensidad HX.",
+            14: "Semana de carrera. Sábado 12/09: HYBRID RACE INDIVIDUAL.",
+        }
 
-    # Plantilla base semanal (turno, dia, descripción)
-    PLANTILLA_NORMAL = [
-        ("mañana",    "lunes",     "Fuerza A + 4 rounds HX: SkiErg 500m+200m run / Remo 500m+200m run / 20 estocadas+200m run"),
-        ("mediodía",  "lunes",     "Bici 45' Z2"),
-        ("mañana",    "miércoles", "Movilidad 25' hombros / caderas / cadena posterior"),
-        ("mediodía",  "miércoles", "Bici 45' Z2"),
-        ("noche",     "miércoles", "Run Z2 30' recuperación activa"),
-        ("mañana",    "jueves",    "Fuerza B + Peso muerto 3x5 + 4 rounds HX: Farmer 50m+200m run / Remo 500m+200m run / WallBall 20+200m run"),
-        ("mediodía",  "jueves",    "Bici 45' Z2"),
-        ("noche",     "martes",    "Run suave 30' → HX grupal"),
-        ("noche",     "jueves",    "HX grupal"),
-        ("mediodía",  "viernes",   "Run estructurado 65': 15' Z2 + 20' @ 5:40/km + 15' Z2"),
-        ("mañana",    "sábado",    "Run grupal"),
-        ("mediodía",  "sábado",    "HX grupal"),
-        ("mañana",    "domingo",   "Run 90' Z2 progresivo + 2-3 estaciones HX"),
-        ("mediodía",  "domingo",   "Run Z2 extra 20-30'"),
-    ]
-    PLANTILLA_DESCARGA = [
-        ("mañana",    "lunes",     "Fuerza A + 2 rounds HX: SkiErg 500m+200m run / Remo 500m+200m run / 10 estocadas+200m run"),
-        ("mediodía",  "lunes",     "Bici 45' Z2"),
-        ("mañana",    "miércoles", "Movilidad 25' hombros / caderas / cadena posterior"),
-        ("mediodía",  "miércoles", "Bici 45' Z2"),
-        ("noche",     "miércoles", "Run Z2 30' recuperación activa"),
-        ("mañana",    "jueves",    "Fuerza B + Peso muerto 3x3 + 2 rounds HX: Farmer 50m+200m run / Remo 500m+200m run / WallBall 20+200m run"),
-        ("mediodía",  "jueves",    "Bici 45' Z2"),
-        ("noche",     "martes",    "Run suave 20' → HX grupal"),
-        ("noche",     "jueves",    "HX grupal"),
-        ("mediodía",  "viernes",   "Run Z2 40' sin ritmo"),
-        ("mañana",    "sábado",    "Run grupal"),
-        ("mediodía",  "sábado",    "HX grupal"),
-        ("mañana",    "domingo",   "Run 50' Z2 (descarga)"),
-    ]
-    PLANTILLA_FASE4_DOM = [
-        ("mañana",    "domingo",   "Simulación Hyrox completa: 8x(1km run + estación) + 5km run final Z2"),
-    ]
-    PLANTILLA_FASE4_VIE = [
-        ("mediodía",  "viernes",   "Run estructurado 65': 15' Z2 + 35' @ 5:20/km + 15' Z2"),
-    ]
-    ESPECIALES = {
-        10: [("mañana", "domingo", "21K BUENOS AIRES 23/08 — 8hs Av. Figueroa Alcorta")],
-        14: [("mañana", "sábado",  "HYBRID RACE INDIVIDUAL 12/09 — 8 estaciones completas")],
-    }
+        # Plantilla base semanal (turno, dia, descripción)
+        PLANTILLA_NORMAL = [
+            ("mañana",    "lunes",     "Fuerza A + 4 rounds HX: SkiErg 500m+200m run / Remo 500m+200m run / 20 estocadas+200m run"),
+            ("mediodía",  "lunes",     "Bici 45' Z2"),
+            ("mañana",    "miércoles", "Movilidad 25' hombros / caderas / cadena posterior"),
+            ("mediodía",  "miércoles", "Bici 45' Z2"),
+            ("noche",     "miércoles", "Run Z2 30' recuperación activa"),
+            ("mañana",    "jueves",    "Fuerza B + Peso muerto 3x5 + 4 rounds HX: Farmer 50m+200m run / Remo 500m+200m run / WallBall 20+200m run"),
+            ("mediodía",  "jueves",    "Bici 45' Z2"),
+            ("noche",     "martes",    "Run suave 30' → HX grupal"),
+            ("noche",     "jueves",    "HX grupal"),
+            ("mediodía",  "viernes",   "Run estructurado 65': 15' Z2 + 20' @ 5:40/km + 15' Z2"),
+            ("mañana",    "sábado",    "Run grupal"),
+            ("mediodía",  "sábado",    "HX grupal"),
+            ("mañana",    "domingo",   "Run 90' Z2 progresivo + 2-3 estaciones HX"),
+            ("mediodía",  "domingo",   "Run Z2 extra 20-30'"),
+        ]
+        PLANTILLA_DESCARGA = [
+            ("mañana",    "lunes",     "Fuerza A + 2 rounds HX: SkiErg 500m+200m run / Remo 500m+200m run / 10 estocadas+200m run"),
+            ("mediodía",  "lunes",     "Bici 45' Z2"),
+            ("mañana",    "miércoles", "Movilidad 25' hombros / caderas / cadena posterior"),
+            ("mediodía",  "miércoles", "Bici 45' Z2"),
+            ("noche",     "miércoles", "Run Z2 30' recuperación activa"),
+            ("mañana",    "jueves",    "Fuerza B + Peso muerto 3x3 + 2 rounds HX: Farmer 50m+200m run / Remo 500m+200m run / WallBall 20+200m run"),
+            ("mediodía",  "jueves",    "Bici 45' Z2"),
+            ("noche",     "martes",    "Run suave 20' → HX grupal"),
+            ("noche",     "jueves",    "HX grupal"),
+            ("mediodía",  "viernes",   "Run Z2 40' sin ritmo"),
+            ("mañana",    "sábado",    "Run grupal"),
+            ("mediodía",  "sábado",    "HX grupal"),
+            ("mañana",    "domingo",   "Run 50' Z2 (descarga)"),
+        ]
+        PLANTILLA_FASE4_DOM = [
+            ("mañana",    "domingo",   "Simulación Hyrox completa: 8x(1km run + estación) + 5km run final Z2"),
+        ]
+        PLANTILLA_FASE4_VIE = [
+            ("mediodía",  "viernes",   "Run estructurado 65': 15' Z2 + 35' @ 5:20/km + 15' Z2"),
+        ]
+        ESPECIALES = {
+            10: [("mañana", "domingo", "21K BUENOS AIRES 23/08 — 8hs Av. Figueroa Alcorta")],
+            14: [("mañana", "sábado",  "HYBRID RACE INDIVIDUAL 12/09 — 8 estaciones completas")],
+        }
 
-    semanas_data = []
-    sesiones_data = []
+        semanas_data = []
+        sesiones_data = []
 
-    for sem, fecha in FECHAS.items():
-        fase, es_desc = FASES[sem]
-        obj = OBJETIVOS.get(sem, f"Fase {sem}/14.")
-        semanas_data.append((sem, fecha, fase, es_desc, obj, ""))
+        for sem, fecha in FECHAS.items():
+            fase, es_desc = FASES[sem]
+            obj = OBJETIVOS.get(sem, f"Fase {sem}/14.")
+            semanas_data.append((sem, fecha, fase, es_desc, obj, ""))
 
-        plantilla = PLANTILLA_DESCARGA if es_desc else PLANTILLA_NORMAL
+            plantilla = PLANTILLA_DESCARGA if es_desc else PLANTILLA_NORMAL
 
-        # Ajustar domingo en Fase 4
-        if sem >= 11 and not es_desc:
-            plantilla = [s for s in plantilla if not (s[0] == "mañana" and s[1] == "domingo")]
-            plantilla += PLANTILLA_FASE4_DOM
-            plantilla = [s for s in plantilla if not (s[0] == "mediodía" and s[1] == "viernes")]
-            plantilla += PLANTILLA_FASE4_VIE
+            # Ajustar domingo en Fase 4
+            if sem >= 11 and not es_desc:
+                plantilla = [s for s in plantilla if not (s[0] == "mañana" and s[1] == "domingo")]
+                plantilla += PLANTILLA_FASE4_DOM
+                plantilla = [s for s in plantilla if not (s[0] == "mediodía" and s[1] == "viernes")]
+                plantilla += PLANTILLA_FASE4_VIE
 
-        for turno, dia, desc in plantilla:
-            sesiones_data.append((
-                str(uuid.uuid4())[:12], sem, fecha, fase, es_desc, dia, turno, desc, obj
-            ))
+            for turno, dia, desc in plantilla:
+                sesiones_data.append((
+                    str(uuid.uuid4())[:12], sem, fecha, fase, es_desc, dia, turno, desc, obj
+                ))
 
-        # Sesiones especiales (race day)
-        for turno, dia, desc in ESPECIALES.get(sem, []):
-            sesiones_data.append((
-                str(uuid.uuid4())[:12], sem, fecha, fase, es_desc, dia, turno, desc, ""
-            ))
+            # Sesiones especiales (race day)
+            for turno, dia, desc in ESPECIALES.get(sem, []):
+                sesiones_data.append((
+                    str(uuid.uuid4())[:12], sem, fecha, fase, es_desc, dia, turno, desc, ""
+                ))
 
-    con.executemany(
-        "INSERT OR IGNORE INTO entrenamiento_semanas VALUES (?,?,?,?,?,?)", semanas_data)
-    con.executemany(
-        "INSERT OR IGNORE INTO entrenamiento_plan (id,semana_num,fecha_inicio,fase,es_descarga,dia_semana,turno,descripcion,notas) VALUES (?,?,?,?,?,?,?,?,?)",
-        sesiones_data)
-    con.commit(); con.close()
+        con.executemany(
+            "INSERT OR IGNORE INTO entrenamiento_semanas VALUES (?,?,?,?,?,?)", semanas_data)
+        con.executemany(
+            "INSERT OR IGNORE INTO entrenamiento_plan (id,semana_num,fecha_inicio,fase,es_descarga,dia_semana,turno,descripcion,notas) VALUES (?,?,?,?,?,?,?,?,?)",
+            sesiones_data)
 
 init_training_db()
 _seed_plan()
@@ -1238,9 +1257,8 @@ TURNOS_ORDER = ["mañana","mediodía","noche"]
 
 def _semana_actual():
     hoy = date.today()
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = con.execute("SELECT * FROM entrenamiento_semanas ORDER BY semana_num").fetchall()
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = con.execute("SELECT * FROM entrenamiento_semanas ORDER BY semana_num").fetchall()
     sem_actual = 1
     for r in rows:
         fi = datetime.strptime(r["fecha_inicio"], "%Y-%m-%d").date()
@@ -1249,26 +1267,24 @@ def _semana_actual():
     return sem_actual
 
 def _get_semana(num):
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    sem = con.execute("SELECT * FROM entrenamiento_semanas WHERE semana_num=?", (num,)).fetchone()
-    sesiones = con.execute(
-        "SELECT * FROM entrenamiento_plan WHERE semana_num=? ORDER BY dia_semana, turno",
-        (num,)).fetchall()
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        sem = con.execute("SELECT * FROM entrenamiento_semanas WHERE semana_num=?", (num,)).fetchone()
+        sesiones = con.execute(
+            "SELECT * FROM entrenamiento_plan WHERE semana_num=? ORDER BY dia_semana, turno",
+            (num,)).fetchall()
     if not sem: return None
     s = dict(sem)
     s["sesiones"] = [dict(r) for r in sesiones]
     return s
 
 def _get_log(fecha_desde=None, fecha_hasta=None):
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
     q = "SELECT l.*, g.tipo as garmin_tipo, g.fc_media, g.distancia_m, g.duracion_seg FROM entrenamiento_log l LEFT JOIN garmin_actividades g ON l.garmin_id = g.id"
     params = []
     if fecha_desde and fecha_hasta:
         q += " WHERE l.fecha BETWEEN ? AND ?"; params = [fecha_desde, fecha_hasta]
     q += " ORDER BY l.fecha DESC LIMIT 100"
-    rows = [dict(r) for r in con.execute(q, params).fetchall()]
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute(q, params).fetchall()]
     return rows
 
 # ── Rutas ─────────────────────────────────────────────────────────────────────
@@ -1298,11 +1314,10 @@ def api_semana(num):
 @login_required
 @modulo_required("training")
 def api_semanas_lista():
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = [dict(r) for r in con.execute(
-        "SELECT semana_num, fecha_inicio, fase, es_descarga, objetivo FROM entrenamiento_semanas ORDER BY semana_num"
-    ).fetchall()]
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute(
+            "SELECT semana_num, fecha_inicio, fase, es_descarga, objetivo FROM entrenamiento_semanas ORDER BY semana_num"
+        ).fetchall()]
     return jsonify({"ok": True, "rows": rows, "actual": _semana_actual()})
 
 @training_bp.route("/api/training/sesion/<sid>", methods=["PUT"])
@@ -1310,11 +1325,10 @@ def api_semanas_lista():
 @modulo_required("training")
 def api_sesion_update(sid):
     data = request.json or {}
-    con = sqlite3.connect(HIST_DB)
-    con.execute(
-        "UPDATE entrenamiento_plan SET descripcion=?, notas=?, modificado=datetime('now') WHERE id=?",
-        (data.get("descripcion",""), data.get("notas",""), sid))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        con.execute(
+            "UPDATE entrenamiento_plan SET descripcion=?, notas=?, modificado=datetime('now') WHERE id=?",
+            (data.get("descripcion",""), data.get("notas",""), sid))
     return jsonify({"ok": True})
 
 @training_bp.route("/api/training/sesion", methods=["POST"])
@@ -1323,25 +1337,23 @@ def api_sesion_update(sid):
 def api_sesion_nueva():
     data = request.json or {}
     sid = str(uuid.uuid4())[:12]
-    con = sqlite3.connect(HIST_DB)
-    sem = con.execute("SELECT * FROM entrenamiento_semanas WHERE semana_num=?",
-                      (data.get("semana_num"),)).fetchone()
-    if not sem:
-        con.close(); return jsonify({"ok": False, "error": "Semana inválida"})
-    con.execute(
-        "INSERT INTO entrenamiento_plan (id,semana_num,fecha_inicio,fase,es_descarga,dia_semana,turno,descripcion,notas) VALUES (?,?,?,?,?,?,?,?,?)",
-        (sid, data["semana_num"], sem["fecha_inicio"], sem["fase"], sem["es_descarga"],
-         data.get("dia_semana",""), data.get("turno","mañana"), data.get("descripcion",""), data.get("notas","")))
-    con.commit(); con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        sem = con.execute("SELECT * FROM entrenamiento_semanas WHERE semana_num=?",
+                          (data.get("semana_num"),)).fetchone()
+        if not sem:
+            return jsonify({"ok": False, "error": "Semana inválida"})
+        con.execute(
+            "INSERT INTO entrenamiento_plan (id,semana_num,fecha_inicio,fase,es_descarga,dia_semana,turno,descripcion,notas) VALUES (?,?,?,?,?,?,?,?,?)",
+            (sid, data["semana_num"], sem["fecha_inicio"], sem["fase"], sem["es_descarga"],
+             data.get("dia_semana",""), data.get("turno","mañana"), data.get("descripcion",""), data.get("notas","")))
     return jsonify({"ok": True, "id": sid})
 
 @training_bp.route("/api/training/sesion/<sid>", methods=["DELETE"])
 @login_required
 @modulo_required("training")
 def api_sesion_delete(sid):
-    con = sqlite3.connect(HIST_DB)
-    con.execute("DELETE FROM entrenamiento_plan WHERE id=?", (sid,))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        con.execute("DELETE FROM entrenamiento_plan WHERE id=?", (sid,))
     return jsonify({"ok": True})
 
 @training_bp.route("/api/training/log", methods=["GET"])
@@ -1359,23 +1371,162 @@ def api_log_list():
 def api_log_nuevo():
     data = request.json or {}
     lid = str(uuid.uuid4())[:12]
-    con = sqlite3.connect(HIST_DB)
-    con.execute(
-        "INSERT INTO entrenamiento_log (id,fecha,tipo,descripcion,duracion_min,notas,completado,garmin_id,plan_id) VALUES (?,?,?,?,?,?,?,?,?)",
-        (lid, data.get("fecha"), data.get("tipo"), data.get("descripcion"),
-         data.get("duracion_min"), data.get("notas",""), data.get("completado",1),
-         data.get("garmin_id"), data.get("plan_id")))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        con.execute(
+            "INSERT INTO entrenamiento_log (id,fecha,tipo,descripcion,duracion_min,notas,completado,garmin_id,plan_id) VALUES (?,?,?,?,?,?,?,?,?)",
+            (lid, data.get("fecha"), data.get("tipo"), data.get("descripcion"),
+             data.get("duracion_min"), data.get("notas",""), data.get("completado",1),
+             data.get("garmin_id"), data.get("plan_id")))
     return jsonify({"ok": True, "id": lid})
 
 @training_bp.route("/api/training/log/<lid>", methods=["DELETE"])
 @login_required
 @modulo_required("training")
 def api_log_delete(lid):
-    con = sqlite3.connect(HIST_DB)
-    con.execute("DELETE FROM entrenamiento_log WHERE id=?", (lid,))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        con.execute("DELETE FROM entrenamiento_log WHERE id=?", (lid,))
     return jsonify({"ok": True})
+
+# ── Glosario de ejercicios ───────────────────────────────────────────────────
+@training_bp.route("/api/training/glosario", methods=["GET"])
+@login_required
+@modulo_required("training")
+def api_glosario_list():
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute(
+            "SELECT * FROM entrenamiento_glosario ORDER BY orden, alias").fetchall()]
+    return jsonify({"ok": True, "rows": rows})
+
+@training_bp.route("/api/training/glosario", methods=["POST"])
+@login_required
+@modulo_required("training")
+def api_glosario_create():
+    data = request.json or {}
+    alias = (data.get("alias") or "").strip()
+    termino = (data.get("termino_estandar") or "").strip()
+    if not alias or not termino:
+        return jsonify({"ok": False, "error": "Falta el alias o el término estándar"})
+    with get_db(HIST_DB, row_factory=True) as con:
+        max_orden = con.execute("SELECT MAX(orden) FROM entrenamiento_glosario").fetchone()[0] or 0
+        con.execute("INSERT INTO entrenamiento_glosario (alias, termino_estandar, notas, orden) VALUES (?,?,?,?)",
+            (alias, termino, data.get("notas",""), max_orden + 1))
+    return jsonify({"ok": True})
+
+@training_bp.route("/api/training/glosario/<int:gid>", methods=["PUT"])
+@login_required
+@modulo_required("training")
+def api_glosario_update(gid):
+    data = request.json or {}
+    with get_db(HIST_DB) as con:
+        fields = []; params = []
+        for f in ["alias", "termino_estandar", "notas"]:
+            if f in data: fields.append(f + "=?"); params.append(data[f])
+        if fields:
+            params.append(gid)
+            con.execute("UPDATE entrenamiento_glosario SET " + ", ".join(fields) + " WHERE id=?", params)
+    return jsonify({"ok": True})
+
+@training_bp.route("/api/training/glosario/<int:gid>", methods=["DELETE"])
+@login_required
+@modulo_required("training")
+def api_glosario_delete(gid):
+    with get_db(HIST_DB) as con:
+        con.execute("DELETE FROM entrenamiento_glosario WHERE id=?", (gid,))
+    return jsonify({"ok": True})
+
+def _glosario_ejercicios_texto():
+    """Arma el bloque de contexto 'alias -> término estándar' para inyectar
+    en el prompt de la IA cuando analiza una rutina — ver nota en
+    init_training_db() sobre por qué esto y no un buscar/reemplazar."""
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = con.execute(
+            "SELECT alias, termino_estandar, notas FROM entrenamiento_glosario ORDER BY orden, alias").fetchall()
+    if not rows:
+        return ""
+    lineas = [f"- \"{r['alias']}\" = {r['termino_estandar']}" + (f" ({r['notas']})" if r["notas"] else "")
+              for r in rows]
+    return ("\n\nGLOSARIO DE EJERCICIOS (así los nombra Fer/el gimnasio — usá el término "
+            "estándar entre paréntesis para interpretar la rutina):\n" + "\n".join(lineas))
+
+# ── Rutinas manuales (texto libre, ejercicios que Garmin no registra) ───────
+@training_bp.route("/api/training/rutinas_manuales", methods=["GET"])
+@login_required
+@modulo_required("training")
+def api_rutinas_manuales_list():
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute(
+            "SELECT * FROM entrenamiento_rutinas_manuales ORDER BY fecha DESC, creado DESC LIMIT 100").fetchall()]
+    return jsonify({"ok": True, "rows": rows})
+
+@training_bp.route("/api/training/rutinas_manuales", methods=["POST"])
+@login_required
+@modulo_required("training")
+def api_rutinas_manuales_create():
+    data = request.json or {}
+    texto = (data.get("texto") or "").strip()
+    if not texto:
+        return jsonify({"ok": False, "error": "La rutina no puede estar vacía"})
+    rid = str(uuid.uuid4())[:12]
+    with get_db(HIST_DB) as con:
+        con.execute(
+            "INSERT INTO entrenamiento_rutinas_manuales (id, fecha, titulo, texto) VALUES (?,?,?,?)",
+            (rid, data.get("fecha") or datetime.now().strftime("%Y-%m-%d"),
+             (data.get("titulo") or "").strip(), texto))
+    return jsonify({"ok": True, "id": rid})
+
+@training_bp.route("/api/training/rutinas_manuales/<rid>", methods=["DELETE"])
+@login_required
+@modulo_required("training")
+def api_rutinas_manuales_delete(rid):
+    with get_db(HIST_DB) as con:
+        con.execute("DELETE FROM entrenamiento_rutinas_manuales WHERE id=?", (rid,))
+    return jsonify({"ok": True})
+
+@training_bp.route("/api/training/rutinas_manuales/<rid>/analizar", methods=["POST"])
+@login_required
+@modulo_required("training")
+def api_rutinas_manuales_analizar(rid):
+    """Manda una rutina manual ya guardada a la IA, con el glosario de
+    ejercicios como contexto para que interprete bien la jerga."""
+    key = _api_key()
+    if not key:
+        return jsonify({"ok": False, "error": "API key no configurada"})
+    with get_db(HIST_DB, row_factory=True) as con:
+        rutina = con.execute("SELECT * FROM entrenamiento_rutinas_manuales WHERE id=?", (rid,)).fetchone()
+    if not rutina:
+        return jsonify({"ok": False, "error": "Rutina no encontrada"})
+
+    prompt = f"""Sos un asistente de entrenamiento deportivo para un triatleta/Hyrox competidor.
+Te paso una rutina que se cargó a mano (ejercicios que el reloj/app no registra automáticamente).
+{_glosario_ejercicios_texto()}
+
+RUTINA ({rutina["fecha"]}{f' — {rutina["titulo"]}' if rutina["titulo"] else ''}):
+{rutina["texto"]}
+
+Interpretá la rutina usando el glosario de arriba y dame un análisis breve: qué trabajó
+(grupos musculares / capacidades), volumen aproximado, y alguna observación útil para el
+seguimiento del plan. Respondé en español, de forma concisa y práctica."""
+
+    try:
+        payload = json.dumps({
+            "model": "claude-haiku-4-5-20251001",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": prompt}]
+        }).encode()
+        req = urllib.request.Request(
+            "https://api.anthropic.com/v1/messages",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": key,
+                "anthropic-version": "2023-06-01",
+            }
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            result = json.loads(resp.read())
+        return jsonify({"ok": True, "respuesta": result["content"][0]["text"]})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
 
 @training_bp.route("/api/training/claude", methods=["POST"])
 @login_required
@@ -1447,11 +1598,10 @@ Respondé en español de forma concisa y práctica."""
 @login_required
 @modulo_required("training")
 def api_training_stats():
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    total_plan = con.execute("SELECT COUNT(*) FROM entrenamiento_plan").fetchone()[0]
-    total_log  = con.execute("SELECT COUNT(*) FROM entrenamiento_log").fetchone()[0]
-    completadas = con.execute("SELECT COUNT(*) FROM entrenamiento_log WHERE completado=1").fetchone()[0]
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        total_plan = con.execute("SELECT COUNT(*) FROM entrenamiento_plan").fetchone()[0]
+        total_log  = con.execute("SELECT COUNT(*) FROM entrenamiento_log").fetchone()[0]
+        completadas = con.execute("SELECT COUNT(*) FROM entrenamiento_log WHERE completado=1").fetchone()[0]
     return jsonify({
         "ok": True,
         "total_plan": total_plan,
@@ -1468,13 +1618,12 @@ def api_garmin_dia():
     fecha = request.args.get("fecha")  # YYYY-MM-DD
     if not fecha:
         return jsonify({"ok": False, "error": "Fecha requerida"})
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = con.execute(
-        "SELECT id, nombre, tipo, duracion_seg, distancia_m, fc_media, calorias "
-        "FROM garmin_actividades WHERE DATE(fecha) = ? ORDER BY fecha",
-        (fecha,)
-    ).fetchall()
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = con.execute(
+            "SELECT id, nombre, tipo, duracion_seg, distancia_m, fc_media, calorias "
+            "FROM garmin_actividades WHERE DATE(fecha) = ? ORDER BY fecha",
+            (fecha,)
+        ).fetchall()
     return jsonify({"ok": True, "rows": [dict(r) for r in rows]})
 
 
@@ -1599,9 +1748,8 @@ def api_garmin_sets(act_id):
     import zipfile, io
 
     # Buscar archivo FIT
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    row = con.execute("SELECT archivo_path, fecha FROM garmin_actividades WHERE id=?", (act_id,)).fetchone()
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        row = con.execute("SELECT archivo_path, fecha FROM garmin_actividades WHERE id=?", (act_id,)).fetchone()
     if not row or not row["archivo_path"]:
         return jsonify({"ok": False, "error": "Archivo FIT no disponible"})
 

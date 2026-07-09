@@ -19,7 +19,7 @@ from flask import Blueprint, request, jsonify, render_template, session, send_fi
 
 from core import (
     HIST_DB, login_required, modulo_required, finanzas_owner_required,
-    notificar_telegram, limiter, app, _exportar_xlsx,
+    notificar_telegram, limiter, app, _exportar_xlsx, get_db,
 )
 
 finanzas_bp = Blueprint("finanzas", __name__)
@@ -80,12 +80,11 @@ def api_fin_tarjeta_monto(tid):
     monto = data.get("monto_a_pagar")
     if monto is None:
         return jsonify({"ok": False, "error": "Falta el monto"})
-    con = sqlite3.connect(HIST_DB)
-    con.execute(
-        "INSERT INTO fin_tarjetas_montos (tarjeta_id, mes, monto_a_pagar) VALUES (?,?,?) "
-        "ON CONFLICT(tarjeta_id, mes) DO UPDATE SET monto_a_pagar=excluded.monto_a_pagar",
-        (tid, mes, float(monto)))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        con.execute(
+            "INSERT INTO fin_tarjetas_montos (tarjeta_id, mes, monto_a_pagar) VALUES (?,?,?) "
+            "ON CONFLICT(tarjeta_id, mes) DO UPDATE SET monto_a_pagar=excluded.monto_a_pagar",
+            (tid, mes, float(monto)))
     return jsonify({"ok": True})
 
 
@@ -96,14 +95,13 @@ def api_fin_tarjetas_estado_pago():
     """Para cada tarjeta con un monto a pagar fijado este mes: cuánto se
     pagó ya (movimientos tipo='pago' de esa tarjeta en el mes) y cuánto falta."""
     mes = request.args.get("mes") or date.today().isoformat()[:7]
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = con.execute(
-        "SELECT t.id as tarjeta_id, t.nombre, m.monto_a_pagar, "
-        "COALESCE((SELECT SUM(monto_ars) FROM fin_movimientos "
-        " WHERE tarjeta_id=t.id AND tipo='pago' AND substr(fecha,1,7)=?), 0) as pagado "
-        "FROM fin_tarjetas t JOIN fin_tarjetas_montos m ON m.tarjeta_id=t.id AND m.mes=? "
-        "WHERE m.monto_a_pagar > 0", (mes, mes)).fetchall()
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = con.execute(
+            "SELECT t.id as tarjeta_id, t.nombre, m.monto_a_pagar, "
+            "COALESCE((SELECT SUM(monto_ars) FROM fin_movimientos "
+            " WHERE tarjeta_id=t.id AND tipo='pago' AND substr(fecha,1,7)=?), 0) as pagado "
+            "FROM fin_tarjetas t JOIN fin_tarjetas_montos m ON m.tarjeta_id=t.id AND m.mes=? "
+            "WHERE m.monto_a_pagar > 0", (mes, mes)).fetchall()
     resultado = []
     for r in rows:
         falta = round(r["monto_a_pagar"] - r["pagado"], 2)
@@ -127,9 +125,8 @@ def api_fin_upload():
     if not tarjeta_id:
         return jsonify({"ok": False, "error": "Falta seleccionar la tarjeta"})
 
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    tarjeta = con.execute("SELECT * FROM fin_tarjetas WHERE id=?", (tarjeta_id,)).fetchone()
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        tarjeta = con.execute("SELECT * FROM fin_tarjetas WHERE id=?", (tarjeta_id,)).fetchone()
     if not tarjeta:
         return jsonify({"ok": False, "error": "Tarjeta no encontrada"})
 
@@ -270,7 +267,6 @@ def api_fin_movimiento_manual():
 def api_fin_movimientos():
     mes = request.args.get("mes")
     tarjeta_id = request.args.get("tarjeta_id")
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
     q = ("SELECT m.*, c.nombre as categoria_nombre, c.color as categoria_color, "
          "t.nombre as tarjeta_nombre FROM fin_movimientos m "
          "LEFT JOIN fin_categorias c ON m.categoria_id=c.id "
@@ -281,8 +277,8 @@ def api_fin_movimientos():
     if tarjeta_id:
         q += " AND m.tarjeta_id=?"; params.append(tarjeta_id)
     q += " ORDER BY m.fecha DESC"
-    rows = [dict(r) for r in con.execute(q, params).fetchall()]
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute(q, params).fetchall()]
     return jsonify({"ok": True, "rows": rows})
 
 
@@ -294,7 +290,6 @@ def api_fin_movimientos_export():
     con los mismos filtros opcionales de mes/tarjeta."""
     mes = request.args.get("mes")
     tarjeta_id = request.args.get("tarjeta_id")
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
     q = ("SELECT m.fecha, m.descripcion, t.nombre as tarjeta, c.nombre as categoria, "
          "m.monto_ars, m.monto_usd, m.cuota_actual, m.cuota_total, m.tipo, m.origen "
          "FROM fin_movimientos m "
@@ -306,10 +301,10 @@ def api_fin_movimientos_export():
     if tarjeta_id:
         q += " AND m.tarjeta_id=?"; params.append(tarjeta_id)
     q += " ORDER BY m.fecha DESC"
-    cur = con.execute(q, params)
-    cols = [d[0] for d in cur.description]
-    rows = [list(r) for r in cur.fetchall()]
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        cur = con.execute(q, params)
+        cols = [d[0] for d in cur.description]
+        rows = [list(r) for r in cur.fetchall()]
     buf = _exportar_xlsx(cols, rows)
     nombre = f"finanzas_{mes or 'todo'}.xlsx"
     return send_file(buf, as_attachment=True, download_name=nombre,
@@ -377,9 +372,8 @@ def _estado_servicios_mes(con, mes):
 @finanzas_owner_required
 def api_fin_servicios_list():
     mes = request.args.get("mes") or datetime.now().strftime("%Y-%m")
-    con = sqlite3.connect(HIST_DB)
-    rows = _estado_servicios_mes(con, mes)
-    con.close()
+    with get_db(HIST_DB) as con:
+        rows = _estado_servicios_mes(con, mes)
     return jsonify({"ok": True, "mes": mes, "rows": rows})
 
 @finanzas_bp.route("/api/finanzas/servicios", methods=["POST"])
@@ -391,19 +385,17 @@ def api_fin_servicios_create():
     patron = (data.get("patron") or "").strip()
     if not nombre:
         return jsonify({"ok": False, "error": "Falta el nombre"})
-    con = sqlite3.connect(HIST_DB)
-    orden = con.execute("SELECT COALESCE(MAX(orden),0)+1 FROM fin_servicios").fetchone()[0]
-    con.execute("INSERT INTO fin_servicios (nombre, patron, orden) VALUES (?,?,?)", (nombre, patron, orden))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        orden = con.execute("SELECT COALESCE(MAX(orden),0)+1 FROM fin_servicios").fetchone()[0]
+        con.execute("INSERT INTO fin_servicios (nombre, patron, orden) VALUES (?,?,?)", (nombre, patron, orden))
     return jsonify({"ok": True})
 
 @finanzas_bp.route("/api/finanzas/servicios/<int:sid>", methods=["DELETE"])
 @login_required
 @finanzas_owner_required
 def api_fin_servicios_delete(sid):
-    con = sqlite3.connect(HIST_DB)
-    con.execute("UPDATE fin_servicios SET activo=0 WHERE id=?", (sid,))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        con.execute("UPDATE fin_servicios SET activo=0 WHERE id=?", (sid,))
     return jsonify({"ok": True})
 
 @finanzas_bp.route("/api/finanzas/servicios/<int:sid>/pagar", methods=["POST"])
@@ -415,11 +407,10 @@ def api_fin_servicios_pagar(sid):
     data = request.json or {}
     mes = data.get("mes") or datetime.now().strftime("%Y-%m")
     pagado = 1 if data.get("pagado", True) else 0
-    con = sqlite3.connect(HIST_DB)
-    con.execute("INSERT INTO fin_servicios_pagos (servicio_id, mes, pagado, fecha_pago) VALUES (?,?,?,?) "
-                "ON CONFLICT(servicio_id, mes) DO UPDATE SET pagado=excluded.pagado, fecha_pago=excluded.fecha_pago",
-                (sid, mes, pagado, datetime.now().strftime("%Y-%m-%d") if pagado else None))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        con.execute("INSERT INTO fin_servicios_pagos (servicio_id, mes, pagado, fecha_pago) VALUES (?,?,?,?) "
+                    "ON CONFLICT(servicio_id, mes) DO UPDATE SET pagado=excluded.pagado, fecha_pago=excluded.fecha_pago",
+                    (sid, mes, pagado, datetime.now().strftime("%Y-%m-%d") if pagado else None))
     return jsonify({"ok": True})
 
 
@@ -450,9 +441,8 @@ def api_fin_eliminar_movimiento(mov_id):
 @login_required
 @finanzas_owner_required
 def api_fin_categorias():
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = [dict(r) for r in con.execute("SELECT * FROM fin_categorias ORDER BY orden").fetchall()]
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute("SELECT * FROM fin_categorias ORDER BY orden").fetchall()]
     return jsonify({"ok": True, "rows": rows})
 
 
@@ -621,12 +611,11 @@ def api_fin_evolucion_anual():
 @login_required
 @finanzas_owner_required
 def api_fin_resumenes_subidos():
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = [dict(r) for r in con.execute(
-        "SELECT r.*, t.nombre as tarjeta_nombre FROM fin_resumenes r "
-        "LEFT JOIN fin_tarjetas t ON r.tarjeta_id=t.id ORDER BY r.creado DESC LIMIT 50"
-    ).fetchall()]
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute(
+            "SELECT r.*, t.nombre as tarjeta_nombre FROM fin_resumenes r "
+            "LEFT JOIN fin_tarjetas t ON r.tarjeta_id=t.id ORDER BY r.creado DESC LIMIT 50"
+        ).fetchall()]
     return jsonify({"ok": True, "rows": rows})
 
 
@@ -762,9 +751,8 @@ def api_ddjj_tarjetas_list(ddjj_id):
 @finanzas_owner_required
 @limiter.limit("20 per 15 minutes", error_message="Demasiados intentos de ver números completos.")
 def api_ddjj_tarjetas_revelar(tarjeta_id):
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    row = con.execute("SELECT ddjj_id FROM fin_ddjj_tarjetas WHERE id=?", (tarjeta_id,)).fetchone()
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        row = con.execute("SELECT ddjj_id FROM fin_ddjj_tarjetas WHERE id=?", (tarjeta_id,)).fetchone()
     if not row:
         return jsonify({"ok": False, "error": "No existe esa tarjeta"}), 404
     logging.info(f"DDJJ TARJETA REVEAL | user={session.get('username')} | tarjeta_id={tarjeta_id}")

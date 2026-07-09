@@ -19,10 +19,11 @@ import json
 import uuid
 import time
 import logging
-import sqlite3
 import tempfile
 import threading
 import subprocess
+
+from actas import generar_acta_word
 from datetime import datetime, date, timedelta
 
 from flask import (Blueprint, request, jsonify, render_template, session,
@@ -33,7 +34,7 @@ from core import (
     get_api_key, contexto_repositorio, notificar_telegram,
     job_status, job_create, job_get, _job_persist,
     _normalizar_fecha_a_ddmmaaaa, _validar_fecha_ddmmaaaa,
-    validar_enum, ESTADOS_TAREA, NIVELES_PROBABILIDAD, NIVELES_IMPACTO,
+    validar_enum, ESTADOS_TAREA, NIVELES_PROBABILIDAD, NIVELES_IMPACTO, get_db,
 )
 
 vua_bp = Blueprint("vua", __name__)
@@ -43,9 +44,8 @@ vua_bp = Blueprint("vua", __name__)
 def get_roles_predefinidos():
     """Lee los integrantes activos de la BD y devuelve {nombre: cargo (organismo)}."""
     try:
-        con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-        rows = con.execute("SELECT nombre, cargo, organismo FROM integrantes WHERE activo=1").fetchall()
-        con.close()
+        with get_db(HIST_DB, row_factory=True) as con:
+            rows = con.execute("SELECT nombre, cargo, organismo FROM integrantes WHERE activo=1").fetchall()
         return {r["nombre"]: f"{r['cargo']} ({r['organismo']})" if r["organismo"] else r["cargo"] for r in rows}
     except Exception:
         return {}
@@ -103,11 +103,10 @@ Incluí siempre: ASUNTO: [texto] al inicio."""
 @login_required
 @modulo_required("vua")
 def vua_index():
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    cronologia = [dict(r) for r in con.execute("SELECT * FROM vua_cronologia ORDER BY orden ASC, id ASC").fetchall()]
-    ejes       = [dict(r) for r in con.execute("SELECT * FROM vua_ejes ORDER BY orden ASC").fetchall()]
-    minutas    = [dict(r) for r in con.execute("SELECT id,fecha,asunto,lugar,creado_por,creado FROM vua_minutas ORDER BY creado DESC LIMIT 20").fetchall()]
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        cronologia = [dict(r) for r in con.execute("SELECT * FROM vua_cronologia ORDER BY orden ASC, id ASC").fetchall()]
+        ejes       = [dict(r) for r in con.execute("SELECT * FROM vua_ejes ORDER BY orden ASC").fetchall()]
+        minutas    = [dict(r) for r in con.execute("SELECT id,fecha,asunto,lugar,creado_por,creado FROM vua_minutas ORDER BY creado DESC LIMIT 20").fetchall()]
     return render_template("vua.html", roles=ROLES_PREDEFINIDOS, cronologia=cronologia,
         ejes=ejes, minutas=minutas, campos_xfwb=CAMPOS_XFWB,
         role=session.get("role","admin"), username=session.get("username",""))
@@ -116,11 +115,6 @@ def vua_index():
 @login_required
 @modulo_required("vua")
 def vua_minuta():
-    from docx import Document
-    from docx.shared import Pt, RGBColor, Cm
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.oxml.ns import qn
-    from docx.oxml import OxmlElement
     data = request.json or {}
     asunto       = data.get("asunto","")
     fecha        = data.get("fecha", datetime.today().strftime("%d/%m/%Y"))
@@ -130,39 +124,11 @@ def vua_minuta():
     acuerdos     = data.get("acuerdos",[])
     proximos     = data.get("proximos",[])
 
-    def set_cell_color(cell, hex_color):
-        tc=cell._tc; tcPr=tc.get_or_add_tcPr(); shd=OxmlElement("w:shd")
-        shd.set(qn("w:val"),"clear"); shd.set(qn("w:color"),"auto"); shd.set(qn("w:fill"),hex_color); tcPr.append(shd)
-
-    doc = Document()
-    for section in doc.sections:
-        section.top_margin=Cm(2.5); section.bottom_margin=Cm(2.5)
-        section.left_margin=Cm(3); section.right_margin=Cm(2.5)
-    titulo = doc.add_paragraph(); titulo.alignment=WD_ALIGN_PARAGRAPH.CENTER
-    run = titulo.add_run("ACTA DE REUNIÓN"); run.bold=True; run.font.size=Pt(16)
-    run.font.color.rgb=RGBColor(0x24,0x2D,0x4F)
-    doc.add_paragraph()
-    for label, valor in [("Asunto:",asunto),("Fecha:",fecha),("Lugar:",lugar)]:
-        p=doc.add_paragraph(); r1=p.add_run(f"{label} "); r1.bold=True; r1.font.size=Pt(11)
-        r2=p.add_run(valor); r2.font.size=Pt(11)
-    doc.add_paragraph()
-    doc.add_paragraph().add_run("Participantes").bold=True
-    table=doc.add_table(rows=1,cols=2); table.style="Table Grid"
-    hdr=table.rows[0]
-    for i,txt in enumerate(["Nombre","Cargo/Organismo"]):
-        hdr.cells[i].text=txt
-        hdr.cells[i].paragraphs[0].runs[0].bold=True
-        hdr.cells[i].paragraphs[0].runs[0].font.color.rgb=RGBColor(0xFF,0xFF,0xFF)
-        set_cell_color(hdr.cells[i],"242D4F")
-    for p in participantes:
-        row=table.add_row()
-        row.cells[0].text=p.get("nombre","")
-        row.cells[1].text=p.get("cargo",ROLES_PREDEFINIDOS.get(p.get("nombre",""),""))
-    for titulo_sec, items in [("Temas tratados",temas),("Acuerdos",acuerdos),("Próximos pasos",proximos)]:
-        doc.add_paragraph()
-        doc.add_paragraph().add_run(titulo_sec).bold=True
-        for item in items:
-            p=doc.add_paragraph(style="List Bullet"); p.add_run(item).font.size=Pt(11)
+    doc = generar_acta_word(
+        "ACTA DE REUNIÓN", fecha, asunto, lugar, participantes,
+        secciones=[("Temas tratados", temas), ("Acuerdos", acuerdos), ("Próximos pasos", proximos)],
+        roles_predefinidos=ROLES_PREDEFINIDOS,
+    )
     minuta_id = str(uuid.uuid4())[:8]
     fname = f"Acta_{fecha.replace('/','_')}_{asunto[:30].replace(' ','_')}_{minuta_id}.docx"
     ruta = os.path.join("/data/minutas", fname)
@@ -197,11 +163,10 @@ def vua_minuta():
         # Fallback: python-docx básico (comportamiento anterior)
         doc.save(ruta)
 
-    con = sqlite3.connect(HIST_DB)
-    con.execute("INSERT INTO vua_minutas VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'))",
-        (minuta_id, fecha, asunto, lugar, json.dumps(participantes), json.dumps(temas),
-         json.dumps(acuerdos), json.dumps(proximos), ruta, session.get("username","?")))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        con.execute("INSERT INTO vua_minutas VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'))",
+            (minuta_id, fecha, asunto, lugar, json.dumps(participantes), json.dumps(temas),
+             json.dumps(acuerdos), json.dumps(proximos), ruta, session.get("username","?")))
 
     # Construir sugerencia de cronología a partir de los datos de la reunión
     partic_nombres = ", ".join(
@@ -321,23 +286,20 @@ def vua_xfwb():
 @modulo_required("vua")
 def vua_informe():
     """Mejora 2: generación async del informe VUA — mismo patrón que SINTIA."""
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
     try:
-        def _q(sql, fallback=[]):
-            try: return [dict(r) for r in con.execute(sql).fetchall()]
-            except: return fallback
-        config     = _q("SELECT * FROM vua_config")
-        ejes       = _q("SELECT * FROM vua_ejes ORDER BY orden ASC")
-        equipo     = _q("SELECT * FROM vua_equipo WHERE activo=1 ORDER BY organismo, nombre ASC")
-        cronologia = _q("SELECT * FROM vua_cronologia ORDER BY orden ASC, id ASC")
-        glosario   = _q("SELECT * FROM vua_glosario ORDER BY termino ASC")
-        riesgos    = _q("SELECT * FROM vua_riesgos WHERE activo=1 ORDER BY orden ASC")
-        minutas    = _q("SELECT * FROM vua_minutas ORDER BY id DESC LIMIT 20")
+        with get_db(HIST_DB, row_factory=True) as con:
+            def _q(sql, fallback=[]):
+                try: return [dict(r) for r in con.execute(sql).fetchall()]
+                except: return fallback
+            config     = _q("SELECT * FROM vua_config")
+            ejes       = _q("SELECT * FROM vua_ejes ORDER BY orden ASC")
+            equipo     = _q("SELECT * FROM vua_equipo WHERE activo=1 ORDER BY organismo, nombre ASC")
+            cronologia = _q("SELECT * FROM vua_cronologia ORDER BY orden ASC, id ASC")
+            glosario   = _q("SELECT * FROM vua_glosario ORDER BY termino ASC")
+            riesgos    = _q("SELECT * FROM vua_riesgos WHERE activo=1 ORDER BY orden ASC")
+            minutas    = _q("SELECT * FROM vua_minutas ORDER BY id DESC LIMIT 20")
     except Exception as e:
-        con.close()
         return jsonify({"ok": False, "error": f"Error leyendo BD: {e}"}), 500
-    finally:
-        con.close()
 
     datos = {"config": config, "ejes": ejes, "equipo": equipo,
              "cronologia": cronologia, "glosario": glosario,
@@ -434,13 +396,13 @@ def vua_informe_download(job_id):
 @login_required
 @modulo_required("vua")
 def vua_cronologia_get():
-    con=sqlite3.connect(HIST_DB); con.row_factory=sqlite3.Row
-    rows=[dict(r) for r in con.execute(
-        "SELECT *, CASE WHEN fecha GLOB '[0-9][0-9]/[0-9][0-9]/[0-9][0-9][0-9][0-9]' "
-        "THEN substr(fecha,7,4)||substr(fecha,4,2)||substr(fecha,1,2) ELSE '00000000' END as _ord "
-        "FROM vua_cronologia ORDER BY (estado='Pendiente') DESC, _ord DESC, id ASC").fetchall()]
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows=[dict(r) for r in con.execute(
+            "SELECT *, CASE WHEN fecha GLOB '[0-9][0-9]/[0-9][0-9]/[0-9][0-9][0-9][0-9]' "
+            "THEN substr(fecha,7,4)||substr(fecha,4,2)||substr(fecha,1,2) ELSE '00000000' END as _ord "
+            "FROM vua_cronologia ORDER BY (estado='Pendiente') DESC, _ord DESC, id ASC").fetchall()]
     for r in rows: r.pop("_ord", None)
-    con.close(); return jsonify({"ok":True,"rows":rows})
+    return jsonify({"ok":True,"rows":rows})
 
 @vua_bp.route("/api/vua/cronologia", methods=["POST"])
 @login_required
@@ -450,12 +412,13 @@ def vua_cronologia_add():
     ok, err = validar_enum(data.get("estado"), ESTADOS_TAREA, "estado")
     if not ok: return jsonify({"ok": False, "error": err}), 400
     fecha = _normalizar_fecha_a_ddmmaaaa(data.get("fecha","A definir")) if data.get("fecha") else "A definir"
-    con=sqlite3.connect(HIST_DB); cur=con.cursor()
-    cur.execute("SELECT MAX(orden) FROM vua_cronologia")
-    max_orden=cur.fetchone()[0] or 0
-    cur.execute("INSERT INTO vua_cronologia (fecha,actividad,participantes,estado,orden,creado,modificado) VALUES (?,?,?,?,?,datetime('now'),datetime('now'))",
-        (fecha,data.get("actividad",""),data.get("participantes",""),data.get("estado","Pendiente"),max_orden+1))
-    new_id=cur.lastrowid; con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        cur=con.cursor()
+        cur.execute("SELECT MAX(orden) FROM vua_cronologia")
+        max_orden=cur.fetchone()[0] or 0
+        cur.execute("INSERT INTO vua_cronologia (fecha,actividad,participantes,estado,orden,creado,modificado) VALUES (?,?,?,?,?,datetime('now'),datetime('now'))",
+            (fecha,data.get("actividad",""),data.get("participantes",""),data.get("estado","Pendiente"),max_orden+1))
+        new_id=cur.lastrowid
     return jsonify({"ok":True,"id":new_id})
 
 @vua_bp.route("/api/vua/cronologia/<int:item_id>", methods=["PUT"])
@@ -471,35 +434,34 @@ def vua_cronologia_update(item_id):
     if not campos:
         return jsonify({"ok":False,"error":"Nada para actualizar"}), 400
     set_clause = ", ".join(f"{k}=?" for k in campos)
-    con=sqlite3.connect(HIST_DB)
-    con.execute(f"UPDATE vua_cronologia SET {set_clause}, modificado=datetime('now') WHERE id=?",
-        (*campos.values(), item_id))
-    con.commit(); con.close(); return jsonify({"ok":True})
+    with get_db(HIST_DB) as con:
+        con.execute(f"UPDATE vua_cronologia SET {set_clause}, modificado=datetime('now') WHERE id=?",
+            (*campos.values(), item_id))
+    return jsonify({"ok":True})
 
 @vua_bp.route("/api/vua/cronologia/<int:item_id>", methods=["DELETE"])
 @login_required
 @modulo_required("vua")
 @admin_required()
 def vua_cronologia_delete(item_id):
-    con=sqlite3.connect(HIST_DB)
-    con.execute("DELETE FROM vua_cronologia WHERE id=?",(item_id,))
-    con.commit(); con.close(); return jsonify({"ok":True})
+    with get_db(HIST_DB) as con:
+        con.execute("DELETE FROM vua_cronologia WHERE id=?",(item_id,))
+    return jsonify({"ok":True})
 
 @vua_bp.route("/api/vua/minutas", methods=["GET"])
 @login_required
 @modulo_required("vua")
 def vua_minutas_list():
-    con=sqlite3.connect(HIST_DB); con.row_factory=sqlite3.Row
-    rows=[dict(r) for r in con.execute("SELECT id,fecha,asunto,lugar,creado_por,creado FROM vua_minutas ORDER BY creado DESC").fetchall()]
-    con.close(); return jsonify({"ok":True,"rows":rows})
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows=[dict(r) for r in con.execute("SELECT id,fecha,asunto,lugar,creado_por,creado FROM vua_minutas ORDER BY creado DESC").fetchall()]
+    return jsonify({"ok":True,"rows":rows})
 
 @vua_bp.route("/api/vua/minutas/<minuta_id>/download")
 @login_required
 @modulo_required("vua")
 def vua_minuta_download(minuta_id):
-    con=sqlite3.connect(HIST_DB); con.row_factory=sqlite3.Row
-    row=con.execute("SELECT * FROM vua_minutas WHERE id=?",(minuta_id,)).fetchone()
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        row=con.execute("SELECT * FROM vua_minutas WHERE id=?",(minuta_id,)).fetchone()
     if not row: return "No encontrada",404
     row=dict(row)
     if row.get("archivo") and os.path.exists(row["archivo"]):
@@ -510,13 +472,13 @@ def vua_minuta_download(minuta_id):
 @login_required
 @modulo_required("vua")
 def vua_minuta_delete(minuta_id):
-    con=sqlite3.connect(HIST_DB)
-    row=con.execute("SELECT archivo FROM vua_minutas WHERE id=?",(minuta_id,)).fetchone()
-    if row and row[0] and os.path.exists(row[0]):
-        try: os.remove(row[0])
-        except: pass
-    con.execute("DELETE FROM vua_minutas WHERE id=?",(minuta_id,))
-    con.commit(); con.close(); return jsonify({"ok":True})
+    with get_db(HIST_DB) as con:
+        row=con.execute("SELECT archivo FROM vua_minutas WHERE id=?",(minuta_id,)).fetchone()
+        if row and row[0] and os.path.exists(row[0]):
+            try: os.remove(row[0])
+            except: pass
+        con.execute("DELETE FROM vua_minutas WHERE id=?",(minuta_id,))
+    return jsonify({"ok":True})
 
 
 # ══════════════════════════════════════════════════════
@@ -529,9 +491,9 @@ def vua_minuta_delete(minuta_id):
 @login_required
 @modulo_required("vua")
 def vua_config_list():
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = [dict(r) for r in con.execute("SELECT * FROM vua_config ORDER BY clave").fetchall()]
-    con.close(); return jsonify({"ok": True, "rows": rows})
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute("SELECT * FROM vua_config ORDER BY clave").fetchall()]
+    return jsonify({"ok": True, "rows": rows})
 
 @vua_bp.route("/api/vua/config/<clave>", methods=["PUT"])
 @login_required
@@ -540,9 +502,9 @@ def vua_config_update(clave):
     data = request.json or {}
     contenido = data.get("contenido", "").strip()
     if not contenido: return jsonify({"ok": False, "error": "Contenido vacio"})
-    con = sqlite3.connect(HIST_DB)
-    con.execute("UPDATE vua_config SET contenido=?, modificado=datetime('now') WHERE clave=?", (contenido, clave))
-    con.commit(); con.close(); return jsonify({"ok": True})
+    with get_db(HIST_DB) as con:
+        con.execute("UPDATE vua_config SET contenido=?, modificado=datetime('now') WHERE clave=?", (contenido, clave))
+    return jsonify({"ok": True})
 
 @vua_bp.route("/api/vua/config/<clave>/mejorar", methods=["POST"])
 @login_required
@@ -550,9 +512,8 @@ def vua_config_update(clave):
 def vua_config_mejorar(clave):
     api_key = get_api_key()
     if not api_key: return jsonify({"ok": False, "error": "API key no configurada"})
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    row = con.execute("SELECT * FROM vua_config WHERE clave=?", (clave,)).fetchone()
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        row = con.execute("SELECT * FROM vua_config WHERE clave=?", (clave,)).fetchone()
     if not row: return jsonify({"ok": False, "error": "No encontrado"})
     try:
         import anthropic, httpx
@@ -581,50 +542,47 @@ def vua_config_mejorar(clave):
 @login_required
 @modulo_required("vua")
 def vua_ejes_list():
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = [dict(r) for r in con.execute("SELECT * FROM vua_ejes ORDER BY orden").fetchall()]
-    con.close(); return jsonify({"ok": True, "rows": rows})
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute("SELECT * FROM vua_ejes ORDER BY orden").fetchall()]
+    return jsonify({"ok": True, "rows": rows})
 
 @vua_bp.route("/api/vua/ejes/<eje_id>", methods=["PUT"])
 @login_required
 @modulo_required("vua")
 def vua_ejes_update_bd(eje_id):
     data = request.json or {}
-    con = sqlite3.connect(HIST_DB)
-    fields = []; params = []
-    for f in ["nombre", "estado", "descripcion", "propuesta_vucea", "postura_aduana", "recomendacion"]:
-        if f in data: fields.append(f + "=?"); params.append(data[f])
-    if fields:
-        params.append(str(eje_id))
-        con.execute("UPDATE vua_ejes SET " + ", ".join(fields) + " WHERE id=?", params)
-        con.commit()
-    con.close(); return jsonify({"ok": True})
+    with get_db(HIST_DB) as con:
+        fields = []; params = []
+        for f in ["nombre", "estado", "descripcion", "propuesta_vucea", "postura_aduana", "recomendacion"]:
+            if f in data: fields.append(f + "=?"); params.append(data[f])
+        if fields:
+            params.append(str(eje_id))
+            con.execute("UPDATE vua_ejes SET " + ", ".join(fields) + " WHERE id=?", params)
+    return jsonify({"ok": True})
 
 @vua_bp.route("/api/vua/ejes", methods=["POST"])
 @login_required
 @modulo_required("vua")
 def vua_ejes_create():
     data = request.json or {}
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    max_orden = con.execute("SELECT MAX(orden) FROM vua_ejes").fetchone()[0] or 0
-    max_id = con.execute("SELECT id FROM vua_ejes ORDER BY orden DESC LIMIT 1").fetchone()
-    try:
-        last_num = float((max_id[0] if max_id else "0").replace(",","."))
-        new_id = str(round(last_num + 0.1, 1))
-    except: new_id = str(max_orden + 1)
-    con.execute("INSERT INTO vua_ejes (id, nombre, estado, orden, descripcion, propuesta_vucea, postura_aduana, recomendacion) VALUES (?,?,?,?,?,?,?,?)",
-        (new_id, data.get("nombre",""), data.get("estado","Pendiente"), max_orden + 1,
-         data.get("descripcion",""), data.get("propuesta_vucea",""), data.get("postura_aduana",""), data.get("recomendacion","")))
-    con.commit(); con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        max_orden = con.execute("SELECT MAX(orden) FROM vua_ejes").fetchone()[0] or 0
+        max_id = con.execute("SELECT id FROM vua_ejes ORDER BY orden DESC LIMIT 1").fetchone()
+        try:
+            last_num = float((max_id[0] if max_id else "0").replace(",","."))
+            new_id = str(round(last_num + 0.1, 1))
+        except: new_id = str(max_orden + 1)
+        con.execute("INSERT INTO vua_ejes (id, nombre, estado, orden, descripcion, propuesta_vucea, postura_aduana, recomendacion) VALUES (?,?,?,?,?,?,?,?)",
+            (new_id, data.get("nombre",""), data.get("estado","Pendiente"), max_orden + 1,
+             data.get("descripcion",""), data.get("propuesta_vucea",""), data.get("postura_aduana",""), data.get("recomendacion","")))
     return jsonify({"ok": True, "id": new_id})
 
 @vua_bp.route("/api/vua/ejes/<eje_id>", methods=["DELETE"])
 @login_required
 @modulo_required("vua")
 def vua_ejes_delete(eje_id):
-    con = sqlite3.connect(HIST_DB)
-    con.execute("DELETE FROM vua_ejes WHERE id=?", (str(eje_id),))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        con.execute("DELETE FROM vua_ejes WHERE id=?", (str(eje_id),))
     return jsonify({"ok": True})
 
 @vua_bp.route("/api/vua/ejes/<eje_id>/mejorar", methods=["POST"])
@@ -633,9 +591,8 @@ def vua_ejes_delete(eje_id):
 def vua_eje_mejorar(eje_id):
     api_key = get_api_key()
     if not api_key: return jsonify({"ok": False, "error": "API key no configurada"})
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    eje = con.execute("SELECT * FROM vua_ejes WHERE id=?", (str(eje_id),)).fetchone()
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        eje = con.execute("SELECT * FROM vua_ejes WHERE id=?", (str(eje_id),)).fetchone()
     if not eje: return jsonify({"ok": False, "error": "No encontrado"})
     try:
         import anthropic, httpx
@@ -654,95 +611,93 @@ def vua_eje_mejorar(eje_id):
 @login_required
 @modulo_required("vua")
 def vua_equipo_list():
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = [dict(r) for r in con.execute(
-        "SELECT * FROM vua_equipo WHERE activo=1 ORDER BY orden, organismo, nombre").fetchall()]
-    con.close(); return jsonify({"ok": True, "rows": rows})
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute(
+            "SELECT * FROM vua_equipo WHERE activo=1 ORDER BY orden, organismo, nombre").fetchall()]
+    return jsonify({"ok": True, "rows": rows})
 
 @vua_bp.route("/api/vua/equipo", methods=["POST"])
 @login_required
 @modulo_required("vua")
 def vua_equipo_create():
     data = request.json or {}
-    con = sqlite3.connect(HIST_DB)
-    con.execute("INSERT INTO vua_equipo (nombre, cargo, organismo, email, activo) VALUES (?,?,?,?,1)",
-        (data.get("nombre",""), data.get("cargo",""), data.get("organismo",""), data.get("email","")))
-    con.commit(); con.close(); return jsonify({"ok": True})
+    with get_db(HIST_DB) as con:
+        con.execute("INSERT INTO vua_equipo (nombre, cargo, organismo, email, activo) VALUES (?,?,?,?,1)",
+            (data.get("nombre",""), data.get("cargo",""), data.get("organismo",""), data.get("email","")))
+    return jsonify({"ok": True})
 
 @vua_bp.route("/api/vua/equipo/<int:uid>", methods=["PUT"])
 @login_required
 @modulo_required("vua")
 def vua_equipo_update(uid):
     data = request.json or {}
-    con = sqlite3.connect(HIST_DB)
-    fields = []; params = []
-    for f in ["nombre","cargo","organismo","email","activo"]:
-        if f in data: fields.append(f + "=?"); params.append(data[f])
-    if fields:
-        params.append(uid)
-        con.execute("UPDATE vua_equipo SET " + ", ".join(fields) + " WHERE id=?", params)
-        con.commit()
-    con.close(); return jsonify({"ok": True})
+    with get_db(HIST_DB) as con:
+        fields = []; params = []
+        for f in ["nombre","cargo","organismo","email","activo"]:
+            if f in data: fields.append(f + "=?"); params.append(data[f])
+        if fields:
+            params.append(uid)
+            con.execute("UPDATE vua_equipo SET " + ", ".join(fields) + " WHERE id=?", params)
+    return jsonify({"ok": True})
 
 @vua_bp.route("/api/vua/equipo/<int:uid>", methods=["DELETE"])
 @login_required
 @modulo_required("vua")
 def vua_equipo_delete(uid):
-    con = sqlite3.connect(HIST_DB)
-    con.execute("UPDATE vua_equipo SET activo=0 WHERE id=?", (uid,))
-    con.commit(); con.close(); return jsonify({"ok": True})
+    with get_db(HIST_DB) as con:
+        con.execute("UPDATE vua_equipo SET activo=0 WHERE id=?", (uid,))
+    return jsonify({"ok": True})
 
 # ── VUA Glosario ──────────────────────────────────────────────────────────────
 @vua_bp.route("/api/vua/glosario", methods=["GET"])
 @login_required
 @modulo_required("vua")
 def vua_glosario_list():
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = [dict(r) for r in con.execute("SELECT * FROM vua_glosario ORDER BY orden, termino").fetchall()]
-    con.close(); return jsonify({"ok": True, "rows": rows})
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute("SELECT * FROM vua_glosario ORDER BY orden, termino").fetchall()]
+    return jsonify({"ok": True, "rows": rows})
 
 @vua_bp.route("/api/vua/glosario", methods=["POST"])
 @login_required
 @modulo_required("vua")
 def vua_glosario_create():
     data = request.json or {}
-    con = sqlite3.connect(HIST_DB)
-    con.execute("INSERT INTO vua_glosario (termino, definicion, categoria) VALUES (?,?,?)",
-        (data.get("termino",""), data.get("definicion",""), data.get("categoria","general")))
-    con.commit(); con.close(); return jsonify({"ok": True})
+    with get_db(HIST_DB) as con:
+        con.execute("INSERT INTO vua_glosario (termino, definicion, categoria) VALUES (?,?,?)",
+            (data.get("termino",""), data.get("definicion",""), data.get("categoria","general")))
+    return jsonify({"ok": True})
 
 @vua_bp.route("/api/vua/glosario/<int:gid>", methods=["PUT"])
 @login_required
 @modulo_required("vua")
 def vua_glosario_update(gid):
     data = request.json or {}
-    con = sqlite3.connect(HIST_DB)
-    fields = []; params = []
-    for f in ["termino","definicion","categoria"]:
-        if f in data: fields.append(f + "=?"); params.append(data[f])
-    if fields:
-        params.append(gid)
-        con.execute("UPDATE vua_glosario SET " + ", ".join(fields) + " WHERE id=?", params)
-        con.commit()
-    con.close(); return jsonify({"ok": True})
+    with get_db(HIST_DB) as con:
+        fields = []; params = []
+        for f in ["termino","definicion","categoria"]:
+            if f in data: fields.append(f + "=?"); params.append(data[f])
+        if fields:
+            params.append(gid)
+            con.execute("UPDATE vua_glosario SET " + ", ".join(fields) + " WHERE id=?", params)
+    return jsonify({"ok": True})
 
 @vua_bp.route("/api/vua/glosario/<int:gid>", methods=["DELETE"])
 @login_required
 @modulo_required("vua")
 def vua_glosario_delete(gid):
-    con = sqlite3.connect(HIST_DB)
-    con.execute("DELETE FROM vua_glosario WHERE id=?", (gid,))
-    con.commit(); con.close(); return jsonify({"ok": True})
+    with get_db(HIST_DB) as con:
+        con.execute("DELETE FROM vua_glosario WHERE id=?", (gid,))
+    return jsonify({"ok": True})
 
 # ── VUA Riesgos ───────────────────────────────────────────────────────────────
 @vua_bp.route("/api/vua/riesgos", methods=["GET"])
 @login_required
 @modulo_required("vua")
 def vua_riesgos_list():
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = [dict(r) for r in con.execute(
-        "SELECT * FROM vua_riesgos WHERE activo=1 ORDER BY orden").fetchall()]
-    con.close(); return jsonify({"ok": True, "rows": rows})
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute(
+            "SELECT * FROM vua_riesgos WHERE activo=1 ORDER BY orden").fetchall()]
+    return jsonify({"ok": True, "rows": rows})
 
 @vua_bp.route("/api/vua/riesgos/<int:rid>", methods=["PUT"])
 @login_required
@@ -753,15 +708,14 @@ def vua_riesgos_update(rid):
     if not ok: return jsonify({"ok": False, "error": err}), 400
     ok, err = validar_enum(data.get("impacto"), NIVELES_IMPACTO, "impacto")
     if not ok: return jsonify({"ok": False, "error": err}), 400
-    con = sqlite3.connect(HIST_DB)
-    fields = []; params = []
-    for f in ["titulo","descripcion","mitigacion","probabilidad","impacto","activo"]:
-        if f in data: fields.append(f + "=?"); params.append(data[f])
-    if fields:
-        params.append(rid)
-        con.execute("UPDATE vua_riesgos SET " + ", ".join(fields) + " WHERE id=?", params)
-        con.commit()
-    con.close(); return jsonify({"ok": True})
+    with get_db(HIST_DB) as con:
+        fields = []; params = []
+        for f in ["titulo","descripcion","mitigacion","probabilidad","impacto","activo"]:
+            if f in data: fields.append(f + "=?"); params.append(data[f])
+        if fields:
+            params.append(rid)
+            con.execute("UPDATE vua_riesgos SET " + ", ".join(fields) + " WHERE id=?", params)
+    return jsonify({"ok": True})
 
 @vua_bp.route("/api/vua/riesgos", methods=["POST"])
 @login_required
@@ -772,23 +726,21 @@ def vua_riesgos_create():
     if not ok: return jsonify({"ok": False, "error": err}), 400
     ok, err = validar_enum(data.get("impacto"), NIVELES_IMPACTO, "impacto")
     if not ok: return jsonify({"ok": False, "error": err}), 400
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    max_orden = con.execute("SELECT MAX(orden) FROM vua_riesgos").fetchone()[0] or 0
-    max_id = con.execute("SELECT MAX(id) FROM vua_riesgos").fetchone()[0] or 0
-    codigo = f"R{max_id + 1:02d}"
-    con.execute("INSERT INTO vua_riesgos (codigo, titulo, descripcion, mitigacion, probabilidad, impacto, activo, orden) VALUES (?,?,?,?,?,?,1,?)",
-        (data.get("codigo", codigo), data.get("titulo",""), data.get("descripcion",""),
-         data.get("mitigacion",""), data.get("probabilidad","Media"), data.get("impacto","Alto"), max_orden + 1))
-    con.commit(); con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        max_orden = con.execute("SELECT MAX(orden) FROM vua_riesgos").fetchone()[0] or 0
+        max_id = con.execute("SELECT MAX(id) FROM vua_riesgos").fetchone()[0] or 0
+        codigo = f"R{max_id + 1:02d}"
+        con.execute("INSERT INTO vua_riesgos (codigo, titulo, descripcion, mitigacion, probabilidad, impacto, activo, orden) VALUES (?,?,?,?,?,?,1,?)",
+            (data.get("codigo", codigo), data.get("titulo",""), data.get("descripcion",""),
+             data.get("mitigacion",""), data.get("probabilidad","Media"), data.get("impacto","Alto"), max_orden + 1))
     return jsonify({"ok": True})
 
 @vua_bp.route("/api/vua/riesgos/<int:rid>", methods=["DELETE"])
 @login_required
 @modulo_required("vua")
 def vua_riesgos_delete(rid):
-    con = sqlite3.connect(HIST_DB)
-    con.execute("UPDATE vua_riesgos SET activo=0 WHERE id=?", (rid,))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        con.execute("UPDATE vua_riesgos SET activo=0 WHERE id=?", (rid,))
     return jsonify({"ok": True})
 
 # ── VUA Correos rapidos ───────────────────────────────────────────────────────
@@ -796,52 +748,50 @@ def vua_riesgos_delete(rid):
 @login_required
 @modulo_required("vua")
 def vua_correos_rapidos_list():
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = [dict(r) for r in con.execute(
-        "SELECT * FROM vua_correos_rapidos WHERE activo=1 ORDER BY orden").fetchall()]
-    con.close(); return jsonify({"ok": True, "rows": rows})
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute(
+            "SELECT * FROM vua_correos_rapidos WHERE activo=1 ORDER BY orden").fetchall()]
+    return jsonify({"ok": True, "rows": rows})
 
 @vua_bp.route("/api/vua/correos_rapidos", methods=["POST"])
 @login_required
 @modulo_required("vua")
 def vua_correos_rapidos_create():
     data = request.json or {}
-    con = sqlite3.connect(HIST_DB)
-    con.execute("INSERT INTO vua_correos_rapidos (etiqueta, instruccion, activo) VALUES (?,?,1)",
-        (data.get("etiqueta",""), data.get("instruccion","")))
-    con.commit(); con.close(); return jsonify({"ok": True})
+    with get_db(HIST_DB) as con:
+        con.execute("INSERT INTO vua_correos_rapidos (etiqueta, instruccion, activo) VALUES (?,?,1)",
+            (data.get("etiqueta",""), data.get("instruccion","")))
+    return jsonify({"ok": True})
 
 @vua_bp.route("/api/vua/correos_rapidos/<int:cid>", methods=["PUT"])
 @login_required
 @modulo_required("vua")
 def vua_correos_rapidos_update(cid):
     data = request.json or {}
-    con = sqlite3.connect(HIST_DB)
-    fields = []; params = []
-    for f in ["etiqueta","instruccion","activo"]:
-        if f in data: fields.append(f + "=?"); params.append(data[f])
-    if fields:
-        params.append(cid)
-        con.execute("UPDATE vua_correos_rapidos SET " + ", ".join(fields) + " WHERE id=?", params)
-        con.commit()
-    con.close(); return jsonify({"ok": True})
+    with get_db(HIST_DB) as con:
+        fields = []; params = []
+        for f in ["etiqueta","instruccion","activo"]:
+            if f in data: fields.append(f + "=?"); params.append(data[f])
+        if fields:
+            params.append(cid)
+            con.execute("UPDATE vua_correos_rapidos SET " + ", ".join(fields) + " WHERE id=?", params)
+    return jsonify({"ok": True})
 
 @vua_bp.route("/api/vua/correos_rapidos/<int:cid>", methods=["DELETE"])
 @login_required
 @modulo_required("vua")
 def vua_correos_rapidos_delete(cid):
-    con = sqlite3.connect(HIST_DB)
-    con.execute("UPDATE vua_correos_rapidos SET activo=0 WHERE id=?", (cid,))
-    con.commit(); con.close(); return jsonify({"ok": True})
+    with get_db(HIST_DB) as con:
+        con.execute("UPDATE vua_correos_rapidos SET activo=0 WHERE id=?", (cid,))
+    return jsonify({"ok": True})
 
 # ── VUA Info ──────────────────────────────────────────────────────────────────
 @vua_bp.route("/api/vua/info/<clave>", methods=["GET"])
 @login_required
 @modulo_required("vua")
 def vua_info_get(clave):
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    row = con.execute("SELECT * FROM vua_info WHERE clave=?", (clave,)).fetchone()
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        row = con.execute("SELECT * FROM vua_info WHERE clave=?", (clave,)).fetchone()
     if not row: return jsonify({"ok": False, "error": "No encontrado"})
     return jsonify({"ok": True, "item": dict(row)})
 
@@ -852,19 +802,19 @@ def vua_info_update(clave):
     data = request.json or {}
     contenido = data.get("contenido", "").strip()
     if not contenido: return jsonify({"ok": False, "error": "Contenido vacio"})
-    con = sqlite3.connect(HIST_DB)
-    con.execute("UPDATE vua_info SET contenido=?, modificado=datetime('now') WHERE clave=?", (contenido, clave))
-    con.commit(); con.close(); return jsonify({"ok": True})
+    with get_db(HIST_DB) as con:
+        con.execute("UPDATE vua_info SET contenido=?, modificado=datetime('now') WHERE clave=?", (contenido, clave))
+    return jsonify({"ok": True})
 
 # ── VUA Consultas frecuentes ──────────────────────────────────────────────────
 @vua_bp.route("/api/vua/consultas_frecuentes", methods=["GET"])
 @login_required
 @modulo_required("vua")
 def vua_consultas_frecuentes_list():
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = [dict(r) for r in con.execute(
-        "SELECT * FROM vua_consultas_frecuentes WHERE activo=1 ORDER BY orden").fetchall()]
-    con.close(); return jsonify({"ok": True, "rows": rows})
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute(
+            "SELECT * FROM vua_consultas_frecuentes WHERE activo=1 ORDER BY orden").fetchall()]
+    return jsonify({"ok": True, "rows": rows})
 
 @vua_bp.route("/api/vua/consultas_frecuentes", methods=["POST"])
 @login_required
@@ -876,33 +826,32 @@ def vua_consultas_frecuentes_create():
     pregunta = (data.get("pregunta") or "").strip()
     if not pregunta:
         return jsonify({"ok": False, "error": "Falta la pregunta"})
-    con = sqlite3.connect(HIST_DB)
-    con.execute("INSERT INTO vua_consultas_frecuentes (pregunta, respuesta, activo) VALUES (?,?,1)",
-        (pregunta, data.get("respuesta","")))
-    con.commit(); con.close(); return jsonify({"ok": True})
+    with get_db(HIST_DB) as con:
+        con.execute("INSERT INTO vua_consultas_frecuentes (pregunta, respuesta, activo) VALUES (?,?,1)",
+            (pregunta, data.get("respuesta","")))
+    return jsonify({"ok": True})
 
 @vua_bp.route("/api/vua/consultas_frecuentes/<int:cid>", methods=["PUT"])
 @login_required
 @modulo_required("vua")
 def vua_consultas_frecuentes_update(cid):
     data = request.json or {}
-    con = sqlite3.connect(HIST_DB)
-    fields = []; params = []
-    for f in ["pregunta","respuesta","activo"]:
-        if f in data: fields.append(f + "=?"); params.append(data[f])
-    if fields:
-        params.append(cid)
-        con.execute("UPDATE vua_consultas_frecuentes SET " + ", ".join(fields) + " WHERE id=?", params)
-        con.commit()
-    con.close(); return jsonify({"ok": True})
+    with get_db(HIST_DB) as con:
+        fields = []; params = []
+        for f in ["pregunta","respuesta","activo"]:
+            if f in data: fields.append(f + "=?"); params.append(data[f])
+        if fields:
+            params.append(cid)
+            con.execute("UPDATE vua_consultas_frecuentes SET " + ", ".join(fields) + " WHERE id=?", params)
+    return jsonify({"ok": True})
 
 @vua_bp.route("/api/vua/consultas_frecuentes/<int:cid>", methods=["DELETE"])
 @login_required
 @modulo_required("vua")
 def vua_consultas_frecuentes_delete(cid):
-    con = sqlite3.connect(HIST_DB)
-    con.execute("UPDATE vua_consultas_frecuentes SET activo=0 WHERE id=?", (cid,))
-    con.commit(); con.close(); return jsonify({"ok": True})
+    with get_db(HIST_DB) as con:
+        con.execute("UPDATE vua_consultas_frecuentes SET activo=0 WHERE id=?", (cid,))
+    return jsonify({"ok": True})
 
 # ── VUA Minuta IA ─────────────────────────────────────────────────────────────
 @vua_bp.route("/api/vua/minuta_ia", methods=["POST"])
@@ -921,10 +870,9 @@ def vua_minuta_ia():
         client = anthropic.Anthropic(api_key=api_key, http_client=httpx.Client(follow_redirects=True))
 
         # Cargar últimas 5 minutas para contexto acumulado
-        con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-        minutas_ant = [dict(r) for r in con.execute(
-            "SELECT fecha, asunto, acuerdos, proximos FROM vua_minutas ORDER BY creado DESC LIMIT 5").fetchall()]
-        con.close()
+        with get_db(HIST_DB, row_factory=True) as con:
+            minutas_ant = [dict(r) for r in con.execute(
+                "SELECT fecha, asunto, acuerdos, proximos FROM vua_minutas ORDER BY creado DESC LIMIT 5").fetchall()]
 
         ctx_minutas = ""
         if minutas_ant:
@@ -1061,14 +1009,13 @@ def vua_resumen_generar():
     if not api_key: return jsonify({"ok": False, "error": "API key no configurada"})
     try:
         import anthropic, httpx
-        con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-        ejes       = [dict(r) for r in con.execute("SELECT id, nombre, estado FROM vua_ejes ORDER BY orden").fetchall()]
-        riesgos    = [dict(r) for r in con.execute("SELECT titulo, probabilidad, impacto FROM vua_riesgos WHERE activo=1").fetchall()]
-        cronologia = [dict(r) for r in con.execute(
-            "SELECT fecha, actividad, estado FROM vua_cronologia ORDER BY orden DESC LIMIT 10").fetchall()]
-        minutas    = [dict(r) for r in con.execute(
-            "SELECT fecha, asunto, proximos FROM vua_minutas ORDER BY creado DESC LIMIT 3").fetchall()]
-        con.close()
+        with get_db(HIST_DB, row_factory=True) as con:
+            ejes       = [dict(r) for r in con.execute("SELECT id, nombre, estado FROM vua_ejes ORDER BY orden").fetchall()]
+            riesgos    = [dict(r) for r in con.execute("SELECT titulo, probabilidad, impacto FROM vua_riesgos WHERE activo=1").fetchall()]
+            cronologia = [dict(r) for r in con.execute(
+                "SELECT fecha, actividad, estado FROM vua_cronologia ORDER BY orden DESC LIMIT 10").fetchall()]
+            minutas    = [dict(r) for r in con.execute(
+                "SELECT fecha, asunto, proximos FROM vua_minutas ORDER BY creado DESC LIMIT 3").fetchall()]
 
         ult_actividad = next((c for c in cronologia if c["estado"].lower() == "completado"), {})
         prox_actividad = next((c for c in reversed(cronologia) if c["estado"].lower() == "pendiente"), {})
@@ -1195,10 +1142,9 @@ def vua_acuerdos_pendientes():
     if not api_key: return jsonify({"ok": False, "error": "API key no configurada"})
     try:
         import anthropic, httpx
-        con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-        minutas = [dict(r) for r in con.execute(
-            "SELECT fecha, asunto, acuerdos, proximos FROM vua_minutas ORDER BY creado ASC").fetchall()]
-        con.close()
+        with get_db(HIST_DB, row_factory=True) as con:
+            minutas = [dict(r) for r in con.execute(
+                "SELECT fecha, asunto, acuerdos, proximos FROM vua_minutas ORDER BY creado ASC").fetchall()]
 
         if len(minutas) < 2:
             return jsonify({"ok": True, "pendientes": [], "mensaje": "Se necesitan al menos 2 minutas para detectar pendientes."})
@@ -1244,10 +1190,9 @@ def vua_riesgo_mitigacion_ia(rid):
     if not api_key: return jsonify({"ok": False, "error": "API key no configurada"})
     try:
         import anthropic, httpx
-        con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-        riesgo = con.execute("SELECT * FROM vua_riesgos WHERE id=?", (rid,)).fetchone()
-        ejes   = [dict(r) for r in con.execute("SELECT nombre, estado FROM vua_ejes ORDER BY orden").fetchall()]
-        con.close()
+        with get_db(HIST_DB, row_factory=True) as con:
+            riesgo = con.execute("SELECT * FROM vua_riesgos WHERE id=?", (rid,)).fetchone()
+            ejes   = [dict(r) for r in con.execute("SELECT nombre, estado FROM vua_ejes ORDER BY orden").fetchall()]
         if not riesgo: return jsonify({"ok": False, "error": "Riesgo no encontrado"})
         riesgo = dict(riesgo)
 

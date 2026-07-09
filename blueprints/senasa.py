@@ -14,8 +14,9 @@ import re
 import json
 import uuid
 import logging
-import sqlite3
 import threading
+
+from actas import generar_acta_word
 from datetime import datetime, date, timedelta
 
 from flask import Blueprint, request, jsonify, render_template, session, send_file
@@ -25,7 +26,7 @@ from core import (
     get_api_key, contexto_repositorio, notificar_telegram,
     job_status, job_create, job_get, _job_persist,
     _normalizar_fecha_a_ddmmaaaa, _validar_fecha_ddmmaaaa,
-    validar_enum, ESTADOS_TAREA,
+    validar_enum, ESTADOS_TAREA, get_db,
 )
 
 senasa_bp = Blueprint("senasa", __name__)
@@ -45,13 +46,12 @@ def senasa_index():
 @login_required
 @modulo_required("senasa")
 def senasa_crono_list():
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = [dict(r) for r in con.execute(
-        "SELECT *, CASE WHEN fecha GLOB '[0-9][0-9]/[0-9][0-9]/[0-9][0-9][0-9][0-9]' "
-        "THEN substr(fecha,7,4)||substr(fecha,4,2)||substr(fecha,1,2) ELSE '00000000' END as _ord "
-        "FROM senasa_cronologia ORDER BY (estado='Pendiente') DESC, _ord DESC, id ASC").fetchall()]
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute(
+            "SELECT *, CASE WHEN fecha GLOB '[0-9][0-9]/[0-9][0-9]/[0-9][0-9][0-9][0-9]' "
+            "THEN substr(fecha,7,4)||substr(fecha,4,2)||substr(fecha,1,2) ELSE '00000000' END as _ord "
+            "FROM senasa_cronologia ORDER BY (estado='Pendiente') DESC, _ord DESC, id ASC").fetchall()]
     for r in rows: r.pop("_ord", None)
-    con.close()
     return jsonify({"ok": True, "rows": rows})
 
 @senasa_bp.route("/api/senasa/cronologia", methods=["POST"])
@@ -62,13 +62,14 @@ def senasa_crono_add():
     ok, err = validar_enum(data.get("estado"), ESTADOS_TAREA, "estado")
     if not ok: return jsonify({"ok": False, "error": err}), 400
     fecha = _normalizar_fecha_a_ddmmaaaa(data.get("fecha","")) if data.get("fecha") else "A definir"
-    con = sqlite3.connect(HIST_DB); cur = con.cursor()
-    cur.execute("SELECT MAX(orden) FROM senasa_cronologia")
-    max_o = cur.fetchone()[0] or 0
-    cur.execute("INSERT INTO senasa_cronologia (fecha,actividad,participantes,estado,orden) VALUES (?,?,?,?,?)",
-        (fecha, data.get("actividad",""),
-         data.get("participantes",""), data.get("estado","Pendiente"), max_o+1))
-    new_id = cur.lastrowid; con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        cur = con.cursor()
+        cur.execute("SELECT MAX(orden) FROM senasa_cronologia")
+        max_o = cur.fetchone()[0] or 0
+        cur.execute("INSERT INTO senasa_cronologia (fecha,actividad,participantes,estado,orden) VALUES (?,?,?,?,?)",
+            (fecha, data.get("actividad",""),
+             data.get("participantes",""), data.get("estado","Pendiente"), max_o+1))
+        new_id = cur.lastrowid
     return jsonify({"ok": True, "id": new_id})
 
 @senasa_bp.route("/api/senasa/cronologia/<int:iid>", methods=["PUT"])
@@ -84,19 +85,17 @@ def senasa_crono_update(iid):
     if not campos:
         return jsonify({"ok": False, "error": "Nada para actualizar"}), 400
     set_clause = ", ".join(f"{k}=?" for k in campos)
-    con = sqlite3.connect(HIST_DB)
-    con.execute(f"UPDATE senasa_cronologia SET {set_clause}, modificado=datetime('now') WHERE id=?",
-        (*campos.values(), iid))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        con.execute(f"UPDATE senasa_cronologia SET {set_clause}, modificado=datetime('now') WHERE id=?",
+            (*campos.values(), iid))
     return jsonify({"ok": True})
 
 @senasa_bp.route("/api/senasa/cronologia/<int:iid>", methods=["DELETE"])
 @login_required
 @modulo_required("senasa")
 def senasa_crono_delete(iid):
-    con = sqlite3.connect(HIST_DB)
-    con.execute("DELETE FROM senasa_cronologia WHERE id=?", (iid,))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        con.execute("DELETE FROM senasa_cronologia WHERE id=?", (iid,))
     return jsonify({"ok": True})
 
 # ── Ejes SENASA ───────────────────────────────────────────────────────────────
@@ -104,10 +103,9 @@ def senasa_crono_delete(iid):
 @login_required
 @modulo_required("senasa")
 def senasa_ejes_list():
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = [dict(r) for r in con.execute(
-        "SELECT * FROM senasa_ejes ORDER BY orden ASC").fetchall()]
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute(
+            "SELECT * FROM senasa_ejes ORDER BY orden ASC").fetchall()]
     return jsonify({"ok": True, "rows": rows})
 
 @senasa_bp.route("/api/senasa/ejes/<int:iid>", methods=["PUT"])
@@ -115,10 +113,9 @@ def senasa_ejes_list():
 @modulo_required("senasa")
 def senasa_ejes_update(iid):
     data = request.json or {}
-    con = sqlite3.connect(HIST_DB)
-    con.execute("UPDATE senasa_ejes SET nombre=?,descripcion=?,estado=? WHERE id=?",
-        (data.get("nombre",""), data.get("descripcion",""), data.get("estado",""), iid))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        con.execute("UPDATE senasa_ejes SET nombre=?,descripcion=?,estado=? WHERE id=?",
+            (data.get("nombre",""), data.get("descripcion",""), data.get("estado",""), iid))
     return jsonify({"ok": True})
 
 @senasa_bp.route("/api/senasa/ejes", methods=["POST"])
@@ -126,20 +123,18 @@ def senasa_ejes_update(iid):
 @modulo_required("senasa")
 def senasa_ejes_create():
     data = request.json or {}
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    max_orden = con.execute("SELECT MAX(orden) FROM senasa_ejes").fetchone()[0] or 0
-    con.execute("INSERT INTO senasa_ejes (nombre, descripcion, estado, orden) VALUES (?,?,?,?)",
-        (data.get("nombre",""), data.get("descripcion",""), data.get("estado","Pendiente"), max_orden + 1))
-    con.commit(); con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        max_orden = con.execute("SELECT MAX(orden) FROM senasa_ejes").fetchone()[0] or 0
+        con.execute("INSERT INTO senasa_ejes (nombre, descripcion, estado, orden) VALUES (?,?,?,?)",
+            (data.get("nombre",""), data.get("descripcion",""), data.get("estado","Pendiente"), max_orden + 1))
     return jsonify({"ok": True})
 
 @senasa_bp.route("/api/senasa/ejes/<int:iid>", methods=["DELETE"])
 @login_required
 @modulo_required("senasa")
 def senasa_ejes_delete(iid):
-    con = sqlite3.connect(HIST_DB)
-    con.execute("DELETE FROM senasa_ejes WHERE id=?", (iid,))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        con.execute("DELETE FROM senasa_ejes WHERE id=?", (iid,))
     return jsonify({"ok": True})
 
 # ── Minutas SENASA ────────────────────────────────────────────────────────────
@@ -147,10 +142,9 @@ def senasa_ejes_delete(iid):
 @login_required
 @modulo_required("senasa")
 def senasa_minutas_list():
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = [dict(r) for r in con.execute(
-        "SELECT id,fecha,asunto,lugar,creado_por,creado FROM senasa_minutas ORDER BY creado DESC").fetchall()]
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute(
+            "SELECT id,fecha,asunto,lugar,creado_por,creado FROM senasa_minutas ORDER BY creado DESC").fetchall()]
     return jsonify({"ok": True, "rows": rows})
 
 @senasa_bp.route("/api/senasa/minuta", methods=["POST"])
@@ -168,40 +162,22 @@ def senasa_minuta_create():
     compromisos   = data.get("compromisos",[])
     proximos      = data.get("proximos",[])
 
-    # Generar Word con python-docx
-    from docx import Document as DocxDoc
-    doc = DocxDoc()
-    doc.add_heading("Acta de Reunión — SENASA / ARCA", 0)
-    doc.add_heading(f"{asunto}", 1)
-    p = doc.add_paragraph()
-    p.add_run(f"Fecha: {fecha}   |   Lugar: {lugar}").bold = False
-
-    if participantes:
-        doc.add_heading("Participantes", 2)
-        for pt in participantes:
-            n = pt.get("nombre","") if isinstance(pt,dict) else str(pt)
-            c = pt.get("cargo","")  if isinstance(pt,dict) else ""
-            o = pt.get("organismo","") if isinstance(pt,dict) else ""
-            doc.add_paragraph(f"{n} — {c} ({o})" if c else n, style="List Bullet")
-
-    for titulo, items in [("Temas tratados",temas),("Conclusiones",conclusiones),
-                           ("Compromisos",compromisos),("Próximos pasos",proximos)]:
-        if items:
-            doc.add_heading(titulo, 2)
-            for item in items:
-                doc.add_paragraph(item, style="List Bullet")
+    doc = generar_acta_word(
+        "ACTA DE REUNIÓN — SENASA / ARCA", fecha, asunto, lugar, participantes,
+        secciones=[("Temas tratados", temas), ("Conclusiones", conclusiones),
+                   ("Compromisos", compromisos), ("Próximos pasos", proximos)],
+    )
 
     os.makedirs("/data/minutas_senasa", exist_ok=True)
     fname = f"Acta_SENASA_{fecha.replace('/','_')}_{minuta_id}.docx"
     ruta  = os.path.join("/data/minutas_senasa", fname)
     doc.save(ruta)
 
-    con = sqlite3.connect(HIST_DB)
-    con.execute("INSERT INTO senasa_minutas VALUES (?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
-        (minuta_id, fecha, asunto, lugar,
-         json.dumps(participantes), json.dumps(temas), json.dumps(conclusiones),
-         json.dumps(compromisos), json.dumps(proximos), ruta, session.get("username","?")))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        con.execute("INSERT INTO senasa_minutas VALUES (?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
+            (minuta_id, fecha, asunto, lugar,
+             json.dumps(participantes), json.dumps(temas), json.dumps(conclusiones),
+             json.dumps(compromisos), json.dumps(proximos), ruta, session.get("username","?")))
 
     partic_str = ", ".join(
         p.get("nombre",p) if isinstance(p,dict) else str(p) for p in participantes)
@@ -219,9 +195,8 @@ def senasa_minuta_create():
 @login_required
 @modulo_required("senasa")
 def senasa_minuta_download(minuta_id):
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    row = con.execute("SELECT archivo FROM senasa_minutas WHERE id=?", (minuta_id,)).fetchone()
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        row = con.execute("SELECT archivo FROM senasa_minutas WHERE id=?", (minuta_id,)).fetchone()
     if not row or not os.path.exists(row["archivo"]):
         return jsonify({"ok": False, "error": "Archivo no encontrado"}), 404
     return send_file(row["archivo"], as_attachment=True,
@@ -258,10 +233,9 @@ def senasa_minuta_ia():
 @login_required
 @modulo_required("senasa")
 def senasa_acuerdos_list():
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = [dict(r) for r in con.execute(
-        "SELECT * FROM senasa_acuerdos ORDER BY estado ASC, orden ASC").fetchall()]
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute(
+            "SELECT * FROM senasa_acuerdos ORDER BY estado ASC, orden ASC").fetchall()]
     return jsonify({"ok": True, "rows": rows})
 
 @senasa_bp.route("/api/senasa/acuerdos", methods=["POST"])
@@ -271,13 +245,14 @@ def senasa_acuerdos_add():
     data = request.json or {}
     ok, err = validar_enum(data.get("estado"), ESTADOS_TAREA, "estado")
     if not ok: return jsonify({"ok": False, "error": err}), 400
-    con = sqlite3.connect(HIST_DB); cur = con.cursor()
-    cur.execute("SELECT MAX(orden) FROM senasa_acuerdos")
-    max_o = cur.fetchone()[0] or 0
-    cur.execute("INSERT INTO senasa_acuerdos (descripcion,responsable,fecha_compromiso,estado,orden) VALUES (?,?,?,?,?)",
-        (data.get("descripcion",""), data.get("responsable",""),
-         data.get("fecha_compromiso",""), data.get("estado","Pendiente"), max_o+1))
-    new_id = cur.lastrowid; con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        cur = con.cursor()
+        cur.execute("SELECT MAX(orden) FROM senasa_acuerdos")
+        max_o = cur.fetchone()[0] or 0
+        cur.execute("INSERT INTO senasa_acuerdos (descripcion,responsable,fecha_compromiso,estado,orden) VALUES (?,?,?,?,?)",
+            (data.get("descripcion",""), data.get("responsable",""),
+             data.get("fecha_compromiso",""), data.get("estado","Pendiente"), max_o+1))
+        new_id = cur.lastrowid
     return jsonify({"ok": True, "id": new_id})
 
 @senasa_bp.route("/api/senasa/acuerdos/<int:iid>", methods=["PUT"])
@@ -287,20 +262,18 @@ def senasa_acuerdos_update(iid):
     data = request.json or {}
     ok, err = validar_enum(data.get("estado"), ESTADOS_TAREA, "estado")
     if not ok: return jsonify({"ok": False, "error": err}), 400
-    con = sqlite3.connect(HIST_DB)
-    con.execute("UPDATE senasa_acuerdos SET descripcion=?,responsable=?,fecha_compromiso=?,estado=? WHERE id=?",
-        (data.get("descripcion",""), data.get("responsable",""),
-         data.get("fecha_compromiso",""), data.get("estado","Pendiente"), iid))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        con.execute("UPDATE senasa_acuerdos SET descripcion=?,responsable=?,fecha_compromiso=?,estado=? WHERE id=?",
+            (data.get("descripcion",""), data.get("responsable",""),
+             data.get("fecha_compromiso",""), data.get("estado","Pendiente"), iid))
     return jsonify({"ok": True})
 
 @senasa_bp.route("/api/senasa/acuerdos/<int:iid>", methods=["DELETE"])
 @login_required
 @modulo_required("senasa")
 def senasa_acuerdos_delete(iid):
-    con = sqlite3.connect(HIST_DB)
-    con.execute("DELETE FROM senasa_acuerdos WHERE id=?", (iid,))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        con.execute("DELETE FROM senasa_acuerdos WHERE id=?", (iid,))
     return jsonify({"ok": True})
 
 # ── Informe SENASA (async) ────────────────────────────────────────────────────
@@ -309,15 +282,14 @@ def senasa_acuerdos_delete(iid):
 @modulo_required("senasa")
 def senasa_informe():
     """Genera el informe SENASA en background — misma arquitectura que VUA."""
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    datos = {
-        "modulo": "SENASA",
-        "cronologia": [dict(r) for r in con.execute("SELECT * FROM senasa_cronologia ORDER BY orden").fetchall()],
-        "ejes":       [dict(r) for r in con.execute("SELECT * FROM senasa_ejes ORDER BY orden").fetchall()],
-        "minutas":    [dict(r) for r in con.execute("SELECT * FROM senasa_minutas ORDER BY creado DESC LIMIT 10").fetchall()],
-        "acuerdos":   [dict(r) for r in con.execute("SELECT * FROM senasa_acuerdos ORDER BY estado, orden").fetchall()],
-    }
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        datos = {
+            "modulo": "SENASA",
+            "cronologia": [dict(r) for r in con.execute("SELECT * FROM senasa_cronologia ORDER BY orden").fetchall()],
+            "ejes":       [dict(r) for r in con.execute("SELECT * FROM senasa_ejes ORDER BY orden").fetchall()],
+            "minutas":    [dict(r) for r in con.execute("SELECT * FROM senasa_minutas ORDER BY creado DESC LIMIT 10").fetchall()],
+            "acuerdos":   [dict(r) for r in con.execute("SELECT * FROM senasa_acuerdos ORDER BY estado, orden").fetchall()],
+        }
     job_id = str(uuid.uuid4())[:8]
     job_create(job_id, "Generando informe SENASA...", username=session.get("username", "?"))
 

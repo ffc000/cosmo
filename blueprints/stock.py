@@ -11,12 +11,11 @@ import os
 import time
 import hashlib
 import logging
-import sqlite3
 from datetime import datetime, date, timedelta
 
 from flask import Blueprint, request, jsonify, render_template, session, Response, send_file
 
-from core import HIST_DB, STOCK_REPORTS_DIR, login_required, modulo_required
+from core import HIST_DB, STOCK_REPORTS_DIR, login_required, modulo_required, get_db
 
 stock_bp = Blueprint("stock", __name__)
 
@@ -29,67 +28,65 @@ _stock_jobs = {}
 # ── BD Stock ──────────────────────────────────────────────────────────────────
 def init_stock_db():
     """Crea las tablas de historial de stock si no existen."""
-    con = sqlite3.connect(HIST_DB)
-    con.execute("""CREATE TABLE IF NOT EXISTS stock_reportes (
-        id          TEXT PRIMARY KEY,
-        fecha_corte TEXT NOT NULL,
-        fecha_gen   TEXT DEFAULT (datetime('now')),
-        dias_tol    INTEGER DEFAULT 0,
-        usuario     TEXT DEFAULT '',
-        total       INTEGER DEFAULT 0,
-        verde       INTEGER DEFAULT 0,
-        azul        INTEGER DEFAULT 0,
-        amarillo    INTEGER DEFAULT 0,
-        rojo        INTEGER DEFAULT 0,
-        negro       INTEGER DEFAULT 0
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS stock_registros (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        reporte_id  TEXT NOT NULL REFERENCES stock_reportes(id),
-        codadu      TEXT,
-        codlot      TEXT,
-        razon_social TEXT,
-        cuit        TEXT,
-        tipo        TEXT,
-        nombre_adu  TEXT,
-        nombre_dira TEXT,
-        semaforo    TEXT,
-        comentario  TEXT,
-        freg        TEXT,
-        fstock      TEXT
-    )""")
-    con.execute("""CREATE INDEX IF NOT EXISTS idx_stock_reg_lot
-        ON stock_registros(codadu, codlot)""")
-    con.execute("""CREATE INDEX IF NOT EXISTS idx_stock_reg_reporte
-        ON stock_registros(reporte_id)""")
-    con.execute("""CREATE TABLE IF NOT EXISTS stock_tendencia (
-        id                   TEXT NOT NULL,
-        reporte_id           TEXT NOT NULL REFERENCES stock_reportes(id),
-        freg_transmitio      INTEGER DEFAULT 0,
-        freg_no_transmitio   INTEGER DEFAULT 0,
-        freg_no_habil        INTEGER DEFAULT 0,
-        fstock_transmitio    INTEGER DEFAULT 0,
-        fstock_no_transmitio INTEGER DEFAULT 0,
-        fstock_no_habil      INTEGER DEFAULT 0,
-        pct_reg              REAL DEFAULT NULL,
-        pct_stock            REAL DEFAULT NULL,
-        PRIMARY KEY (id, reporte_id)
-    )""")
-    con.execute("""CREATE INDEX IF NOT EXISTS idx_stock_tend_id
-        ON stock_tendencia(id)""")
-    # Columna file_path agregada en v2 — ALTER TABLE idempotente
-    try:
-        con.execute("ALTER TABLE stock_reportes ADD COLUMN file_path TEXT DEFAULT ''")
-    except Exception:
-        pass  # Ya existe
-    # Columnas pct agregadas en v3
-    for _col in ["pct_reg REAL", "pct_stock REAL"]:
+    with get_db(HIST_DB) as con:
+        con.execute("""CREATE TABLE IF NOT EXISTS stock_reportes (
+            id          TEXT PRIMARY KEY,
+            fecha_corte TEXT NOT NULL,
+            fecha_gen   TEXT DEFAULT (datetime('now')),
+            dias_tol    INTEGER DEFAULT 0,
+            usuario     TEXT DEFAULT '',
+            total       INTEGER DEFAULT 0,
+            verde       INTEGER DEFAULT 0,
+            azul        INTEGER DEFAULT 0,
+            amarillo    INTEGER DEFAULT 0,
+            rojo        INTEGER DEFAULT 0,
+            negro       INTEGER DEFAULT 0
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS stock_registros (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            reporte_id  TEXT NOT NULL REFERENCES stock_reportes(id),
+            codadu      TEXT,
+            codlot      TEXT,
+            razon_social TEXT,
+            cuit        TEXT,
+            tipo        TEXT,
+            nombre_adu  TEXT,
+            nombre_dira TEXT,
+            semaforo    TEXT,
+            comentario  TEXT,
+            freg        TEXT,
+            fstock      TEXT
+        )""")
+        con.execute("""CREATE INDEX IF NOT EXISTS idx_stock_reg_lot
+            ON stock_registros(codadu, codlot)""")
+        con.execute("""CREATE INDEX IF NOT EXISTS idx_stock_reg_reporte
+            ON stock_registros(reporte_id)""")
+        con.execute("""CREATE TABLE IF NOT EXISTS stock_tendencia (
+            id                   TEXT NOT NULL,
+            reporte_id           TEXT NOT NULL REFERENCES stock_reportes(id),
+            freg_transmitio      INTEGER DEFAULT 0,
+            freg_no_transmitio   INTEGER DEFAULT 0,
+            freg_no_habil        INTEGER DEFAULT 0,
+            fstock_transmitio    INTEGER DEFAULT 0,
+            fstock_no_transmitio INTEGER DEFAULT 0,
+            fstock_no_habil      INTEGER DEFAULT 0,
+            pct_reg              REAL DEFAULT NULL,
+            pct_stock            REAL DEFAULT NULL,
+            PRIMARY KEY (id, reporte_id)
+        )""")
+        con.execute("""CREATE INDEX IF NOT EXISTS idx_stock_tend_id
+            ON stock_tendencia(id)""")
+        # Columna file_path agregada en v2 — ALTER TABLE idempotente
         try:
-            con.execute(f"ALTER TABLE stock_tendencia ADD COLUMN {_col} DEFAULT NULL")
+            con.execute("ALTER TABLE stock_reportes ADD COLUMN file_path TEXT DEFAULT ''")
         except Exception:
-            pass
-    con.commit()
-    con.close()
+            pass  # Ya existe
+        # Columnas pct agregadas en v3
+        for _col in ["pct_reg REAL", "pct_stock REAL"]:
+            try:
+                con.execute(f"ALTER TABLE stock_tendencia ADD COLUMN {_col} DEFAULT NULL")
+            except Exception:
+                pass
 
 init_stock_db()
 
@@ -113,41 +110,39 @@ def _guardar_reporte_bd(reporte_id, fecha_corte, dias_tol, usuario, registros, f
             conteo[s] += 1
     total = sum(conteo.values())
 
-    con = sqlite3.connect(HIST_DB)
-    # Upsert del reporte (puede re-generarse el mismo día)
-    con.execute("""INSERT OR REPLACE INTO stock_reportes
-        (id, fecha_corte, dias_tol, usuario, total, verde, azul, amarillo, rojo, negro, file_path)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-        (reporte_id, fecha_corte, dias_tol, usuario, total,
-         conteo["VERDE"], conteo["AZUL"], conteo["AMARILLO"],
-         conteo["ROJO"], conteo["NEGRO"], file_path))
+    with get_db(HIST_DB) as con:
+        # Upsert del reporte (puede re-generarse el mismo día)
+        con.execute("""INSERT OR REPLACE INTO stock_reportes
+            (id, fecha_corte, dias_tol, usuario, total, verde, azul, amarillo, rojo, negro, file_path)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (reporte_id, fecha_corte, dias_tol, usuario, total,
+             conteo["VERDE"], conteo["AZUL"], conteo["AMARILLO"],
+             conteo["ROJO"], conteo["NEGRO"], file_path))
 
-    # Borrar registros anteriores del mismo reporte_id antes de reinsertar
-    con.execute("DELETE FROM stock_registros WHERE reporte_id=?", (reporte_id,))
+        # Borrar registros anteriores del mismo reporte_id antes de reinsertar
+        con.execute("DELETE FROM stock_registros WHERE reporte_id=?", (reporte_id,))
 
-    batch = []
-    for r in registros:
-        batch.append((
-            reporte_id,
-            r[0],   # codadu
-            r[1],   # codlot
-            r[6],   # razon_social
-            r[7],   # cuit
-            r[8],   # tipo
-            r[9],   # nombre_adu
-            r[10],  # nombre_dira
-            r[5],   # semaforo
-            r[11],  # comentario
-            r[3],   # freg  (ya en DD/MM/YYYY)
-            r[4],   # fstock
-        ))
-    con.executemany("""INSERT INTO stock_registros
-        (reporte_id, codadu, codlot, razon_social, cuit, tipo,
-         nombre_adu, nombre_dira, semaforo, comentario, freg, fstock)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""", batch)
+        batch = []
+        for r in registros:
+            batch.append((
+                reporte_id,
+                r[0],   # codadu
+                r[1],   # codlot
+                r[6],   # razon_social
+                r[7],   # cuit
+                r[8],   # tipo
+                r[9],   # nombre_adu
+                r[10],  # nombre_dira
+                r[5],   # semaforo
+                r[11],  # comentario
+                r[3],   # freg  (ya en DD/MM/YYYY)
+                r[4],   # fstock
+            ))
+        con.executemany("""INSERT INTO stock_registros
+            (reporte_id, codadu, codlot, razon_social, cuit, tipo,
+             nombre_adu, nombre_dira, semaforo, comentario, freg, fstock)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""", batch)
 
-    con.commit()
-    con.close()
     return conteo, total
 
 # ── Rutas ──────────────────────────────────────────────────────────────────────
@@ -235,35 +230,33 @@ def api_stock_generar():
             }
             tend_batch.append((lot_id, reporte_id, ft, fnt, fnh, st, snt, snh, pct_r, pct_s))
 
-        con_t = sqlite3.connect(HIST_DB)
-        con_t.execute("DELETE FROM stock_tendencia WHERE reporte_id=?", (reporte_id,))
-        con_t.executemany("""INSERT OR REPLACE INTO stock_tendencia
-            (id, reporte_id, freg_transmitio, freg_no_transmitio, freg_no_habil,
-             fstock_transmitio, fstock_no_transmitio, fstock_no_habil, pct_reg, pct_stock)
-            VALUES (?,?,?,?,?,?,?,?,?,?)""", tend_batch)
-        con_t.commit()
+        with get_db(HIST_DB) as con_t:
+            con_t.execute("DELETE FROM stock_tendencia WHERE reporte_id=?", (reporte_id,))
+            con_t.executemany("""INSERT OR REPLACE INTO stock_tendencia
+                (id, reporte_id, freg_transmitio, freg_no_transmitio, freg_no_habil,
+                 fstock_transmitio, fstock_no_transmitio, fstock_no_habil, pct_reg, pct_stock)
+                VALUES (?,?,?,?,?,?,?,?,?,?)""", tend_batch)
 
-        # ── Consultar reporte anterior por LOT para calcular tendencia ──────────
-        lot_ids = list(tend_data.keys())
-        tend_prev = {}
-        if lot_ids:
-            placeholders = ','.join('?' * len(lot_ids))
-            rows_prev = con_t.execute(f"""
-                SELECT t.id, t.pct_reg, t.pct_stock
-                FROM stock_tendencia t
-                JOIN stock_reportes p ON t.reporte_id = p.id
-                WHERE t.id IN ({placeholders})
-                  AND p.fecha_corte < ?
-                  AND t.reporte_id != ?
-                ORDER BY p.fecha_corte DESC
-            """, lot_ids + [fecha_iso, reporte_id]).fetchall()
-            seen = set()
-            for row in rows_prev:
-                lid = row[0]
-                if lid not in seen:
-                    tend_prev[lid] = {'pct_reg': row[1], 'pct_stock': row[2]}
-                    seen.add(lid)
-        con_t.close()
+            # ── Consultar reporte anterior por LOT para calcular tendencia ──────────
+            lot_ids = list(tend_data.keys())
+            tend_prev = {}
+            if lot_ids:
+                placeholders = ','.join('?' * len(lot_ids))
+                rows_prev = con_t.execute(f"""
+                    SELECT t.id, t.pct_reg, t.pct_stock
+                    FROM stock_tendencia t
+                    JOIN stock_reportes p ON t.reporte_id = p.id
+                    WHERE t.id IN ({placeholders})
+                      AND p.fecha_corte < ?
+                      AND t.reporte_id != ?
+                    ORDER BY p.fecha_corte DESC
+                """, lot_ids + [fecha_iso, reporte_id]).fetchall()
+                seen = set()
+                for row in rows_prev:
+                    lid = row[0]
+                    if lid not in seen:
+                        tend_prev[lid] = {'pct_reg': row[1], 'pct_stock': row[2]}
+                        seen.add(lid)
 
         # Calcular símbolo tendencia
         def _tend_symbol(curr, prev):
@@ -339,9 +332,8 @@ def api_stock_download(job_id):
                         headers={"Content-Disposition": f"attachment; filename=ReporteStock_{fecha}.html"})
 
     # 2. Buscar archivo en disco
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rep = con.execute("SELECT * FROM stock_reportes WHERE id=?", (job_id,)).fetchone()
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        rep = con.execute("SELECT * FROM stock_reportes WHERE id=?", (job_id,)).fetchone()
     if not rep:
         return jsonify({"ok": False, "error": "Reporte no encontrado"}), 404
 
@@ -359,11 +351,10 @@ def api_stock_download(job_id):
 def api_stock_historial():
     """Lista los últimos N reportes generados, con flag de archivo disponible."""
     limit = min(int(request.args.get("limit", 30)), 100)
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = [dict(r) for r in con.execute(
-        "SELECT * FROM stock_reportes ORDER BY fecha_corte DESC, fecha_gen DESC LIMIT ?",
-        (limit,)).fetchall()]
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute(
+            "SELECT * FROM stock_reportes ORDER BY fecha_corte DESC, fecha_gen DESC LIMIT ?",
+            (limit,)).fetchall()]
     for r in rows:
         r["file_ok"] = bool(r.get("file_path") and os.path.exists(r["file_path"]))
     return jsonify({"ok": True, "rows": rows})
@@ -374,19 +365,16 @@ def api_stock_historial():
 @modulo_required("stock")
 def api_stock_historial_delete(job_id):
     """Elimina un reporte del historial: registro en BD y archivo en disco."""
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rep = con.execute("SELECT * FROM stock_reportes WHERE id=?", (job_id,)).fetchone()
-    if not rep:
-        con.close()
-        return jsonify({"ok": False, "error": "Reporte no encontrado"}), 404
+    with get_db(HIST_DB, row_factory=True) as con:
+        rep = con.execute("SELECT * FROM stock_reportes WHERE id=?", (job_id,)).fetchone()
+        if not rep:
+            return jsonify({"ok": False, "error": "Reporte no encontrado"}), 404
 
-    fp = rep["file_path"] if rep["file_path"] else ""
+        fp = rep["file_path"] if rep["file_path"] else ""
 
-    # Borrar registros detalle y cabecera
-    con.execute("DELETE FROM stock_registros WHERE reporte_id=?", (job_id,))
-    con.execute("DELETE FROM stock_reportes WHERE id=?", (job_id,))
-    con.commit()
-    con.close()
+        # Borrar registros detalle y cabecera
+        con.execute("DELETE FROM stock_registros WHERE reporte_id=?", (job_id,))
+        con.execute("DELETE FROM stock_reportes WHERE id=?", (job_id,))
 
     # Borrar archivo físico si existe
     file_deleted = False
@@ -412,23 +400,22 @@ def api_stock_evolucion(codadu, codlot):
     Devuelve la serie histórica de estados de un LOT específico
     cruzando stock_registros con stock_reportes (ordenado por fecha_corte ASC).
     """
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = [dict(r) for r in con.execute("""
-        SELECT
-            p.fecha_corte,
-            r.semaforo,
-            r.comentario,
-            r.freg,
-            r.fstock,
-            r.razon_social,
-            r.tipo,
-            r.nombre_adu
-        FROM stock_registros r
-        JOIN stock_reportes p ON r.reporte_id = p.id
-        WHERE r.codadu = ? AND r.codlot = ?
-        ORDER BY p.fecha_corte ASC
-    """, (codadu, codlot)).fetchall()]
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute("""
+            SELECT
+                p.fecha_corte,
+                r.semaforo,
+                r.comentario,
+                r.freg,
+                r.fstock,
+                r.razon_social,
+                r.tipo,
+                r.nombre_adu
+            FROM stock_registros r
+            JOIN stock_reportes p ON r.reporte_id = p.id
+            WHERE r.codadu = ? AND r.codlot = ?
+            ORDER BY p.fecha_corte ASC
+        """, (codadu, codlot)).fetchall()]
 
     if not rows:
         return jsonify({"ok": False, "error": "Sin historial para este depósito"})
