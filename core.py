@@ -151,24 +151,22 @@ run_migrations(HIST_DB)
 # ── Sesiones ─────────────────────────────────────────────────────────────────
 def registrar_sesion(username, token, ip, ua):
     try:
-        con = sqlite3.connect(HIST_DB)
-        con.execute("INSERT OR REPLACE INTO sesiones (username, token, ip, user_agent, activo, ultimo_acceso) "
-            "VALUES (?,?,?,?,1,datetime('now'))", (username, token, ip, ua[:200]))
-        con.commit(); con.close()
+        with get_db(HIST_DB) as con:
+            con.execute("INSERT OR REPLACE INTO sesiones (username, token, ip, user_agent, activo, ultimo_acceso) "
+                "VALUES (?,?,?,?,1,datetime('now'))", (username, token, ip, ua[:200]))
     except: pass
 
 def actualizar_sesion(token):
     try:
-        con = sqlite3.connect(HIST_DB)
-        con.execute("UPDATE sesiones SET ultimo_acceso=datetime('now') WHERE token=?", (token,))
-        con.commit(); con.close()
+        with get_db(HIST_DB) as con:
+            con.execute("UPDATE sesiones SET ultimo_acceso=datetime('now') WHERE token=?", (token,))
     except: pass
 
 def token_revocado(token):
     try:
-        con = sqlite3.connect(HIST_DB)
-        row = con.execute("SELECT 1 FROM tokens_revocados WHERE token=?", (token,)).fetchone()
-        con.close(); return row is not None
+        with get_db(HIST_DB) as con:
+            row = con.execute("SELECT 1 FROM tokens_revocados WHERE token=?", (token,)).fetchone()
+        return row is not None
     except: return False
 
 
@@ -322,11 +320,10 @@ job_status = {}
 
 def _init_job_status_db():
     try:
-        con = sqlite3.connect(HIST_DB, timeout=10)
-        con.execute("""CREATE TABLE IF NOT EXISTS job_status_db (
-            job_id TEXT PRIMARY KEY, status TEXT, log TEXT, files TEXT,
-            username TEXT, ts REAL, progreso INTEGER DEFAULT 0)""")
-        con.commit(); con.close()
+        with get_db(HIST_DB, timeout=10) as con:
+            con.execute("""CREATE TABLE IF NOT EXISTS job_status_db (
+                job_id TEXT PRIMARY KEY, status TEXT, log TEXT, files TEXT,
+                username TEXT, ts REAL, progreso INTEGER DEFAULT 0)""")
     except Exception:
         logging.exception("No se pudo crear la tabla job_status_db")
 
@@ -354,24 +351,22 @@ def _marcar_jobs_huerfanos():
     tiene ts fresco y no se toca."""
     UMBRAL_HUERFANO_SEG = 20 * 60  # 20 min: más que el informe más largo esperado
     try:
-        con = sqlite3.connect(HIST_DB, timeout=10)
-        con.row_factory = sqlite3.Row
-        limite = time.time() - UMBRAL_HUERFANO_SEG
-        rows = con.execute(
-            "SELECT job_id, log FROM job_status_db WHERE status='running' AND ts < ?",
-            (limite,)).fetchall()
-        for r in rows:
-            try:
-                log = json.loads(r["log"] or "[]")
-            except Exception:
-                log = []
-            log.append(_MARCA_HUERFANO_LOG_TXT)
-            con.execute("UPDATE job_status_db SET status='error', log=? WHERE job_id=?",
-                        (json.dumps(log), r["job_id"]))
-        if rows:
-            logging.warning(f"JOBS HUÉRFANOS | {len(rows)} job(s) en 'running' sin actividad "
-                             f"hace más de {UMBRAL_HUERFANO_SEG}s — marcados como 'error' al arrancar.")
-        con.commit(); con.close()
+        with get_db(HIST_DB, timeout=10, row_factory=True) as con:
+            limite = time.time() - UMBRAL_HUERFANO_SEG
+            rows = con.execute(
+                "SELECT job_id, log FROM job_status_db WHERE status='running' AND ts < ?",
+                (limite,)).fetchall()
+            for r in rows:
+                try:
+                    log = json.loads(r["log"] or "[]")
+                except Exception:
+                    log = []
+                log.append(_MARCA_HUERFANO_LOG_TXT)
+                con.execute("UPDATE job_status_db SET status='error', log=? WHERE job_id=?",
+                            (json.dumps(log), r["job_id"]))
+            if rows:
+                logging.warning(f"JOBS HUÉRFANOS | {len(rows)} job(s) en 'running' sin actividad "
+                                 f"hace más de {UMBRAL_HUERFANO_SEG}s — marcados como 'error' al arrancar.")
     except Exception:
         logging.exception("No se pudo revisar jobs huérfanos en job_status_db")
 
