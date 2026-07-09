@@ -264,8 +264,8 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
           </div>
           <div id="tabla-actividades-wrap">
             <table class="data-table">
-              <thead><tr><th>Fecha</th><th>Nombre</th><th>Tipo</th><th>Duración</th><th>Distancia</th><th>FC med</th><th>Análisis</th></tr></thead>
-              <tbody id="body-actividades"><tr><td colspan="7" style="color:var(--muted);text-align:center;padding:1.5rem">Cargando...</td></tr></tbody>
+              <thead><tr><th>Fecha</th><th>Nombre</th><th>Tipo</th><th>Duración</th><th>Distancia</th><th>FC med</th><th>Nota</th><th>Análisis</th></tr></thead>
+              <tbody id="body-actividades"><tr><td colspan="8" style="color:var(--muted);text-align:center;padding:1.5rem">Cargando...</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -711,6 +711,27 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
   </div>
 </div>
 
+<!-- Modal: nota de "lo que efectivamente sucedió" en una actividad -->
+<div class="modal-overlay" id="modal-nota-actividad">
+  <div class="modal" style="max-width:520px">
+    <h3>¿Qué pasó realmente?</h3>
+    <p id="nota-actividad-contexto" style="font-size:.8rem;color:var(--muted);margin-bottom:.75rem"></p>
+    <div class="form-row">
+      <div>
+        <textarea id="nota-actividad-texto" rows="6"
+          placeholder="Ej: Garmin marcó 'sentadilla' pero en realidad hice wall ball con balón de 9kg, 4 rounds de 15..."></textarea>
+      </div>
+    </div>
+    <p style="font-size:.72rem;color:var(--muted);margin:.4rem 0 .75rem">
+      Esto se suma como aclaración al análisis con IA de esta actividad — no reemplaza lo que Garmin detectó, lo complementa.
+    </p>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="cerrarModal('modal-nota-actividad')">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarNotaActividad()">Guardar</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ══════════════════════════════════════════════════════════════════════════════
 // NAVIGATION
@@ -841,6 +862,9 @@ async function cargarActividades() {
       <td style="font-family:var(--mono)">${fmtDur(a.duracion_seg)}</td>
       <td style="font-family:var(--mono)">${fmtDist(a.distancia_m)}</td>
       <td style="font-family:var(--mono)">${a.fc_media||'—'}</td>
+      <td><button class="btn ${a.nota_real?'btn-primary':'btn-outline'} btn-sm" style="padding:.25rem .5rem;font-size:.7rem"
+            onclick="event.stopPropagation();abrirModalNotaActividad('${a.id}','${esc(a.nombre||'')}','${esc(fmtFecha(a.fecha))}','${esc(a.nota_real||'')}')"
+            title="${a.nota_real?'Ya tiene una nota — click para editarla':'Agregar lo que efectivamente sucedió'}">${a.nota_real?'📝':'+ Nota'}</button></td>
       <td><span style="font-size:.7rem;color:${a.analisis?'var(--accent2)':'var(--dim)'}">${a.analisis?'✓':'—'}</span></td>
     </tr>`).join('');
 }
@@ -849,6 +873,28 @@ function exportarCSV() {
   const tipo = document.getElementById('filtro-tipo').value;
   const limit = document.getElementById('filtro-limit').value;
   window.location.href = `/api/garmin/export_csv?tipo=${tipo}&limit=${limit}`;
+}
+
+// ── Nota de "lo que efectivamente sucedió" en una actividad ────────────────
+let _notaActividadId = null;
+
+function abrirModalNotaActividad(id, nombre, fecha, notaActual) {
+  _notaActividadId = id;
+  document.getElementById('nota-actividad-contexto').textContent = `${nombre || 'Actividad'} — ${fecha}`;
+  document.getElementById('nota-actividad-texto').value = notaActual || '';
+  abrirModal('modal-nota-actividad');
+}
+
+async function guardarNotaActividad() {
+  if (!_notaActividadId) return;
+  const nota = document.getElementById('nota-actividad-texto').value.trim();
+  const r = await (await fetch(`/api/garmin/actividades/${_notaActividadId}/nota`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nota })
+  })).json();
+  if (!r.ok) { alert(r.error || 'No se pudo guardar la nota.'); return; }
+  cerrarModal('modal-nota-actividad');
+  cargarActividades();
 }
 
 // ── Detalle actividad ─────────────────────────────────────────────────────────
