@@ -76,8 +76,19 @@ def init_garmin_db():
             laps          TEXT,
             metadata      TEXT,
             archivo_path  TEXT,
-            sincronizado  TEXT
+            sincronizado  TEXT,
+            nota_real     TEXT DEFAULT ''
         )""")
+        # Columna agregada después de que la tabla ya existía (mismo caso que
+        # sesiones/vua_ejes más arriba) — corrección manual de "lo que
+        # efectivamente pasó" en una actividad, para cuando Garmin detecta
+        # mal los ejercicios (típico en circuitos Hyrox/gimnasio). Se suma al
+        # prompt de análisis IA junto a lo que Garmin detectó, no lo reemplaza
+        # — ver _build_prompt_sesion.
+        try:
+            con.execute("ALTER TABLE garmin_actividades ADD COLUMN nota_real TEXT DEFAULT ''")
+        except Exception:
+            pass  # ya existe
         con.execute("""CREATE TABLE IF NOT EXISTS garmin_detalle (
             actividad_id  TEXT PRIMARY KEY,
             serie_tiempo  TEXT,
@@ -545,6 +556,18 @@ def _build_prompt_sesion(act: dict) -> str:
     te_label = _limpiar_label(meta.get('aerobic_te_label')) or ''
     te_msg   = _limpiar_label(meta.get('anaerobic_te_msg')) or ''
 
+    nota_real = (act.get("nota_real") or "").strip()
+    nota_txt = ""
+    if nota_real:
+        nota_txt = f"""
+ACLARACIÓN MANUAL DEL USUARIO — lo que efectivamente pasó (Garmin a veces
+detecta mal los ejercicios de fuerza/circuitos; esto es la corrección/
+aclaración de la persona, tenela en cuenta junto con los datos de arriba,
+no la ignores ni la reemplaces por lo que Garmin detectó):
+{nota_real}
+{_glosario_ejercicios_texto()}
+"""
+
     return f"""Analizá esta sesión de entrenamiento. Soy triatleta y competidor de Hyrox, actualmente en preparación para 21K (23/08/2026) y Hybrid Race Individual (12/09/2026).
 
 ACTIVIDAD: {act.get('nombre','')} ({tipo})
@@ -564,7 +587,7 @@ Body Battery Δ: {meta.get('body_battery_delta') or '—'} | Min vigorosa: {meta
 {splits_txt}
 
 {ej_txt}
-
+{nota_txt}
 Respondé en español con:
 1. Resumen ejecutivo (2-3 líneas)
 2. Puntos positivos
@@ -632,6 +655,22 @@ def api_actividad_detalle(act_id):
     # Adjuntar análisis previos
     act["analisis"] = get_analisis(actividad_id=act_id)
     return jsonify({"ok": True, "actividad": act})
+
+@training_bp.route("/api/garmin/actividades/<act_id>/nota", methods=["POST"])
+@login_required
+@modulo_required("training")
+def api_actividad_nota_guardar(act_id):
+    """Guarda 'lo que efectivamente sucedió' en una actividad — corrección
+    manual para cuando Garmin detecta mal los ejercicios (típico en
+    circuitos Hyrox/gimnasio). Se usa junto al glosario de ejercicios
+    (ver _glosario_ejercicios_texto) cuando se manda a analizar con IA."""
+    data = request.json or {}
+    nota = (data.get("nota") or "").strip()
+    with get_db(HIST_DB) as con:
+        cur = con.execute("UPDATE garmin_actividades SET nota_real=? WHERE id=?", (nota, act_id))
+        if cur.rowcount == 0:
+            return jsonify({"ok": False, "error": "Actividad no encontrada"})
+    return jsonify({"ok": True})
 
 @training_bp.route("/api/garmin/sync", methods=["POST"])
 @login_required
