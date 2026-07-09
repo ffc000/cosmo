@@ -475,6 +475,85 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
             <tbody id="body-log"><tr><td colspan="6" style="color:var(--muted);text-align:center;padding:1.5rem">Sin registros.</td></tr></tbody>
           </table>
         </div>
+
+        <div class="card" style="margin-top:1rem">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.9rem">
+            <div class="card-title" style="margin-bottom:0">Rutinas cargadas a mano</div>
+            <div style="display:flex;gap:.5rem">
+              <button class="btn btn-outline btn-sm" onclick="abrirModalGlosario()">Glosario de ejercicios</button>
+              <button class="btn btn-primary btn-sm" onclick="abrirModalRutinaManual()">+ Cargar rutina</button>
+            </div>
+          </div>
+          <p style="font-size:.78rem;color:var(--muted);margin-bottom:.8rem">
+            Para ejercicios que Garmin no registra (máquinas de gimnasio, circuitos Hyrox, etc.).
+            Pegá la rutina completa en texto libre; al analizarla con IA se usa el
+            <a href="#" onclick="abrirModalGlosario();return false">glosario de ejercicios</a> para interpretar la jerga.
+          </p>
+          <div id="lista-rutinas-manuales">Cargando...</div>
+        </div>
+      </div>
+
+      <!-- Modal: cargar rutina manual -->
+      <div class="modal-overlay" id="modal-rutina-manual">
+        <div class="modal" style="max-width:600px">
+          <h3>Cargar rutina manual</h3>
+          <div class="form-row" style="margin-bottom:.6rem">
+            <div>
+              <label>Fecha</label>
+              <input type="date" id="rm-fecha">
+            </div>
+          </div>
+          <div class="form-row" style="margin-bottom:.6rem">
+            <div>
+              <label>Título (opcional)</label>
+              <input type="text" id="rm-titulo" placeholder="Ej: Hyrox simulacro">
+            </div>
+          </div>
+          <div class="form-row" style="margin-bottom:.75rem">
+            <div>
+              <label>Rutina (texto libre)</label>
+              <textarea id="rm-texto" rows="10" style="width:100%;font-family:var(--mono);font-size:.82rem"
+                placeholder="Ej:&#10;5 rounds:&#10;- 200m Máquina de remo&#10;- 15 Tirones de polea (de pie)&#10;- 12 Zancadas alternada hacia adelante&#10;- 10 Sentadilla con balón medicinal"></textarea>
+            </div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:.5rem">
+            <button class="btn btn-outline" onclick="cerrarModal('modal-rutina-manual')">Cancelar</button>
+            <button class="btn btn-primary" onclick="guardarRutinaManual()">Guardar</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal: glosario de ejercicios -->
+      <div class="modal-overlay" id="modal-glosario">
+        <div class="modal" style="max-width:650px">
+          <h3>Glosario de ejercicios</h3>
+          <p style="font-size:.78rem;color:var(--muted);margin-bottom:.8rem">
+            Cómo llamás vos al ejercicio → término estándar que la IA va a entender.
+          </p>
+          <div class="form-row" style="display:flex;gap:.5rem;align-items:flex-end;margin-bottom:.5rem">
+            <div style="flex:1"><label>Alias</label><input type="text" id="gl-alias" placeholder="Ej: Máquina de remo"></div>
+            <div style="flex:1"><label>Término estándar</label><input type="text" id="gl-termino" placeholder="Ej: Row erg"></div>
+            <button class="btn btn-primary btn-sm" onclick="agregarGlosario()">Agregar</button>
+          </div>
+          <table class="data-table">
+            <thead><tr><th>Alias</th><th>Término estándar</th><th></th></tr></thead>
+            <tbody id="body-glosario"><tr><td colspan="3" style="color:var(--muted);text-align:center;padding:1rem">Cargando...</td></tr></tbody>
+          </table>
+          <div style="display:flex;justify-content:flex-end;margin-top:.75rem">
+            <button class="btn btn-outline" onclick="cerrarModal('modal-glosario')">Cerrar</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal: resultado de análisis IA de una rutina manual -->
+      <div class="modal-overlay" id="modal-analisis-rutina">
+        <div class="modal" style="max-width:600px">
+          <h3>Análisis de la rutina</h3>
+          <div id="analisis-rutina-contenido" style="white-space:pre-wrap;font-size:.85rem;line-height:1.5;margin-bottom:.75rem"></div>
+          <div style="display:flex;justify-content:flex-end">
+            <button class="btn btn-outline" onclick="cerrarModal('modal-analisis-rutina')">Cerrar</button>
+          </div>
+        </div>
       </div>
 
       <!-- Panel: Claude chat -->
@@ -688,7 +767,7 @@ function switchModule(mod, panel) {
   if (panel === 'comparar')   cargarComparacion();
   if (panel === 'progresion') cargarAnalisisPrev();
   if (panel === 'config')     cargarConfig();
-  if (panel === 'log')        cargarLog();
+  if (panel === 'log')        { cargarLog(); cargarRutinasManuales(); }
 }
 
 // ── Sidebar móvil ─────────────────────────────────────────────────────────────
@@ -1618,11 +1697,11 @@ async function cargarLog() {
     body.innerHTML = '<tr><td colspan="6" style="color:var(--muted);text-align:center;padding:1.5rem">Sin registros aún.</td></tr>'; return;
   }
   body.innerHTML = d.rows.map(l => `<tr>
-    <td style="font-family:var(--mono);font-size:.75rem">${l.fecha}</td>
-    <td>${l.tipo}</td>
-    <td style="max-width:250px">${l.descripcion||'—'}</td>
+    <td style="font-family:var(--mono);font-size:.75rem">${escHtml(l.fecha)}</td>
+    <td>${escHtml(l.tipo)}</td>
+    <td style="max-width:250px">${escHtml(l.descripcion||'—')}</td>
     <td style="font-family:var(--mono)">${l.duracion_min ? l.duracion_min+"'" : '—'}</td>
-    <td style="max-width:180px;font-size:.75rem;color:var(--muted)">${l.notas||'—'}</td>
+    <td style="max-width:180px;font-size:.75rem;color:var(--muted)">${escHtml(l.notas||'—')}</td>
     <td><button class="btn btn-danger btn-sm" onclick="eliminarLog('${l.id}')">🗑</button></td>
   </tr>`).join('');
 }
@@ -1631,6 +1710,106 @@ async function eliminarLog(id) {
   if (!confirm('¿Eliminar este registro?')) return;
   await fetch(`/api/training/log/${id}`, { method:'DELETE' });
   cargarLog();
+}
+
+// ── Rutinas manuales (texto libre) ──────────────────────────────────────────
+function abrirModalRutinaManual() {
+  document.getElementById('rm-fecha').value = new Date().toISOString().substring(0,10);
+  document.getElementById('rm-titulo').value = '';
+  document.getElementById('rm-texto').value = '';
+  abrirModal('modal-rutina-manual');
+}
+
+async function guardarRutinaManual() {
+  const texto = document.getElementById('rm-texto').value.trim();
+  if (!texto) { alert('Pegá la rutina antes de guardar.'); return; }
+  const data = {
+    fecha:  document.getElementById('rm-fecha').value,
+    titulo: document.getElementById('rm-titulo').value,
+    texto:  texto,
+  };
+  const r = await (await fetch('/api/training/rutinas_manuales', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)
+  })).json();
+  if (!r.ok) { alert(r.error || 'No se pudo guardar la rutina.'); return; }
+  cerrarModal('modal-rutina-manual');
+  cargarRutinasManuales();
+}
+
+async function cargarRutinasManuales() {
+  const d = await (await fetch('/api/training/rutinas_manuales')).json();
+  const el = document.getElementById('lista-rutinas-manuales');
+  if (!d.rows || !d.rows.length) {
+    el.innerHTML = '<p style="color:var(--muted);font-size:.82rem;text-align:center;padding:1rem">Sin rutinas cargadas todavía.</p>';
+    return;
+  }
+  el.innerHTML = d.rows.map(r => `
+    <div style="border:1px solid var(--border);border-radius:8px;padding:.7rem .9rem;margin-bottom:.6rem">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.35rem">
+        <div>
+          <span style="font-family:var(--mono);font-size:.75rem;color:var(--muted)">${escHtml(r.fecha)}</span>
+          ${r.titulo ? ` — <strong>${escHtml(r.titulo)}</strong>` : ''}
+        </div>
+        <div style="display:flex;gap:.4rem">
+          <button class="btn btn-outline btn-sm" onclick="analizarRutinaManual('${r.id}')">🤖 Analizar</button>
+          <button class="btn btn-danger btn-sm" onclick="eliminarRutinaManual('${r.id}')">🗑</button>
+        </div>
+      </div>
+      <div style="white-space:pre-wrap;font-size:.78rem;color:var(--muted);font-family:var(--mono);max-height:120px;overflow-y:auto">${escHtml(r.texto)}</div>
+    </div>`).join('');
+}
+
+async function eliminarRutinaManual(id) {
+  if (!confirm('¿Eliminar esta rutina?')) return;
+  await fetch(`/api/training/rutinas_manuales/${id}`, { method:'DELETE' });
+  cargarRutinasManuales();
+}
+
+async function analizarRutinaManual(id) {
+  const contenido = document.getElementById('analisis-rutina-contenido');
+  contenido.textContent = 'Analizando con IA...';
+  abrirModal('modal-analisis-rutina');
+  const r = await (await fetch(`/api/training/rutinas_manuales/${id}/analizar`, { method:'POST' })).json();
+  contenido.textContent = r.ok ? r.respuesta : ('Error: ' + (r.error || 'no se pudo analizar.'));
+}
+
+// ── Glosario de ejercicios ───────────────────────────────────────────────────
+function abrirModalGlosario() {
+  abrirModal('modal-glosario');
+  cargarGlosario();
+}
+
+async function cargarGlosario() {
+  const d = await (await fetch('/api/training/glosario')).json();
+  const body = document.getElementById('body-glosario');
+  if (!d.rows || !d.rows.length) {
+    body.innerHTML = '<tr><td colspan="3" style="color:var(--muted);text-align:center;padding:1rem">Sin términos cargados.</td></tr>';
+    return;
+  }
+  body.innerHTML = d.rows.map(g => `<tr>
+    <td>${escHtml(g.alias)}</td>
+    <td>${escHtml(g.termino_estandar)}</td>
+    <td><button class="btn btn-danger btn-sm" onclick="eliminarGlosario(${g.id})">🗑</button></td>
+  </tr>`).join('');
+}
+
+async function agregarGlosario() {
+  const alias = document.getElementById('gl-alias').value.trim();
+  const termino = document.getElementById('gl-termino').value.trim();
+  if (!alias || !termino) { alert('Completá alias y término estándar.'); return; }
+  const r = await (await fetch('/api/training/glosario', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({ alias, termino_estandar: termino })
+  })).json();
+  if (!r.ok) { alert(r.error || 'No se pudo agregar.'); return; }
+  document.getElementById('gl-alias').value = '';
+  document.getElementById('gl-termino').value = '';
+  cargarGlosario();
+}
+
+async function eliminarGlosario(id) {
+  await fetch(`/api/training/glosario/${id}`, { method:'DELETE' });
+  cargarGlosario();
 }
 
 // ── Claude chat ───────────────────────────────────────────────────────────────
