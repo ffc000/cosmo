@@ -15,7 +15,8 @@ Si falta la dependencia, las funciones fallan explícitamente.
 import base64
 import hashlib
 import logging
-import sqlite3
+
+from db_utils import get_db
 
 try:
     from cryptography.fernet import Fernet, InvalidToken
@@ -72,21 +73,16 @@ def get_credenciales_garmin(db_path: str, secret_key: str):
     Propaga CredencialesNoDisponibles si hay un valor guardado pero no se
     puede descifrar (antes esto se tragaba en silencio y devolvía vacío).
     """
-    con = sqlite3.connect(db_path)
-    con.row_factory = sqlite3.Row
-    try:
+    with get_db(db_path, row_factory=True) as con:
         u = con.execute("SELECT valor FROM garmin_config WHERE clave='garmin_user'").fetchone()
         p = con.execute("SELECT valor FROM garmin_config WHERE clave='garmin_pass'").fetchone()
-    finally:
-        con.close()
     usuario = _decrypt(u["valor"], secret_key) if u and u["valor"] else ""
     passwd  = _decrypt(p["valor"], secret_key) if p and p["valor"] else ""
     return usuario, passwd
 
 
 def set_credenciales_garmin(db_path: str, secret_key: str, usuario: str, passwd: str):
-    con = sqlite3.connect(db_path)
-    try:
+    with get_db(db_path) as con:
         con.execute(
             "INSERT OR REPLACE INTO garmin_config (clave,valor,modificado) VALUES (?,?,datetime('now'))",
             ("garmin_user", _encrypt(usuario, secret_key)),
@@ -95,9 +91,6 @@ def set_credenciales_garmin(db_path: str, secret_key: str, usuario: str, passwd:
             "INSERT OR REPLACE INTO garmin_config (clave,valor,modificado) VALUES (?,?,datetime('now'))",
             ("garmin_pass", _encrypt(passwd, secret_key)),
         )
-        con.commit()
-    finally:
-        con.close()
 
 
 def credenciales_configuradas(db_path: str, secret_key: str) -> bool:

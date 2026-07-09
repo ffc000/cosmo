@@ -89,19 +89,17 @@ def _chequear_recordatorio_servicios():
             hoy = datetime.now()
             if hoy.day == 2:
                 mes = hoy.strftime("%Y-%m")
-                con = sqlite3.connect(HIST_DB)
-                row = con.execute("SELECT valor FROM fin_servicios_estado WHERE clave='ultimo_aviso_mes'").fetchone()
-                if not (row and row[0] == mes):
-                    estado = _estado_servicios_mes(con, mes)
-                    pendientes = [s["nombre"] for s in estado if not s["pagado"]]
-                    if pendientes:
-                        lista = "\n".join(f"• {n}" for n in pendientes)
-                        notificar_telegram(f"💸 Sin pago detectado este mes ({mes}):\n\n{lista}")
-                    con.execute(
-                        "INSERT INTO fin_servicios_estado (clave, valor) VALUES ('ultimo_aviso_mes', ?) "
-                        "ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor", (mes,))
-                    con.commit()
-                con.close()
+                with get_db(HIST_DB) as con:
+                    row = con.execute("SELECT valor FROM fin_servicios_estado WHERE clave='ultimo_aviso_mes'").fetchone()
+                    if not (row and row[0] == mes):
+                        estado = _estado_servicios_mes(con, mes)
+                        pendientes = [s["nombre"] for s in estado if not s["pagado"]]
+                        if pendientes:
+                            lista = "\n".join(f"• {n}" for n in pendientes)
+                            notificar_telegram(f"💸 Sin pago detectado este mes ({mes}):\n\n{lista}")
+                        con.execute(
+                            "INSERT INTO fin_servicios_estado (clave, valor) VALUES ('ultimo_aviso_mes', ?) "
+                            "ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor", (mes,))
         except Exception:
             logging.exception("Error en chequeo de recordatorio de servicios")
         _threading.Event().wait(3600)  # revisa cada hora
@@ -126,9 +124,8 @@ def _ejecutar_backup(origen="manual"):
             resultados[clave] = {"ok": True, "size_mb": round(os.path.getsize(dest) / (1024 * 1024), 2)}
         except Exception as e:
             resultados[clave] = {"ok": False, "error": str(e)}
-    con = sqlite3.connect(HIST_DB)
-    con.execute("INSERT INTO backups (origen, resultados) VALUES (?,?)", (origen, _json.dumps(resultados)))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        con.execute("INSERT INTO backups (origen, resultados) VALUES (?,?)", (origen, _json.dumps(resultados)))
     todo_ok = all(r["ok"] for r in resultados.values())
     logging.info(f"BACKUP {origen} | ok={todo_ok} | {resultados}")
     if todo_ok:
@@ -152,11 +149,10 @@ def _chequear_backup_automatico():
             hoy = datetime.now()
             if hoy.weekday() == 6 and hoy.hour == 2:  # domingo 02:xx
                 semana = hoy.strftime("%Y-W%W")
-                con = sqlite3.connect(HIST_DB)
-                row = con.execute(
-                    "SELECT fecha FROM backups WHERE origen='auto' ORDER BY fecha DESC LIMIT 1").fetchone()
+                with get_db(HIST_DB) as con:
+                    row = con.execute(
+                        "SELECT fecha FROM backups WHERE origen='auto' ORDER BY fecha DESC LIMIT 1").fetchone()
                 ya_corrio_esta_semana = row and datetime.strptime(row[0][:19], "%Y-%m-%d %H:%M:%S").strftime("%Y-W%W") == semana
-                con.close()
                 if not ya_corrio_esta_semana:
                     _ejecutar_backup(origen="auto")
         except Exception:
@@ -200,11 +196,10 @@ def _agregar_entradas_cronologia(con, tabla, entradas, fuente):
 def repositorio_list(modulo):
     if modulo not in MODULOS_REPOSITORIO or modulo not in session.get("modulos", []):
         return jsonify({"ok": False, "error": "Módulo no habilitado"}), 403
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = [dict(r) for r in con.execute(
-        "SELECT id, nombre_archivo, subido_por, creado, length(contenido) as tamano "
-        "FROM doc_repositorio WHERE modulo=? ORDER BY creado DESC", (modulo,)).fetchall()]
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute(
+            "SELECT id, nombre_archivo, subido_por, creado, length(contenido) as tamano "
+            "FROM doc_repositorio WHERE modulo=? ORDER BY creado DESC", (modulo,)).fetchall()]
     return jsonify({"ok": True, "rows": rows})
 
 @app.route("/api/repositorio/<modulo>", methods=["POST"])
@@ -235,22 +230,19 @@ def repositorio_upload(modulo):
     ruta_archivo = os.path.join(repo_dir, f"{uuid.uuid4().hex[:12]}_{nombre_seguro}")
     with open(ruta_archivo, "wb") as out:
         out.write(data_bytes)
-    con = sqlite3.connect(HIST_DB)
-    con.execute("INSERT INTO doc_repositorio (modulo, nombre_archivo, contenido, ruta_archivo, subido_por) VALUES (?,?,?,?,?)",
-        (modulo, f.filename, texto, ruta_archivo, session.get("username", "?")))
-    con.commit()
-    agregadas_cronologia = 0
-    error_cronologia = None
-    if modulo in MODULOS_CON_CRONOLOGIA:
-        try:
-            entradas = _extraer_cronologia_de_texto(texto, modulo)
-            agregadas_cronologia = _agregar_entradas_cronologia(
-                con, MODULOS_CON_CRONOLOGIA[modulo], entradas, f.filename)
-            con.commit()
-        except Exception as e:
-            logging.exception(f"Error extrayendo cronología de '{f.filename}' ({modulo})")
-            error_cronologia = str(e)
-    con.close()
+    with get_db(HIST_DB) as con:
+        con.execute("INSERT INTO doc_repositorio (modulo, nombre_archivo, contenido, ruta_archivo, subido_por) VALUES (?,?,?,?,?)",
+            (modulo, f.filename, texto, ruta_archivo, session.get("username", "?")))
+        agregadas_cronologia = 0
+        error_cronologia = None
+        if modulo in MODULOS_CON_CRONOLOGIA:
+            try:
+                entradas = _extraer_cronologia_de_texto(texto, modulo)
+                agregadas_cronologia = _agregar_entradas_cronologia(
+                    con, MODULOS_CON_CRONOLOGIA[modulo], entradas, f.filename)
+            except Exception as e:
+                logging.exception(f"Error extrayendo cronología de '{f.filename}' ({modulo})")
+                error_cronologia = str(e)
     logging.info(f"REPOSITORIO UPLOAD | modulo={modulo} | user={session.get('username')} | archivo={f.filename} | cronologia+={agregadas_cronologia}")
     msg = f"📁 Documento '{f.filename}' agregado al repositorio de {modulo} por {session.get('username')}"
     if agregadas_cronologia:
@@ -263,10 +255,9 @@ def repositorio_upload(modulo):
 def repositorio_delete(modulo, doc_id):
     if modulo not in MODULOS_REPOSITORIO or modulo not in session.get("modulos", []):
         return jsonify({"ok": False, "error": "Módulo no habilitado"}), 403
-    con = sqlite3.connect(HIST_DB)
-    row = con.execute("SELECT ruta_archivo FROM doc_repositorio WHERE id=? AND modulo=?", (doc_id, modulo)).fetchone()
-    con.execute("DELETE FROM doc_repositorio WHERE id=? AND modulo=?", (doc_id, modulo))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        row = con.execute("SELECT ruta_archivo FROM doc_repositorio WHERE id=? AND modulo=?", (doc_id, modulo)).fetchone()
+        con.execute("DELETE FROM doc_repositorio WHERE id=? AND modulo=?", (doc_id, modulo))
     if row and row[0] and os.path.exists(row[0]):
         try: os.remove(row[0])
         except Exception: pass
@@ -277,10 +268,9 @@ def repositorio_delete(modulo, doc_id):
 def repositorio_download(modulo, doc_id):
     if modulo not in MODULOS_REPOSITORIO or modulo not in session.get("modulos", []):
         return jsonify({"ok": False, "error": "Módulo no habilitado"}), 403
-    con = sqlite3.connect(HIST_DB)
-    row = con.execute("SELECT nombre_archivo, ruta_archivo FROM doc_repositorio WHERE id=? AND modulo=?",
-                       (doc_id, modulo)).fetchone()
-    con.close()
+    with get_db(HIST_DB) as con:
+        row = con.execute("SELECT nombre_archivo, ruta_archivo FROM doc_repositorio WHERE id=? AND modulo=?",
+                           (doc_id, modulo)).fetchone()
     if not row or not row[1] or not os.path.exists(row[1]):
         return jsonify({"ok": False, "error": "El archivo original ya no está disponible"}), 404
     return send_file(row[1], as_attachment=True, download_name=row[0])
@@ -295,9 +285,8 @@ def _limpiar_jobs_viejos():
         for k in viejos:
             job_status.pop(k, None)
         try:
-            con = sqlite3.connect(HIST_DB, timeout=10)
-            con.execute("DELETE FROM job_status_db WHERE ts < ?", (ahora - 7200,))
-            con.commit(); con.close()
+            with get_db(HIST_DB) as con:
+                con.execute("DELETE FROM job_status_db WHERE ts < ?", (ahora - 7200,))
         except Exception:
             logging.exception("No se pudo limpiar job_status_db")
 _threading.Thread(target=_limpiar_jobs_viejos, daemon=True).start()
@@ -530,283 +519,317 @@ def _seed_feriados(con):
     con.executemany("INSERT OR IGNORE INTO feriados (fecha, descripcion) VALUES (?,?)", datos)
 
 def init_historial():
-    con = sqlite3.connect(HIST_DB)
-    con.execute("""CREATE TABLE IF NOT EXISTS historial (
-        id TEXT PRIMARY KEY, fecha TEXT, usuario TEXT, pais TEXT,
-        anio TEXT, mes_d TEXT, mes_h TEXT, uso_ia INTEGER,
-        archivo_word TEXT, archivo_excel TEXT, revisado INTEGER DEFAULT 0,
-        tipo TEXT DEFAULT 'sintia', descripcion TEXT DEFAULT ''
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS vua_cronologia (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        fecha TEXT, actividad TEXT, participantes TEXT,
-        estado TEXT DEFAULT 'Pendiente', orden INTEGER DEFAULT 0,
-        creado TEXT, modificado TEXT
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS vua_minutas (
-        id TEXT PRIMARY KEY, fecha TEXT, asunto TEXT, lugar TEXT,
-        participantes TEXT, temas TEXT, acuerdos TEXT, proximos TEXT,
-        archivo TEXT, creado_por TEXT, creado TEXT
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS vua_ejes (
-        id TEXT PRIMARY KEY, nombre TEXT, estado TEXT, orden INTEGER DEFAULT 0
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS ref_aduanas (
-        cod TEXT PRIMARY KEY, nombre TEXT NOT NULL, indice_dira TEXT NOT NULL
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS ref_aduanas_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, usuario TEXT,
-        accion TEXT, detalle TEXT
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS ref_dira (
-        indice TEXT PRIMARY KEY, nombre TEXT NOT NULL, orden INTEGER DEFAULT 0
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS feriados (
-        fecha TEXT PRIMARY KEY, descripcion TEXT DEFAULT ''
-    )""")
-    cur_fer = con.cursor()
-    cur_fer.execute("SELECT COUNT(*) FROM feriados")
-    if cur_fer.fetchone()[0] == 0:
-        _seed_feriados(con)
-    cur_rd = con.cursor()
-    cur_rd.execute("SELECT COUNT(*) FROM ref_dira")
-    if cur_rd.fetchone()[0] == 0:
-        _seed_ref_dira(con)
-    cur_ra = con.cursor()
-    cur_ra.execute("SELECT COUNT(*) FROM ref_aduanas")
-    if cur_ra.fetchone()[0] == 0:
-        _seed_ref_aduanas(con)
-    cur = con.cursor()
-    cur.execute("SELECT COUNT(*) FROM vua_cronologia")
-    if cur.fetchone()[0] == 0:
-        # Bug encontrado en revisión: acá se llamaba a _seed_cronologia_vua(con),
-        # una función que nunca llegó a existir en el código (a diferencia de
-        # sus hermanas _seed_feriados/_seed_ref_dira/_seed_ref_aduanas, que sí
-        # están definidas más arriba). En una instalación EXISTENTE nunca se
-        # notó porque vua_cronologia ya tiene filas y este bloque se salteaba;
-        # pero en una instalación NUEVA (base vacía) esto tiraba NameError acá
-        # mismo, dentro de init_historial(), rompiendo el arranque de toda la
-        # app. No se inventan acá datos históricos falsos de la cronología VUA
-        # real (son hechos fechados específicos del proyecto, no algo que se
-        # pueda adivinar) — se deja vacía y se carga desde el módulo VUA.
-        logging.info("vua_cronologia está vacía — se deja sin sembrar (cargar desde el módulo VUA).")
-    cur.execute("SELECT COUNT(*) FROM vua_ejes")
-    if cur.fetchone()[0] == 0:
-        ejes = [
-            ("4.1","Transmisión de información anticipada — XML, sujetos obligados y marco sancionatorio","En análisis — requiere definición normativa",1),
-            ("4.2","Tablero de programación de vuelos","En análisis técnico interno",2),
-            ("4.3","Manifiesto de Exportación (MANE)","Pendiente — sin normativa vigente para IA de exportación",3),
-            ("4.4","Manifiestos desconsolidados de importación","Pendiente — sin normativa vigente",4),
-            ("4.5","Estándar de transmisión XML — Guía Madre (XFWB)","Postura definida — observaciones comunicadas a VUCEA",5),
-        ]
-        con.executemany("INSERT INTO vua_ejes VALUES (?,?,?,?)", ejes)
-    # ── Tablas de autenticación y sistema ────────────────────────────────────────
-    con.execute("""CREATE TABLE IF NOT EXISTS usuarios (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        rol TEXT DEFAULT 'viewer',
-        modulos TEXT DEFAULT 'sintia,vua,senasa',
-        activo INTEGER DEFAULT 1,
-        ultimo_acceso TEXT
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS sesiones (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        token TEXT UNIQUE NOT NULL,
-        username TEXT NOT NULL,
-        creado TEXT DEFAULT (datetime('now')),
-        ultimo_acceso TEXT DEFAULT (datetime('now')),
-        activo INTEGER DEFAULT 1
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS tokens_revocados (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        token TEXT UNIQUE NOT NULL,
-        revocado TEXT DEFAULT (datetime('now'))
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS prompts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nombre TEXT NOT NULL,
-        descripcion TEXT DEFAULT '',
-        modulo TEXT DEFAULT 'general',
-        contenido TEXT DEFAULT '',
-        modificado TEXT DEFAULT (datetime('now'))
-    )""")
-    # Seed: usuario admin por defecto si tabla vacía
-    cur_u = con.cursor()
-    cur_u.execute("SELECT COUNT(*) FROM usuarios")
-    if cur_u.fetchone()[0] == 0:
-        _temp_pass = secrets.token_urlsafe(12)
-        default_hash = bcrypt.hashpw(_temp_pass.encode(), bcrypt.gensalt()).decode()
-        con.execute("INSERT INTO usuarios (username, password_hash, rol, modulos) VALUES (?,?,?,?)",
-            ("admin", default_hash, "admin", "sintia,vua,senasa"))
-        logging.warning(f"SEED ADMIN | tabla 'usuarios' vacía — se creó 'admin' con password temporal: {_temp_pass} "
-                         f"(cambiarla inmediatamente después de loguear)")
+    with get_db(HIST_DB) as con:
+        con.execute("""CREATE TABLE IF NOT EXISTS historial (
+            id TEXT PRIMARY KEY, fecha TEXT, usuario TEXT, pais TEXT,
+            anio TEXT, mes_d TEXT, mes_h TEXT, uso_ia INTEGER,
+            archivo_word TEXT, archivo_excel TEXT, revisado INTEGER DEFAULT 0,
+            tipo TEXT DEFAULT 'sintia', descripcion TEXT DEFAULT ''
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS vua_cronologia (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha TEXT, actividad TEXT, participantes TEXT,
+            estado TEXT DEFAULT 'Pendiente', orden INTEGER DEFAULT 0,
+            creado TEXT, modificado TEXT
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS vua_minutas (
+            id TEXT PRIMARY KEY, fecha TEXT, asunto TEXT, lugar TEXT,
+            participantes TEXT, temas TEXT, acuerdos TEXT, proximos TEXT,
+            archivo TEXT, creado_por TEXT, creado TEXT
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS vua_ejes (
+            id TEXT PRIMARY KEY, nombre TEXT, estado TEXT, orden INTEGER DEFAULT 0,
+            descripcion TEXT DEFAULT '', propuesta_vucea TEXT DEFAULT '',
+            postura_aduana TEXT DEFAULT '', recomendacion TEXT DEFAULT ''
+        )""")
+        # Mismo caso que 'sesiones' más arriba: estas 4 columnas ya las usaba
+        # el código (vua_ejes_create/update, vua.html) pero el CREATE TABLE
+        # nunca las tuvo — en una instalación nueva, crear un eje tiraba
+        # "no such column: descripcion". ALTER TABLE de resguardo por si la
+        # base ya existía sin ellas.
+        for _col in ("descripcion", "propuesta_vucea", "postura_aduana", "recomendacion"):
+            try:
+                con.execute(f"ALTER TABLE vua_ejes ADD COLUMN {_col} TEXT DEFAULT ''")
+            except Exception:
+                pass  # ya existe
+        con.execute("""CREATE TABLE IF NOT EXISTS ref_aduanas (
+            cod TEXT PRIMARY KEY, nombre TEXT NOT NULL, indice_dira TEXT NOT NULL
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS ref_aduanas_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, usuario TEXT,
+            accion TEXT, detalle TEXT
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS ref_dira (
+            indice TEXT PRIMARY KEY, nombre TEXT NOT NULL, orden INTEGER DEFAULT 0
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS feriados (
+            fecha TEXT PRIMARY KEY, descripcion TEXT DEFAULT ''
+        )""")
+        cur_fer = con.cursor()
+        cur_fer.execute("SELECT COUNT(*) FROM feriados")
+        if cur_fer.fetchone()[0] == 0:
+            _seed_feriados(con)
+        cur_rd = con.cursor()
+        cur_rd.execute("SELECT COUNT(*) FROM ref_dira")
+        if cur_rd.fetchone()[0] == 0:
+            _seed_ref_dira(con)
+        cur_ra = con.cursor()
+        cur_ra.execute("SELECT COUNT(*) FROM ref_aduanas")
+        if cur_ra.fetchone()[0] == 0:
+            _seed_ref_aduanas(con)
+        cur = con.cursor()
+        cur.execute("SELECT COUNT(*) FROM vua_cronologia")
+        if cur.fetchone()[0] == 0:
+            # Bug encontrado en revisión: acá se llamaba a _seed_cronologia_vua(con),
+            # una función que nunca llegó a existir en el código (a diferencia de
+            # sus hermanas _seed_feriados/_seed_ref_dira/_seed_ref_aduanas, que sí
+            # están definidas más arriba). En una instalación EXISTENTE nunca se
+            # notó porque vua_cronologia ya tiene filas y este bloque se salteaba;
+            # pero en una instalación NUEVA (base vacía) esto tiraba NameError acá
+            # mismo, dentro de init_historial(), rompiendo el arranque de toda la
+            # app. No se inventan acá datos históricos falsos de la cronología VUA
+            # real (son hechos fechados específicos del proyecto, no algo que se
+            # pueda adivinar) — se deja vacía y se carga desde el módulo VUA.
+            logging.info("vua_cronologia está vacía — se deja sin sembrar (cargar desde el módulo VUA).")
+        cur.execute("SELECT COUNT(*) FROM vua_ejes")
+        if cur.fetchone()[0] == 0:
+            ejes = [
+                ("4.1","Transmisión de información anticipada — XML, sujetos obligados y marco sancionatorio","En análisis — requiere definición normativa",1),
+                ("4.2","Tablero de programación de vuelos","En análisis técnico interno",2),
+                ("4.3","Manifiesto de Exportación (MANE)","Pendiente — sin normativa vigente para IA de exportación",3),
+                ("4.4","Manifiestos desconsolidados de importación","Pendiente — sin normativa vigente",4),
+                ("4.5","Estándar de transmisión XML — Guía Madre (XFWB)","Postura definida — observaciones comunicadas a VUCEA",5),
+            ]
+            con.executemany("INSERT INTO vua_ejes (id, nombre, estado, orden) VALUES (?,?,?,?)", ejes)
+        # ── Tablas de autenticación y sistema ────────────────────────────────────────
+        con.execute("""CREATE TABLE IF NOT EXISTS usuarios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            rol TEXT DEFAULT 'viewer',
+            modulos TEXT DEFAULT 'sintia,vua,senasa',
+            activo INTEGER DEFAULT 1,
+            ultimo_acceso TEXT
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS sesiones (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token TEXT UNIQUE NOT NULL,
+            username TEXT NOT NULL,
+            ip TEXT DEFAULT '',
+            user_agent TEXT DEFAULT '',
+            creado TEXT DEFAULT (datetime('now')),
+            ultimo_acceso TEXT DEFAULT (datetime('now')),
+            activo INTEGER DEFAULT 1
+        )""")
+        # Columnas agregadas después de que esta tabla ya existía en producción
+        # (por eso CREATE TABLE IF NOT EXISTS no alcanza para instalaciones viejas) —
+        # bug encontrado en revisión: core.py.registrar_sesion() ya insertaba en
+        # ip/user_agent, y admin_sesiones_list() ya las leía, pero en una
+        # instalación NUEVA (base vacía) la tabla se creaba sin esas columnas.
+        # registrar_sesion() tiene un try/except a lo Pokémon, así que la falla
+        # quedaba silenciada — el login "funcionaba" pero ninguna sesión se
+        # registraba realmente, y /api/admin/sesiones directamente crasheaba.
+        for _col, _tipo in [("ip", "TEXT DEFAULT ''"), ("user_agent", "TEXT DEFAULT ''")]:
+            try:
+                con.execute(f"ALTER TABLE sesiones ADD COLUMN {_col} {_tipo}")
+            except Exception:
+                pass  # ya existe
+        con.execute("""CREATE TABLE IF NOT EXISTS tokens_revocados (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token TEXT UNIQUE NOT NULL,
+            revocado TEXT DEFAULT (datetime('now'))
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS prompts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL,
+            descripcion TEXT DEFAULT '',
+            modulo TEXT DEFAULT 'general',
+            contenido TEXT DEFAULT '',
+            modificado TEXT DEFAULT (datetime('now'))
+        )""")
+        # Seed: usuario admin por defecto si tabla vacía
+        cur_u = con.cursor()
+        cur_u.execute("SELECT COUNT(*) FROM usuarios")
+        if cur_u.fetchone()[0] == 0:
+            _temp_pass = secrets.token_urlsafe(12)
+            default_hash = bcrypt.hashpw(_temp_pass.encode(), bcrypt.gensalt()).decode()
+            con.execute("INSERT INTO usuarios (username, password_hash, rol, modulos) VALUES (?,?,?,?)",
+                ("admin", default_hash, "admin", "sintia,vua,senasa"))
+            # print() a stdout, no logging.warning(): un password (aunque sea
+            # temporal y de un solo uso) no debería terminar en un archivo de
+            # log ni en un sistema de logging centralizado si en algún momento
+            # se agrega uno — stdout del arranque es más efímero y solo lo ve
+            # quien está mirando la consola en ese momento. El log sí queda,
+            # pero sin el valor del password.
+            print(f"\n{'='*70}\nSEED ADMIN — usuario 'admin' creado con password temporal:\n"
+                  f"  {_temp_pass}\n"
+                  f"Cambiala inmediatamente después de loguear (Perfil > Cambiar contraseña).\n{'='*70}\n")
+            logging.warning("SEED ADMIN | tabla 'usuarios' vacía — se creó 'admin' con password temporal "
+                             "(ver stdout del arranque; no se guarda en el log).")
 
-    # ── Tabla compartida de integrantes (VUA, SENASA, SINTIA) ──────────────────
-    con.execute("""CREATE TABLE IF NOT EXISTS integrantes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nombre TEXT NOT NULL,
-        cargo TEXT DEFAULT '',
-        organismo TEXT DEFAULT '',
-        email TEXT DEFAULT '',
-        activo INTEGER DEFAULT 1,
-        orden INTEGER DEFAULT 0,
-        creado TEXT DEFAULT (datetime('now'))
-    )""")
-    # Migrar ROLES_PREDEFINIDOS a la tabla si está vacía
-    cur2 = con.cursor()
-    cur2.execute("SELECT COUNT(*) FROM integrantes")
-    if cur2.fetchone()[0] == 0:
-        roles_seed = [
-            ("Diego Bugallo",      "Jefe Dpto. Facilitación y Simplificación de Comercio", "DI REPA",  "", 1),
-            ("Martín Macías",      "Jefe Div. Modernización de Procesos Aduaneros",        "DI REPA",  "", 2),
-            ("Federico Cáceres",   "Sec. Simplificación de Procesos Operativos",           "DI REPA",  "", 3),
-            ("Hernán Cascón",      "Supervisor de Informática Aduanera",                   "DI SADU",  "", 4),
-            ("Maximiliano Luengo", "Consejero técnico",                                    "DI ADEZ",  "", 5),
-            ("Pablo Gómez Valdez", "Consejero técnico",                                    "DI ADEZ",  "", 6),
-            ("Fabiola Cochello",   "Directora",                                            "VUCEA",    "", 7),
-            ("Vanesa Franco",      "Jefa de Procesos",                                     "VUCEA",    "", 8),
-        ]
-        con.executemany(
-            "INSERT INTO integrantes (nombre, cargo, organismo, email, orden) VALUES (?,?,?,?,?)",
-            roles_seed)
+        # ── Tabla compartida de integrantes (VUA, SENASA, SINTIA) ──────────────────
+        con.execute("""CREATE TABLE IF NOT EXISTS integrantes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL,
+            cargo TEXT DEFAULT '',
+            organismo TEXT DEFAULT '',
+            email TEXT DEFAULT '',
+            activo INTEGER DEFAULT 1,
+            orden INTEGER DEFAULT 0,
+            creado TEXT DEFAULT (datetime('now'))
+        )""")
+        # Migrar ROLES_PREDEFINIDOS a la tabla si está vacía
+        cur2 = con.cursor()
+        cur2.execute("SELECT COUNT(*) FROM integrantes")
+        if cur2.fetchone()[0] == 0:
+            roles_seed = [
+                ("Diego Bugallo",      "Jefe Dpto. Facilitación y Simplificación de Comercio", "DI REPA",  "", 1),
+                ("Martín Macías",      "Jefe Div. Modernización de Procesos Aduaneros",        "DI REPA",  "", 2),
+                ("Federico Cáceres",   "Sec. Simplificación de Procesos Operativos",           "DI REPA",  "", 3),
+                ("Hernán Cascón",      "Supervisor de Informática Aduanera",                   "DI SADU",  "", 4),
+                ("Maximiliano Luengo", "Consejero técnico",                                    "DI ADEZ",  "", 5),
+                ("Pablo Gómez Valdez", "Consejero técnico",                                    "DI ADEZ",  "", 6),
+                ("Fabiola Cochello",   "Directora",                                            "VUCEA",    "", 7),
+                ("Vanesa Franco",      "Jefa de Procesos",                                     "VUCEA",    "", 8),
+            ]
+            con.executemany(
+                "INSERT INTO integrantes (nombre, cargo, organismo, email, orden) VALUES (?,?,?,?,?)",
+                roles_seed)
 
-    # Tablas VUA adicionales (pueden no existir en instalaciones anteriores)
-    con.execute("""CREATE TABLE IF NOT EXISTS vua_config (
-        clave TEXT PRIMARY KEY, titulo TEXT, contenido TEXT DEFAULT '',
-        modificado TEXT DEFAULT (datetime('now'))
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS vua_equipo (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nombre TEXT, cargo TEXT, organismo TEXT, email TEXT,
-        activo INTEGER DEFAULT 1, orden INTEGER DEFAULT 0
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS vua_glosario (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        termino TEXT, definicion TEXT, categoria TEXT DEFAULT 'general',
-        orden INTEGER DEFAULT 0
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS vua_riesgos (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        codigo TEXT, titulo TEXT, descripcion TEXT, mitigacion TEXT,
-        probabilidad TEXT DEFAULT 'Media', impacto TEXT DEFAULT 'Alto',
-        activo INTEGER DEFAULT 1, orden INTEGER DEFAULT 0
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS vua_info (
-        clave TEXT PRIMARY KEY, contenido TEXT DEFAULT '', modificado TEXT
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS vua_correos_rapidos (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        etiqueta TEXT, instruccion TEXT, activo INTEGER DEFAULT 1, orden INTEGER DEFAULT 0
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS vua_consultas_frecuentes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        pregunta TEXT, respuesta TEXT, activo INTEGER DEFAULT 1, orden INTEGER DEFAULT 0
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS doc_repositorio (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        modulo TEXT NOT NULL, nombre_archivo TEXT, contenido TEXT, ruta_archivo TEXT,
-        subido_por TEXT, creado TEXT DEFAULT (datetime('now'))
-    )""")
-    try:
-        con.execute("ALTER TABLE doc_repositorio ADD COLUMN ruta_archivo TEXT")
-    except sqlite3.OperationalError:
-        pass  # ya existe (instalación previa a este cambio)
-    con.execute("""CREATE TABLE IF NOT EXISTS fin_servicios (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nombre TEXT NOT NULL, patron TEXT, activo INTEGER DEFAULT 1, orden INTEGER DEFAULT 0
-    )""")
-    try:
-        con.execute("ALTER TABLE fin_servicios ADD COLUMN patron TEXT")
-    except sqlite3.OperationalError:
-        pass  # ya existe (instalación previa a este cambio)
-    con.execute("""CREATE TABLE IF NOT EXISTS fin_servicios_pagos (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        servicio_id INTEGER NOT NULL, mes TEXT NOT NULL,
-        pagado INTEGER DEFAULT 0, fecha_pago TEXT,
-        UNIQUE(servicio_id, mes)
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS fin_servicios_estado (
-        clave TEXT PRIMARY KEY, valor TEXT
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS backups (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        fecha TEXT DEFAULT (datetime('now')), origen TEXT, resultados TEXT
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS fin_tarjetas_montos (
-        tarjeta_id TEXT NOT NULL, mes TEXT NOT NULL, monto_a_pagar REAL DEFAULT 0,
-        UNIQUE(tarjeta_id, mes)
-    )""")
-    cur.execute("SELECT COUNT(*) FROM fin_servicios")
-    if cur.fetchone()[0] == 0:
-        for i, (nombre, patron) in enumerate([
-            ("Gas","gas"), ("Luz","edenor,edesur,luz"), ("Agua","aysa,agua"),
-            ("Internet","fibertel,telecentro,movistar,internet"), ("Expensas","expensa"),
-            ("Crédito","credito,préstamo,prestamo"), ("ABL","abl,rentas")
-        ]):
-            con.execute("INSERT INTO fin_servicios (nombre, patron, orden) VALUES (?,?,?)", (nombre, patron, i))
-    # Seed vua_config con claves mínimas si está vacía
-    cur.execute("SELECT COUNT(*) FROM vua_config")
-    if cur.fetchone()[0] == 0:
-        config_seed = [
-            ("resumen_ejecutivo", "Resumen Ejecutivo", ""),
-            ("antecedentes",      "Antecedentes",      ""),
-            ("objetivo",          "Objetivo del Proyecto", ""),
-            ("rol_dga",           "Rol de la DGA",     ""),
-            ("alcance_operativo", "Alcance Operativo", ""),
-        ]
-        con.executemany(
-            "INSERT OR IGNORE INTO vua_config (clave, titulo, contenido) VALUES (?,?,?)",
-            config_seed)
-    # ── Tablas SENASA ────────────────────────────────────────────────────────────
-    con.execute("""CREATE TABLE IF NOT EXISTS senasa_cronologia (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        fecha TEXT, actividad TEXT, participantes TEXT,
-        estado TEXT DEFAULT 'Pendiente', orden INTEGER DEFAULT 0,
-        creado TEXT DEFAULT (datetime('now')), modificado TEXT DEFAULT (datetime('now'))
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS senasa_ejes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nombre TEXT, descripcion TEXT, estado TEXT DEFAULT 'Pendiente',
-        orden INTEGER DEFAULT 0
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS senasa_minutas (
-        id TEXT PRIMARY KEY, fecha TEXT, asunto TEXT, lugar TEXT,
-        participantes TEXT, temas TEXT, conclusiones TEXT,
-        compromisos TEXT, proximos TEXT, archivo TEXT,
-        creado_por TEXT, creado TEXT DEFAULT (datetime('now'))
-    )""")
-    con.execute("""CREATE TABLE IF NOT EXISTS senasa_acuerdos (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        descripcion TEXT, responsable TEXT, fecha_compromiso TEXT,
-        estado TEXT DEFAULT 'Pendiente', orden INTEGER DEFAULT 0,
-        creado TEXT DEFAULT (datetime('now'))
-    )""")
-    # Seed ejes SENASA si está vacío
-    cur3 = con.cursor()
-    cur3.execute("SELECT COUNT(*) FROM senasa_ejes")
-    if cur3.fetchone()[0] == 0:
-        ejes_seed = [
-            ("Integración PAD", "Integración del Sistema de Información de Gestión (SIG-SENASA) con el Portal Aduanero Digital (PAD)", "En análisis", 1),
-            ("Embalajes de Madera (NIMF-15)", "Implementación del control de embalajes de madera en el circuito aduanero digital", "Pendiente", 2),
-            ("Intercambio de información", "Definición de protocolo de intercambio de datos entre SENASA y ARCA", "Pendiente", 3),
-            ("Normativa y procedimientos", "Revisión y actualización de normativa conjunta SENASA-ARCA para comercio exterior", "Pendiente", 4),
-        ]
-        con.executemany("INSERT INTO senasa_ejes (nombre, descripcion, estado, orden) VALUES (?,?,?,?)", ejes_seed)
-    con.commit(); con.close()
+        # Tablas VUA adicionales (pueden no existir en instalaciones anteriores)
+        con.execute("""CREATE TABLE IF NOT EXISTS vua_config (
+            clave TEXT PRIMARY KEY, titulo TEXT, contenido TEXT DEFAULT '',
+            modificado TEXT DEFAULT (datetime('now'))
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS vua_equipo (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT, cargo TEXT, organismo TEXT, email TEXT,
+            activo INTEGER DEFAULT 1, orden INTEGER DEFAULT 0
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS vua_glosario (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            termino TEXT, definicion TEXT, categoria TEXT DEFAULT 'general',
+            orden INTEGER DEFAULT 0
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS vua_riesgos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            codigo TEXT, titulo TEXT, descripcion TEXT, mitigacion TEXT,
+            probabilidad TEXT DEFAULT 'Media', impacto TEXT DEFAULT 'Alto',
+            activo INTEGER DEFAULT 1, orden INTEGER DEFAULT 0
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS vua_info (
+            clave TEXT PRIMARY KEY, contenido TEXT DEFAULT '', modificado TEXT
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS vua_correos_rapidos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            etiqueta TEXT, instruccion TEXT, activo INTEGER DEFAULT 1, orden INTEGER DEFAULT 0
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS vua_consultas_frecuentes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pregunta TEXT, respuesta TEXT, activo INTEGER DEFAULT 1, orden INTEGER DEFAULT 0
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS doc_repositorio (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            modulo TEXT NOT NULL, nombre_archivo TEXT, contenido TEXT, ruta_archivo TEXT,
+            subido_por TEXT, creado TEXT DEFAULT (datetime('now'))
+        )""")
+        try:
+            con.execute("ALTER TABLE doc_repositorio ADD COLUMN ruta_archivo TEXT")
+        except sqlite3.OperationalError:
+            pass  # ya existe (instalación previa a este cambio)
+        con.execute("""CREATE TABLE IF NOT EXISTS fin_servicios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL, patron TEXT, activo INTEGER DEFAULT 1, orden INTEGER DEFAULT 0
+        )""")
+        try:
+            con.execute("ALTER TABLE fin_servicios ADD COLUMN patron TEXT")
+        except sqlite3.OperationalError:
+            pass  # ya existe (instalación previa a este cambio)
+        con.execute("""CREATE TABLE IF NOT EXISTS fin_servicios_pagos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            servicio_id INTEGER NOT NULL, mes TEXT NOT NULL,
+            pagado INTEGER DEFAULT 0, fecha_pago TEXT,
+            UNIQUE(servicio_id, mes)
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS fin_servicios_estado (
+            clave TEXT PRIMARY KEY, valor TEXT
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS backups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha TEXT DEFAULT (datetime('now')), origen TEXT, resultados TEXT
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS fin_tarjetas_montos (
+            tarjeta_id TEXT NOT NULL, mes TEXT NOT NULL, monto_a_pagar REAL DEFAULT 0,
+            UNIQUE(tarjeta_id, mes)
+        )""")
+        cur.execute("SELECT COUNT(*) FROM fin_servicios")
+        if cur.fetchone()[0] == 0:
+            for i, (nombre, patron) in enumerate([
+                ("Gas","gas"), ("Luz","edenor,edesur,luz"), ("Agua","aysa,agua"),
+                ("Internet","fibertel,telecentro,movistar,internet"), ("Expensas","expensa"),
+                ("Crédito","credito,préstamo,prestamo"), ("ABL","abl,rentas")
+            ]):
+                con.execute("INSERT INTO fin_servicios (nombre, patron, orden) VALUES (?,?,?)", (nombre, patron, i))
+        # Seed vua_config con claves mínimas si está vacía
+        cur.execute("SELECT COUNT(*) FROM vua_config")
+        if cur.fetchone()[0] == 0:
+            config_seed = [
+                ("resumen_ejecutivo", "Resumen Ejecutivo", ""),
+                ("antecedentes",      "Antecedentes",      ""),
+                ("objetivo",          "Objetivo del Proyecto", ""),
+                ("rol_dga",           "Rol de la DGA",     ""),
+                ("alcance_operativo", "Alcance Operativo", ""),
+            ]
+            con.executemany(
+                "INSERT OR IGNORE INTO vua_config (clave, titulo, contenido) VALUES (?,?,?)",
+                config_seed)
+        # ── Tablas SENASA ────────────────────────────────────────────────────────────
+        con.execute("""CREATE TABLE IF NOT EXISTS senasa_cronologia (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha TEXT, actividad TEXT, participantes TEXT,
+            estado TEXT DEFAULT 'Pendiente', orden INTEGER DEFAULT 0,
+            creado TEXT DEFAULT (datetime('now')), modificado TEXT DEFAULT (datetime('now'))
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS senasa_ejes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT, descripcion TEXT, estado TEXT DEFAULT 'Pendiente',
+            orden INTEGER DEFAULT 0
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS senasa_minutas (
+            id TEXT PRIMARY KEY, fecha TEXT, asunto TEXT, lugar TEXT,
+            participantes TEXT, temas TEXT, conclusiones TEXT,
+            compromisos TEXT, proximos TEXT, archivo TEXT,
+            creado_por TEXT, creado TEXT DEFAULT (datetime('now'))
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS senasa_acuerdos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            descripcion TEXT, responsable TEXT, fecha_compromiso TEXT,
+            estado TEXT DEFAULT 'Pendiente', orden INTEGER DEFAULT 0,
+            creado TEXT DEFAULT (datetime('now'))
+        )""")
+        # Seed ejes SENASA si está vacío
+        cur3 = con.cursor()
+        cur3.execute("SELECT COUNT(*) FROM senasa_ejes")
+        if cur3.fetchone()[0] == 0:
+            ejes_seed = [
+                ("Integración PAD", "Integración del Sistema de Información de Gestión (SIG-SENASA) con el Portal Aduanero Digital (PAD)", "En análisis", 1),
+                ("Embalajes de Madera (NIMF-15)", "Implementación del control de embalajes de madera en el circuito aduanero digital", "Pendiente", 2),
+                ("Intercambio de información", "Definición de protocolo de intercambio de datos entre SENASA y ARCA", "Pendiente", 3),
+                ("Normativa y procedimientos", "Revisión y actualización de normativa conjunta SENASA-ARCA para comercio exterior", "Pendiente", 4),
+            ]
+            con.executemany("INSERT INTO senasa_ejes (nombre, descripcion, estado, orden) VALUES (?,?,?,?)", ejes_seed)
 
 def _migrar_fechas_cronologia():
     """Normaliza fechas ya guardadas en otros formatos (aaaa-mm-dd, aaaa/mm/dd, etc.)
     al estándar único dd/mm/aaaa."""
-    con = sqlite3.connect(HIST_DB)
-    for tabla in ("vua_cronologia", "senasa_cronologia"):
-        rows = con.execute(f"SELECT id, fecha FROM {tabla}").fetchall()
-        for rid, fecha in rows:
-            if not _validar_fecha_ddmmaaaa(fecha):
-                nueva = _normalizar_fecha_a_ddmmaaaa(fecha)
-                if nueva != fecha:
-                    con.execute(f"UPDATE {tabla} SET fecha=? WHERE id=?", (nueva, rid))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        for tabla in ("vua_cronologia", "senasa_cronologia"):
+            rows = con.execute(f"SELECT id, fecha FROM {tabla}").fetchall()
+            for rid, fecha in rows:
+                if not _validar_fecha_ddmmaaaa(fecha):
+                    nueva = _normalizar_fecha_a_ddmmaaaa(fecha)
+                    if nueva != fecha:
+                        con.execute(f"UPDATE {tabla} SET fecha=? WHERE id=?", (nueva, rid))
 
 init_historial()
 # _init_job_status_db() ya se ejecuta al importar core.py
@@ -820,9 +843,8 @@ _migrar_fechas_cronologia()
 for _db in (HIST_DB, DB_PATH):
     try:
         if os.path.exists(_db):
-            _con_wal = sqlite3.connect(_db, timeout=10)
-            _con_wal.execute("PRAGMA journal_mode=WAL")
-            _con_wal.close()
+            with get_db(_db) as _con_wal:
+                _con_wal.execute("PRAGMA journal_mode=WAL")
     except Exception:
         logging.exception(f"No se pudo activar WAL en {_db}")
 
@@ -839,40 +861,25 @@ def _migrar_usuarios_legacy():
     ]:
         if not _user or not _pass:
             continue
-        con = sqlite3.connect(HIST_DB)
-        existing = con.execute("SELECT username FROM usuarios WHERE username=?", (_user,)).fetchone()
-        if not existing:
-            # Detectar si ya es hash bcrypt o texto plano
-            if _pass.startswith("$2b$") or _pass.startswith("$2a$"):
-                _hash = _pass
-            else:
-                _hash = bcrypt.hashpw(_pass.encode(), bcrypt.gensalt()).decode()
-                logging.warning(f"LEGACY MIGRATION | usuario '{_user}' migrado desde APP_PASS (texto plano → bcrypt). "
-                                f"Se recomienda eliminar APP_PASS del entorno y gestionar usuarios desde la UI.")
-            con.execute("INSERT INTO usuarios (username, password_hash, rol, modulos) VALUES (?,?,?,?)",
-                        (_user, _hash, _rol, _mods))
-            con.commit()
-            logging.info(f"LEGACY MIGRATION | usuario '{_user}' creado en BD desde variables de entorno.")
-        con.close()
+        with get_db(HIST_DB) as con:
+            existing = con.execute("SELECT username FROM usuarios WHERE username=?", (_user,)).fetchone()
+            if not existing:
+                # Detectar si ya es hash bcrypt o texto plano
+                if _pass.startswith("$2b$") or _pass.startswith("$2a$"):
+                    _hash = _pass
+                else:
+                    _hash = bcrypt.hashpw(_pass.encode(), bcrypt.gensalt()).decode()
+                    logging.warning(f"LEGACY MIGRATION | usuario '{_user}' migrado desde APP_PASS (texto plano → bcrypt). "
+                                    f"Se recomienda eliminar APP_PASS del entorno y gestionar usuarios desde la UI.")
+                con.execute("INSERT INTO usuarios (username, password_hash, rol, modulos) VALUES (?,?,?,?)",
+                            (_user, _hash, _rol, _mods))
+                logging.info(f"LEGACY MIGRATION | usuario '{_user}' creado en BD desde variables de entorno.")
 
 _migrar_usuarios_legacy()
 
-# ── DB helper ──────────────────────────────────────────────────────────────────
-from contextlib import contextmanager
-
-@contextmanager
-def db_conn(path=None):
-    """Context manager para conexiones SQLite. Garantiza commit+close aunque haya excepción."""
-    con = sqlite3.connect(path or HIST_DB)
-    con.row_factory = sqlite3.Row
-    try:
-        yield con
-        con.commit()
-    except Exception:
-        con.rollback()
-        raise
-    finally:
-        con.close()
+# get_db() (importado de core/db_utils arriba) cumple esta misma función —
+# antes había acá una copia local idéntica llamada db_conn(), definida pero
+# nunca usada en ningún lado de este archivo (código muerto).
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -897,9 +904,8 @@ def login():
             session.permanent = True
             registrar_sesion(u, token, ip, ua)
             try:
-                con = sqlite3.connect(HIST_DB)
-                con.execute("UPDATE usuarios SET ultimo_acceso=datetime('now') WHERE username=?", (u,))
-                con.commit(); con.close()
+                with get_db(HIST_DB) as con:
+                    con.execute("UPDATE usuarios SET ultimo_acceso=datetime('now') WHERE username=?", (u,))
             except: pass
             logging.info("LOGIN OK | user=" + u + " | ip=" + ip)
             notificar_telegram(f"🔓 Login: {u} ({ip})")
@@ -934,14 +940,13 @@ def cambiar_password_propia():
         return jsonify({"ok": False, "error": "La contraseña nueva tiene que ser distinta de la actual"})
 
     hashed = bcrypt.hashpw(nueva.encode(), bcrypt.gensalt()).decode()
-    con = sqlite3.connect(HIST_DB)
-    con.execute("UPDATE usuarios SET password_hash=? WHERE username=?", (hashed, username))
-    # Revocar todas las sesiones de este usuario (incluida la actual) — todos
-    # los dispositivos tienen que volver a loguearse con la contraseña nueva.
-    tokens = [r[0] for r in con.execute("SELECT token FROM sesiones WHERE username=?", (username,))]
-    for t in tokens:
-        con.execute("INSERT OR IGNORE INTO tokens_revocados (token) VALUES (?)", (t,))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        con.execute("UPDATE usuarios SET password_hash=? WHERE username=?", (hashed, username))
+        # Revocar todas las sesiones de este usuario (incluida la actual) — todos
+        # los dispositivos tienen que volver a loguearse con la contraseña nueva.
+        tokens = [r[0] for r in con.execute("SELECT token FROM sesiones WHERE username=?", (username,))]
+        for t in tokens:
+            con.execute("INSERT OR IGNORE INTO tokens_revocados (token) VALUES (?)", (t,))
 
     session.clear()
     logging.info(f"PASSWORD PROPIO CAMBIADO | user={username}")
@@ -954,9 +959,8 @@ def health_check():
     """Chequeo mínimo, sin autenticación, pensado para monitoreo automático
     (uptime checks, balanceador de carga). No expone detalles internos."""
     try:
-        con = sqlite3.connect(HIST_DB, timeout=5)
-        con.execute("SELECT 1")
-        con.close()
+        with get_db(HIST_DB, timeout=5) as con:
+            con.execute("SELECT 1")
         return jsonify({"status": "ok", "ts": datetime.now().isoformat()})
     except Exception:
         return jsonify({"status": "error", "ts": datetime.now().isoformat()}), 503
@@ -973,9 +977,8 @@ def health_check_detalle():
     for nombre, ruta in [("historial_db", HIST_DB), ("pad_db", DB_PATH)]:
         try:
             if os.path.exists(ruta):
-                con = sqlite3.connect(ruta, timeout=5)
-                con.execute("SELECT 1")
-                con.close()
+                with get_db(ruta, timeout=5) as con:
+                    con.execute("SELECT 1")
                 detalle[nombre] = {"ok": True, "size_mb": round(os.path.getsize(ruta)/1024/1024, 1)}
             else:
                 detalle[nombre] = {"ok": False, "error": "archivo no existe"}
@@ -995,18 +998,16 @@ def health_check_detalle():
 
     # Último backup
     try:
-        con = sqlite3.connect(HIST_DB, timeout=5)
-        row = con.execute("SELECT fecha, origen FROM backups ORDER BY id DESC LIMIT 1").fetchone()
-        con.close()
+        with get_db(HIST_DB, timeout=5) as con:
+            row = con.execute("SELECT fecha, origen FROM backups ORDER BY id DESC LIMIT 1").fetchone()
         detalle["ultimo_backup"] = {"fecha": row[0], "origen": row[1]} if row else None
     except Exception as e:
         detalle["ultimo_backup"] = {"error": str(e)}
 
     # Último informe SINTIA generado
     try:
-        con = sqlite3.connect(HIST_DB, timeout=5)
-        row = con.execute("SELECT fecha, usuario, descripcion FROM historial WHERE tipo='sintia' ORDER BY fecha DESC LIMIT 1").fetchone()
-        con.close()
+        with get_db(HIST_DB, timeout=5) as con:
+            row = con.execute("SELECT fecha, usuario, descripcion FROM historial WHERE tipo='sintia' ORDER BY fecha DESC LIMIT 1").fetchone()
         detalle["ultimo_informe"] = {"fecha": row[0], "usuario": row[1], "descripcion": row[2]} if row else None
     except Exception as e:
         detalle["ultimo_informe"] = {"error": str(e)}
@@ -1047,11 +1048,10 @@ def index():
              "07":"Julio","08":"Agosto","09":"Septiembre","10":"Octubre","11":"Noviembre","12":"Diciembre"}
     pendientes = []
     try:
-        con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-        limite = (datetime.now()-timedelta(days=10)).strftime("%Y-%m-%d")
-        pendientes = [dict(r) for r in con.execute(
-            "SELECT * FROM historial WHERE revisado=0 AND fecha < ? ORDER BY fecha ASC",(limite,)).fetchall()]
-        con.close()
+        with get_db(HIST_DB, row_factory=True) as con:
+            limite = (datetime.now()-timedelta(days=10)).strftime("%Y-%m-%d")
+            pendientes = [dict(r) for r in con.execute(
+                "SELECT * FROM historial WHERE revisado=0 AND fecha < ? ORDER BY fecha ASC",(limite,)).fetchall()]
     except: pass
     return render_template("dashboard.html",
         db_exists=db_exists, db_size=db_size, now=hoy, mes_ult=mes_ult, meses=meses,
@@ -1064,14 +1064,14 @@ def index():
 def db_status():
     if not os.path.exists(DB_PATH): return jsonify({"exists":False})
     try:
-        con = sqlite3.connect(DB_PATH); cur = con.cursor()
-        cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        tables = [r[0] for r in cur.fetchall()]
-        info = {}
-        for t in tables:
-            try: cur.execute('SELECT COUNT(*) FROM "' + t.replace('"', '""') + '"'); info[t] = cur.fetchone()[0]
-            except: pass
-        con.close()
+        with get_db(DB_PATH) as con:
+            cur = con.cursor()
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = [r[0] for r in cur.fetchall()]
+            info = {}
+            for t in tables:
+                try: cur.execute('SELECT COUNT(*) FROM "' + t.replace('"', '""') + '"'); info[t] = cur.fetchone()[0]
+                except: pass
         return jsonify({"exists":True,"tables":info,"size_gb":round(os.path.getsize(DB_PATH)/(1024**3),2)})
     except Exception as e:
         return jsonify({"exists":True,"error":str(e)})
@@ -1134,16 +1134,14 @@ def limpiar_tabla():
         return jsonify({"ok": False, "error": f"Tabla no permitida: '{tabla}'"})
     if not os.path.exists(DB_PATH):
         return jsonify({"ok": False, "error": "La BD no está cargada"})
-    con = sqlite3.connect(DB_PATH)
-    cur = con.cursor()
-    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,))
-    if not cur.fetchone():
-        con.close()
-        return jsonify({"ok": False, "error": f"La tabla {tabla} no existe"})
-    cur.execute(f"SELECT COUNT(*) FROM {tabla}")
-    total_antes = cur.fetchone()[0]
-    cur.execute(f"DELETE FROM {tabla}")
-    con.commit(); con.close()
+    with get_db(DB_PATH) as con:
+        cur = con.cursor()
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,))
+        if not cur.fetchone():
+            return jsonify({"ok": False, "error": f"La tabla {tabla} no existe"})
+        cur.execute(f"SELECT COUNT(*) FROM {tabla}")
+        total_antes = cur.fetchone()[0]
+        cur.execute(f"DELETE FROM {tabla}")
     logging.info(f"LIMPIAR TABLA | tabla={tabla} | user={session.get('username')} | borrados={total_antes}")
     notificar_telegram(f"🗑️ Se vació la tabla {tabla} ({total_antes:,} registros borrados) por {session.get('username')}")
     return jsonify({"ok": True, "borrados": total_antes})
@@ -1153,9 +1151,8 @@ def limpiar_tabla():
 @admin_required("bd")
 def api_backup_estado():
     import json as _json
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    row = con.execute("SELECT fecha, resultados FROM backups ORDER BY fecha DESC LIMIT 1").fetchone()
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        row = con.execute("SELECT fecha, resultados FROM backups ORDER BY fecha DESC LIMIT 1").fetchone()
     ultimo = None
     if row:
         ultimo = {"fecha": row["fecha"], "resultados": _json.loads(row["resultados"])}
@@ -1468,12 +1465,11 @@ def run_job(job_id, pais, anio, mes_d, mes_h, usar_ia, username):
         hist_id = str(uuid.uuid4())[:8]
         word  = next((a for a in archivos if a.endswith(".docx")),"")
         excel = next((a for a in archivos if a.endswith(".xlsx")),"")
-        con = sqlite3.connect(HIST_DB)
-        con.execute("INSERT INTO historial VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (hist_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), username,
-             pais, anio, mes_d, mes_h, int(usar_ia), word, excel, 0, 'sintia',
-             f"{pais} {mes_d}-{mes_h}/{anio}"))
-        con.commit(); con.close()
+        with get_db(HIST_DB) as con:
+            con.execute("INSERT INTO historial VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (hist_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), username,
+                 pais, anio, mes_d, mes_h, int(usar_ia), word, excel, 0, 'sintia',
+                 f"{pais} {mes_d}-{mes_h}/{anio}"))
         logging.info(f"INFORME OK | user={username} | pais={pais} | {mes_d}-{mes_h}/{anio}")
         job_status[job_id]["status"] = "done"
         job_status[job_id]["files"]  = archivos
@@ -1540,10 +1536,9 @@ def download_file(job_id, idx):
 @admin_required("bd")
 def api_historial():
     try:
-        con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-        rows = [dict(r) for r in con.execute(
-            "SELECT * FROM historial ORDER BY fecha DESC LIMIT 100").fetchall()]
-        con.close()
+        with get_db(HIST_DB, row_factory=True) as con:
+            rows = [dict(r) for r in con.execute(
+                "SELECT * FROM historial ORDER BY fecha DESC LIMIT 100").fetchall()]
         return jsonify({"ok":True,"rows":rows})
     except Exception as e:
         return jsonify({"ok":False,"error":str(e)})
@@ -1560,43 +1555,42 @@ def historial_completo():
     limit   = min(int(request.args.get("limit", 50)), 200)
     offset  = int(request.args.get("offset", 0))
 
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = []
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = []
 
-    if tipo in ("todos", "sintia"):
-        where = ["1=1"]
-        params = []
-        if usuario: where.append("usuario=?"); params.append(usuario)
-        if desde:   where.append("fecha>=?"); params.append(desde)
-        if hasta:   where.append("fecha<=?"); params.append(hasta)
-        q = ("SELECT id, fecha, usuario, 'sintia' as tipo, "
-             "pais||' '||mes_d||'-'||mes_h||'/'||anio as descripcion, "
-             "archivo_word, archivo_excel, revisado FROM historial "
-             f"WHERE {' AND '.join(where)} ORDER BY fecha DESC LIMIT ? OFFSET ?")
-        rows += [dict(r) for r in con.execute(q, params+[limit, offset]).fetchall()]
+        if tipo in ("todos", "sintia"):
+            where = ["1=1"]
+            params = []
+            if usuario: where.append("usuario=?"); params.append(usuario)
+            if desde:   where.append("fecha>=?"); params.append(desde)
+            if hasta:   where.append("fecha<=?"); params.append(hasta)
+            q = ("SELECT id, fecha, usuario, 'sintia' as tipo, "
+                 "pais||' '||mes_d||'-'||mes_h||'/'||anio as descripcion, "
+                 "archivo_word, archivo_excel, revisado FROM historial "
+                 f"WHERE {' AND '.join(where)} ORDER BY fecha DESC LIMIT ? OFFSET ?")
+            rows += [dict(r) for r in con.execute(q, params+[limit, offset]).fetchall()]
 
-    if tipo in ("todos", "minuta"):
-        where = ["1=1"]
-        params = []
-        if usuario: where.append("creado_por=?"); params.append(usuario)
-        if desde:   where.append("creado>=?"); params.append(desde)
-        if hasta:   where.append("creado<=?"); params.append(hasta)
-        q = ("SELECT id, creado as fecha, creado_por as usuario, 'minuta' as tipo, "
-             "asunto as descripcion, archivo as archivo_word, '' as archivo_excel, 1 as revisado "
-             f"FROM vua_minutas WHERE {' AND '.join(where)} ORDER BY creado DESC LIMIT ? OFFSET ?")
-        rows += [dict(r) for r in con.execute(q, params+[limit, offset]).fetchall()]
+        if tipo in ("todos", "minuta"):
+            where = ["1=1"]
+            params = []
+            if usuario: where.append("creado_por=?"); params.append(usuario)
+            if desde:   where.append("creado>=?"); params.append(desde)
+            if hasta:   where.append("creado<=?"); params.append(hasta)
+            q = ("SELECT id, creado as fecha, creado_por as usuario, 'minuta' as tipo, "
+                 "asunto as descripcion, archivo as archivo_word, '' as archivo_excel, 1 as revisado "
+                 f"FROM vua_minutas WHERE {' AND '.join(where)} ORDER BY creado DESC LIMIT ? OFFSET ?")
+            rows += [dict(r) for r in con.execute(q, params+[limit, offset]).fetchall()]
 
-    if tipo in ("todos", "vua"):
-        where = ["h.tipo='vua'"] if "tipo" in con.execute("PRAGMA table_info(historial)").fetchone() or [] else []
-        # Informes VUA del historial general
-        q = ("SELECT id, fecha, usuario, 'vua' as tipo, descripcion, "
-             "archivo_word, '' as archivo_excel, revisado FROM historial "
-             "WHERE tipo='vua' ORDER BY fecha DESC LIMIT ? OFFSET ?")
-        try:
-            rows += [dict(r) for r in con.execute(q, [limit, offset]).fetchall()]
-        except: pass
+        if tipo in ("todos", "vua"):
+            where = ["h.tipo='vua'"] if "tipo" in con.execute("PRAGMA table_info(historial)").fetchone() or [] else []
+            # Informes VUA del historial general
+            q = ("SELECT id, fecha, usuario, 'vua' as tipo, descripcion, "
+                 "archivo_word, '' as archivo_excel, revisado FROM historial "
+                 "WHERE tipo='vua' ORDER BY fecha DESC LIMIT ? OFFSET ?")
+            try:
+                rows += [dict(r) for r in con.execute(q, [limit, offset]).fetchall()]
+            except: pass
 
-    con.close()
     todos = sorted(rows, key=lambda x: x.get("fecha",""), reverse=True)
     return jsonify({"ok": True, "rows": todos[:limit], "total": len(todos), "offset": offset})
 
@@ -1606,18 +1600,17 @@ def historial_completo():
 def revisar_historial(hist_id):
     accion = (request.json or {}).get("accion","conservar")
     try:
-        con = sqlite3.connect(HIST_DB)
-        if accion == "eliminar":
-            row = con.execute("SELECT archivo_word, archivo_excel FROM historial WHERE id=?",(hist_id,)).fetchone()
-            if row:
-                for f in [row[0],row[1]]:
-                    if f and os.path.exists(f):
-                        try: os.remove(f)
-                        except: pass
-            con.execute("DELETE FROM historial WHERE id=?",(hist_id,))
-        else:
-            con.execute("UPDATE historial SET revisado=1 WHERE id=?",(hist_id,))
-        con.commit(); con.close()
+        with get_db(HIST_DB) as con:
+            if accion == "eliminar":
+                row = con.execute("SELECT archivo_word, archivo_excel FROM historial WHERE id=?",(hist_id,)).fetchone()
+                if row:
+                    for f in [row[0],row[1]]:
+                        if f and os.path.exists(f):
+                            try: os.remove(f)
+                            except: pass
+                con.execute("DELETE FROM historial WHERE id=?",(hist_id,))
+            else:
+                con.execute("UPDATE historial SET revisado=1 WHERE id=?",(hist_id,))
         return jsonify({"ok":True})
     except Exception as e:
         return jsonify({"ok":False,"error":str(e)})
@@ -1627,9 +1620,8 @@ def revisar_historial(hist_id):
 @admin_required("bd")
 def download_historial(hist_id, tipo):
     try:
-        con = sqlite3.connect(HIST_DB)
-        row = con.execute("SELECT archivo_word, archivo_excel FROM historial WHERE id=?",(hist_id,)).fetchone()
-        con.close()
+        with get_db(HIST_DB) as con:
+            row = con.execute("SELECT archivo_word, archivo_excel FROM historial WHERE id=?",(hist_id,)).fetchone()
         if not row: return "No encontrado",404
         path = row[0] if tipo == "word" else row[1]
         if not path or not os.path.exists(path): return "Archivo no encontrado",404
@@ -1638,13 +1630,8 @@ def download_historial(hist_id, tipo):
 
 # MÓDULO VUA -> blueprints/vua.py (registrado como vua_bp)
 
-
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # MÓDULO SENASA -> blueprints/senasa.py (registrado como senasa_bp)
-
-    return jsonify({"ok": False, "error": "Archivo no encontrado. Regenerá el informe."}), 404
 
 # ── Integrantes compartidos (VUA, SENASA, SINTIA) ────────────────────────────
 @app.route("/api/integrantes", methods=["GET"])
@@ -1653,100 +1640,94 @@ def integrantes_list():
     """Lista integrantes activos. Fusiona vua_equipo si unified=1 (default)."""
     organismo = request.args.get("organismo", "")
     unified   = request.args.get("unified", "1")
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    q = "SELECT * FROM integrantes WHERE activo=1"
-    params = []
-    if organismo:
-        q += " AND organismo=?"; params.append(organismo)
-    q += " ORDER BY orden, organismo, nombre"
-    rows = [dict(r) for r in con.execute(q, params).fetchall()]
-    # Fusionar con vua_equipo si unified=1 y la tabla existe
-    if unified == "1":
-        try:
-            equipo = [dict(r) for r in con.execute(
-                "SELECT nombre, cargo, organismo, email FROM vua_equipo WHERE activo=1 ORDER BY organismo, nombre"
-            ).fetchall()]
-            nombres_existentes = {r["nombre"].lower() for r in rows}
-            for e in equipo:
-                if e["nombre"].lower() not in nombres_existentes:
-                    rows.append({"id": None, "nombre": e["nombre"], "cargo": e["cargo"],
-                                 "organismo": e["organismo"], "email": e.get("email",""),
-                                 "activo": 1, "orden": 999, "_origen": "vua_equipo"})
-        except Exception:
-            pass
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        q = "SELECT * FROM integrantes WHERE activo=1"
+        params = []
+        if organismo:
+            q += " AND organismo=?"; params.append(organismo)
+        q += " ORDER BY orden, organismo, nombre"
+        rows = [dict(r) for r in con.execute(q, params).fetchall()]
+        # Fusionar con vua_equipo si unified=1 y la tabla existe
+        if unified == "1":
+            try:
+                equipo = [dict(r) for r in con.execute(
+                    "SELECT nombre, cargo, organismo, email FROM vua_equipo WHERE activo=1 ORDER BY organismo, nombre"
+                ).fetchall()]
+                nombres_existentes = {r["nombre"].lower() for r in rows}
+                for e in equipo:
+                    if e["nombre"].lower() not in nombres_existentes:
+                        rows.append({"id": None, "nombre": e["nombre"], "cargo": e["cargo"],
+                                     "organismo": e["organismo"], "email": e.get("email",""),
+                                     "activo": 1, "orden": 999, "_origen": "vua_equipo"})
+            except Exception:
+                pass
     return jsonify({"ok": True, "rows": rows})
 
 @app.route("/api/integrantes/migrar-equipo", methods=["POST"])
 @login_required
 def integrantes_migrar_equipo():
     """Migra todos los registros de vua_equipo a integrantes (ejecutar una sola vez)."""
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
     try:
-        equipo = [dict(r) for r in con.execute(
-            "SELECT nombre, cargo, organismo, email FROM vua_equipo WHERE activo=1").fetchall()]
-        migrados = 0
-        for e in equipo:
-            existe = con.execute("SELECT id FROM integrantes WHERE LOWER(nombre)=LOWER(?)",
-                                 (e["nombre"],)).fetchone()
-            if not existe:
-                cur = con.cursor()
-                cur.execute("SELECT MAX(orden) FROM integrantes")
-                max_o = cur.fetchone()[0] or 0
-                con.execute("INSERT INTO integrantes (nombre,cargo,organismo,email,activo,orden) VALUES (?,?,?,?,1,?)",
-                    (e["nombre"], e["cargo"], e["organismo"], e.get("email",""), max_o+1))
-                migrados += 1
-        con.commit()
+        with get_db(HIST_DB, row_factory=True) as con:
+            equipo = [dict(r) for r in con.execute(
+                "SELECT nombre, cargo, organismo, email FROM vua_equipo WHERE activo=1").fetchall()]
+            migrados = 0
+            for e in equipo:
+                existe = con.execute("SELECT id FROM integrantes WHERE LOWER(nombre)=LOWER(?)",
+                                     (e["nombre"],)).fetchone()
+                if not existe:
+                    cur = con.cursor()
+                    cur.execute("SELECT MAX(orden) FROM integrantes")
+                    max_o = cur.fetchone()[0] or 0
+                    con.execute("INSERT INTO integrantes (nombre,cargo,organismo,email,activo,orden) VALUES (?,?,?,?,1,?)",
+                        (e["nombre"], e["cargo"], e["organismo"], e.get("email",""), max_o+1))
+                    migrados += 1
     except Exception as ex:
-        con.close()
         return jsonify({"ok": False, "error": str(ex)})
-    con.close()
     return jsonify({"ok": True, "migrados": migrados})
 
 @app.route("/api/integrantes", methods=["POST"])
 @login_required
 def integrantes_create():
     data = request.json or {}
-    con = sqlite3.connect(HIST_DB); cur = con.cursor()
-    cur.execute("SELECT MAX(orden) FROM integrantes")
-    max_orden = cur.fetchone()[0] or 0
-    cur.execute(
-        "INSERT INTO integrantes (nombre, cargo, organismo, email, activo, orden) VALUES (?,?,?,?,1,?)",
-        (data.get("nombre",""), data.get("cargo",""),
-         data.get("organismo",""), data.get("email",""), max_orden+1))
-    new_id = cur.lastrowid; con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        cur = con.cursor()
+        cur.execute("SELECT MAX(orden) FROM integrantes")
+        max_orden = cur.fetchone()[0] or 0
+        cur.execute(
+            "INSERT INTO integrantes (nombre, cargo, organismo, email, activo, orden) VALUES (?,?,?,?,1,?)",
+            (data.get("nombre",""), data.get("cargo",""),
+             data.get("organismo",""), data.get("email",""), max_orden+1))
+        new_id = cur.lastrowid
     return jsonify({"ok": True, "id": new_id})
 
 @app.route("/api/integrantes/<int:iid>", methods=["PUT"])
 @login_required
 def integrantes_update(iid):
     data = request.json or {}
-    con = sqlite3.connect(HIST_DB)
-    con.execute(
-        "UPDATE integrantes SET nombre=?, cargo=?, organismo=?, email=?, activo=? WHERE id=?",
-        (data.get("nombre",""), data.get("cargo",""),
-         data.get("organismo",""), data.get("email",""),
-         int(data.get("activo", 1)), iid))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        con.execute(
+            "UPDATE integrantes SET nombre=?, cargo=?, organismo=?, email=?, activo=? WHERE id=?",
+            (data.get("nombre",""), data.get("cargo",""),
+             data.get("organismo",""), data.get("email",""),
+             int(data.get("activo", 1)), iid))
     return jsonify({"ok": True})
 
 @app.route("/api/integrantes/<int:iid>", methods=["DELETE"])
 @login_required
 def integrantes_delete(iid):
-    con = sqlite3.connect(HIST_DB)
-    con.execute("UPDATE integrantes SET activo=0 WHERE id=?", (iid,))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        con.execute("UPDATE integrantes SET activo=0 WHERE id=?", (iid,))
     return jsonify({"ok": True})
 
 @app.route("/api/integrantes/organismos", methods=["GET"])
 @login_required
 def integrantes_organismos():
     """Lista los organismos únicos para el filtro del selector."""
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = [r[0] for r in con.execute(
-        "SELECT DISTINCT organismo FROM integrantes WHERE activo=1 AND organismo!='' ORDER BY organismo"
-    ).fetchall()]
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [r[0] for r in con.execute(
+            "SELECT DISTINCT organismo FROM integrantes WHERE activo=1 AND organismo!='' ORDER BY organismo"
+        ).fetchall()]
     return jsonify({"ok": True, "organismos": rows})
 
 # (bloque VUA -> blueprints/vua.py, ver más abajo)
@@ -1776,11 +1757,10 @@ def sintia_index():
 def admin_index():
     db_exists = os.path.exists(DB_PATH)
     db_size = round(os.path.getsize(DB_PATH)/1e9, 2) if db_exists else 0
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    pendientes = con.execute(
-        "SELECT * FROM historial WHERE revisado=0 AND "
-        "julianday('now') - julianday(fecha) > 10").fetchall()
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        pendientes = con.execute(
+            "SELECT * FROM historial WHERE revisado=0 AND "
+            "julianday('now') - julianday(fecha) > 10").fetchall()
     return render_template("admin.html",
         db_exists=db_exists, db_size=db_size, now=datetime.now(),
         pendientes=pendientes, username=session.get("username",""),
@@ -1791,10 +1771,10 @@ def admin_index():
 @login_required
 @admin_required("sistema")
 def admin_usuarios_list():
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = [dict(r) for r in con.execute(
-        "SELECT id, username, rol, modulos, activo, ultimo_acceso FROM usuarios ORDER BY id").fetchall()]
-    con.close(); return jsonify({"ok": True, "rows": rows})
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute(
+            "SELECT id, username, rol, modulos, activo, ultimo_acceso FROM usuarios ORDER BY id").fetchall()]
+    return jsonify({"ok": True, "rows": rows})
 
 @app.route("/api/admin/usuarios", methods=["POST"])
 @login_required
@@ -1814,10 +1794,9 @@ def admin_usuarios_create():
         return jsonify({"ok": False, "error": "Password minimo 8 caracteres"})
     hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
     try:
-        con = sqlite3.connect(HIST_DB)
-        con.execute("INSERT INTO usuarios (username, password_hash, rol, modulos, activo) VALUES (?,?,?,?,1)",
-            (username, hashed, rol, modulos))
-        con.commit(); con.close()
+        with get_db(HIST_DB) as con:
+            con.execute("INSERT INTO usuarios (username, password_hash, rol, modulos, activo) VALUES (?,?,?,?,1)",
+                (username, hashed, rol, modulos))
         logging.info(f"USUARIO CREATE | by={session.get('username')} | nuevo={username} | rol={rol} | modulos={modulos}")
         return jsonify({"ok": True})
     except Exception as e:
@@ -1828,22 +1807,19 @@ def admin_usuarios_create():
 @admin_required("sistema")
 def admin_usuarios_update(uid):
     data = request.json or {}
-    con = sqlite3.connect(HIST_DB)
-    fields = []; params = []
-    for f in ["rol","modulos","activo"]:
-        if f in data: fields.append(f + "=?"); params.append(data[f])
-    cambia_pass = "password" in data and data["password"]
-    if cambia_pass:
-        if len(data["password"]) < 8:
-            con.close()
-            return jsonify({"ok": False, "error": "La contraseña debe tener al menos 8 caracteres"})
-        hashed = bcrypt.hashpw(data["password"].encode(), bcrypt.gensalt()).decode()
-        fields.append("password_hash=?"); params.append(hashed)
-    if fields:
-        params.append(uid)
-        con.execute("UPDATE usuarios SET " + ", ".join(fields) + " WHERE id=?", params)
-        con.commit()
-    con.close()
+    with get_db(HIST_DB) as con:
+        fields = []; params = []
+        for f in ["rol","modulos","activo"]:
+            if f in data: fields.append(f + "=?"); params.append(data[f])
+        cambia_pass = "password" in data and data["password"]
+        if cambia_pass:
+            if len(data["password"]) < 8:
+                return jsonify({"ok": False, "error": "La contraseña debe tener al menos 8 caracteres"})
+            hashed = bcrypt.hashpw(data["password"].encode(), bcrypt.gensalt()).decode()
+            fields.append("password_hash=?"); params.append(hashed)
+        if fields:
+            params.append(uid)
+            con.execute("UPDATE usuarios SET " + ", ".join(fields) + " WHERE id=?", params)
     logging.info(f"USUARIO UPDATE | by={session.get('username')} | uid={uid} | campos={list(data.keys())}" +
                  (" | password cambiado" if cambia_pass else ""))
     return jsonify({"ok": True})
@@ -1852,9 +1828,8 @@ def admin_usuarios_update(uid):
 @login_required
 @admin_required("sistema")
 def admin_usuarios_delete(uid):
-    con = sqlite3.connect(HIST_DB)
-    con.execute("DELETE FROM usuarios WHERE id=?", (uid,))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        con.execute("DELETE FROM usuarios WHERE id=?", (uid,))
     logging.info(f"USUARIO DELETE | by={session.get('username')} | uid={uid}")
     return jsonify({"ok": True})
 
@@ -1863,11 +1838,10 @@ def admin_usuarios_delete(uid):
 @admin_required("sistema")
 def admin_sesiones_list():
     current_token = session.get("token","")
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = con.execute(
-        "SELECT username, SUBSTR(token,1,8)||'...' as token, ip, ultimo_acceso, token as full_token "
-        "FROM sesiones WHERE activo=1 ORDER BY ultimo_acceso DESC").fetchall()
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = con.execute(
+            "SELECT username, SUBSTR(token,1,8)||'...' as token, ip, ultimo_acceso, token as full_token "
+            "FROM sesiones WHERE activo=1 ORDER BY ultimo_acceso DESC").fetchall()
     result = []
     for r in rows:
         d = dict(r); d["es_propia"] = d.pop("full_token","") == current_token; result.append(d)
@@ -1877,40 +1851,39 @@ def admin_sesiones_list():
 @login_required
 @admin_required("sistema")
 def admin_sesiones_revocar(token_prefix):
-    con = sqlite3.connect(HIST_DB)
-    con.execute("UPDATE sesiones SET activo=0 WHERE token LIKE ?", (token_prefix + "%",))
-    con.execute("INSERT OR IGNORE INTO tokens_revocados (token) SELECT token FROM sesiones WHERE token LIKE ?",
-        (token_prefix + "%",))
-    con.commit(); con.close(); return jsonify({"ok": True})
+    with get_db(HIST_DB) as con:
+        con.execute("UPDATE sesiones SET activo=0 WHERE token LIKE ?", (token_prefix + "%",))
+        con.execute("INSERT OR IGNORE INTO tokens_revocados (token) SELECT token FROM sesiones WHERE token LIKE ?",
+            (token_prefix + "%",))
+    return jsonify({"ok": True})
 
 @app.route("/api/admin/sesiones/revocar-todas", methods=["POST"])
 @login_required
 @admin_required("sistema")
 def admin_sesiones_revocar_todas():
     current_token = session.get("token","")
-    con = sqlite3.connect(HIST_DB)
-    rows = con.execute("SELECT token FROM sesiones WHERE activo=1 AND token!=?", (current_token,)).fetchall()
-    for r in rows:
-        con.execute("INSERT OR IGNORE INTO tokens_revocados (token) VALUES (?)", (r[0],))
-    con.execute("UPDATE sesiones SET activo=0 WHERE token!=?", (current_token,))
-    con.commit(); con.close(); return jsonify({"ok": True, "revocadas": len(rows)})
+    with get_db(HIST_DB) as con:
+        rows = con.execute("SELECT token FROM sesiones WHERE activo=1 AND token!=?", (current_token,)).fetchall()
+        for r in rows:
+            con.execute("INSERT OR IGNORE INTO tokens_revocados (token) VALUES (?)", (r[0],))
+        con.execute("UPDATE sesiones SET activo=0 WHERE token!=?", (current_token,))
+    return jsonify({"ok": True, "revocadas": len(rows)})
 
 @app.route("/api/admin/prompts", methods=["GET"])
 @login_required
 @admin_required("sistema")
 def admin_prompts_list():
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = [dict(r) for r in con.execute(
-        "SELECT id, nombre, descripcion, modulo, modificado FROM prompts ORDER BY modulo, nombre").fetchall()]
-    con.close(); return jsonify({"ok": True, "rows": rows})
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute(
+            "SELECT id, nombre, descripcion, modulo, modificado FROM prompts ORDER BY modulo, nombre").fetchall()]
+    return jsonify({"ok": True, "rows": rows})
 
 @app.route("/api/admin/prompts/<int:pid>", methods=["GET"])
 @login_required
 @admin_required("sistema")
 def admin_prompts_get(pid):
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    row = con.execute("SELECT * FROM prompts WHERE id=?", (pid,)).fetchone()
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        row = con.execute("SELECT * FROM prompts WHERE id=?", (pid,)).fetchone()
     if not row: return jsonify({"ok": False, "error": "No encontrado"})
     return jsonify({"ok": True, "prompt": dict(row)})
 
@@ -1921,16 +1894,16 @@ def admin_prompts_update(pid):
     data = request.json or {}
     contenido = data.get("contenido","").strip()
     if not contenido: return jsonify({"ok": False, "error": "Contenido vacio"})
-    con = sqlite3.connect(HIST_DB)
-    con.execute("UPDATE prompts SET contenido=?, modificado=datetime('now') WHERE id=?", (contenido, pid))
-    con.commit(); con.close(); return jsonify({"ok": True})
+    with get_db(HIST_DB) as con:
+        con.execute("UPDATE prompts SET contenido=?, modificado=datetime('now') WHERE id=?", (contenido, pid))
+    return jsonify({"ok": True})
 
 # ── Helpers BD usuarios/sesiones ─────────────────────────────────────────────
 def get_user(username):
     try:
-        con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-        row = con.execute("SELECT * FROM usuarios WHERE username=? AND activo=1", (username,)).fetchone()
-        con.close(); return dict(row) if row else None
+        with get_db(HIST_DB, row_factory=True) as con:
+            row = con.execute("SELECT * FROM usuarios WHERE username=? AND activo=1", (username,)).fetchone()
+        return dict(row) if row else None
     except: return None
 
 # registrar_sesion / actualizar_sesion / token_revocado ahora viven en core.py
@@ -1962,75 +1935,73 @@ def sintia_dashboard():
         return jsonify({"ok": False, "error": "BD no cargada."})
     import datetime as _dt
     try:
-        con = sqlite3.connect(DB_PATH, timeout=10)
-        cur = con.cursor()
-        anio = _dt.date.today().year
-        tabla = f"DAT_{anio}"
-        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,))
-        if not cur.fetchone():
-            con.close()
-            return jsonify({"ok": False, "error": f"Tabla {tabla} no encontrada."})
+        with get_db(DB_PATH, timeout=10) as con:
+            cur = con.cursor()
+            anio = _dt.date.today().year
+            tabla = f"DAT_{anio}"
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,))
+            if not cur.fetchone():
+                return jsonify({"ok": False, "error": f"Tabla {tabla} no encontrada."})
 
-        hoy = _dt.date.today()
-        hoy_iso = hoy.isoformat()
-        d30 = (hoy - _dt.timedelta(days=30)).isoformat()
-        d60 = (hoy - _dt.timedelta(days=60)).isoformat()
-        d7  = (hoy - _dt.timedelta(days=7)).isoformat()
+            hoy = _dt.date.today()
+            hoy_iso = hoy.isoformat()
+            d30 = (hoy - _dt.timedelta(days=30)).isoformat()
+            d60 = (hoy - _dt.timedelta(days=60)).isoformat()
+            d7  = (hoy - _dt.timedelta(days=7)).isoformat()
 
-        cur.execute(f"SELECT COUNT(*) FROM {tabla} WHERE FECHA_INGRESO_ISO BETWEEN ? AND ?", (d30, hoy_iso))
-        total_mes = cur.fetchone()[0]
-        cur.execute(f"SELECT COUNT(*) FROM {tabla} WHERE FECHA_INGRESO_ISO BETWEEN ? AND ?", (d60, d30))
-        total_ant = cur.fetchone()[0]
+            cur.execute(f"SELECT COUNT(*) FROM {tabla} WHERE FECHA_INGRESO_ISO BETWEEN ? AND ?", (d30, hoy_iso))
+            total_mes = cur.fetchone()[0]
+            cur.execute(f"SELECT COUNT(*) FROM {tabla} WHERE FECHA_INGRESO_ISO BETWEEN ? AND ?", (d60, d30))
+            total_ant = cur.fetchone()[0]
 
-        paises = {"BO": "Bolivia", "PY": "Paraguay", "BR": "Brasil", "CL": "Chile", "UY": "Uruguay"}
-        por_pais = {}
-        for cod, nombre in paises.items():
-            cur.execute(f"SELECT COUNT(*) FROM {tabla} WHERE FECHA_INGRESO_ISO BETWEEN ? AND ? AND MIC LIKE ?", (d30, hoy_iso, f"%{cod}%"))
-            cnt = cur.fetchone()[0]
-            if cnt: por_pais[nombre] = cnt
-
-        cur.execute(f"SELECT EST_MIC, COUNT(*) as cnt FROM {tabla} WHERE FECHA_INGRESO_ISO BETWEEN ? AND ? GROUP BY EST_MIC ORDER BY cnt DESC", (d30, hoy_iso))
-        por_estado = {r[0]: r[1] for r in cur.fetchall() if r[0]}
-
-        rechazos_mes = 0
-        rechazos_7d  = 0
-        alerta_rechazos = False
-        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='RECHAZOS'")
-        if cur.fetchone():
-            cur.execute("SELECT COUNT(*) FROM RECHAZOS WHERE Fecha_ISO BETWEEN ? AND ?", (d30, hoy_iso))
-            rechazos_mes = cur.fetchone()[0]
-            cur.execute("SELECT COUNT(*) FROM RECHAZOS WHERE Fecha_ISO BETWEEN ? AND ?", (d7, hoy_iso))
-            rechazos_7d = cur.fetchone()[0]
-            prom_30 = rechazos_mes / 30
-            prom_7  = rechazos_7d / 7
-            alerta_rechazos = prom_7 > prom_30
-
-        cur.execute(f"SELECT ADUANA, COUNT(*) as cnt FROM {tabla} WHERE FECHA_INGRESO_ISO BETWEEN ? AND ? GROUP BY ADUANA ORDER BY cnt DESC LIMIT 6", (d30, hoy_iso))
-        top_aduanas = {r[0]: r[1] for r in cur.fetchall() if r[0]}
-
-        cur.execute(f"SELECT MAX(FECHA_INGRESO_ISO) FROM {tabla}")
-        ultima_fecha_bd = cur.fetchone()[0] or ''
-        dias_sin_actualizar = 0
-        if ultima_fecha_bd:
-            try:
-                uf = _dt.date.fromisoformat(ultima_fecha_bd[:10])
-                dias_sin_actualizar = (hoy - uf).days
-            except: pass
-
-        evolucion = []
-        for i in range(5, -1, -1):
-            d = (hoy.replace(day=1) - _dt.timedelta(days=1)) if i > 0 else hoy
-            for _ in range(i - 1):
-                d = (d.replace(day=1) - _dt.timedelta(days=1))
-            mes = d.strftime("%Y-%m")
-            label = d.strftime("%b %Y")
-            try:
-                cur.execute("SELECT COUNT(*) FROM RECHAZOS WHERE Fecha_ISO LIKE ?", (f"{mes}%",))
+            paises = {"BO": "Bolivia", "PY": "Paraguay", "BR": "Brasil", "CL": "Chile", "UY": "Uruguay"}
+            por_pais = {}
+            for cod, nombre in paises.items():
+                cur.execute(f"SELECT COUNT(*) FROM {tabla} WHERE FECHA_INGRESO_ISO BETWEEN ? AND ? AND MIC LIKE ?", (d30, hoy_iso, f"%{cod}%"))
                 cnt = cur.fetchone()[0]
-            except: cnt = 0
-            evolucion.append({"mes": label, "total": cnt})
+                if cnt: por_pais[nombre] = cnt
 
-        con.close()
+            cur.execute(f"SELECT EST_MIC, COUNT(*) as cnt FROM {tabla} WHERE FECHA_INGRESO_ISO BETWEEN ? AND ? GROUP BY EST_MIC ORDER BY cnt DESC", (d30, hoy_iso))
+            por_estado = {r[0]: r[1] for r in cur.fetchall() if r[0]}
+
+            rechazos_mes = 0
+            rechazos_7d  = 0
+            alerta_rechazos = False
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='RECHAZOS'")
+            if cur.fetchone():
+                cur.execute("SELECT COUNT(*) FROM RECHAZOS WHERE Fecha_ISO BETWEEN ? AND ?", (d30, hoy_iso))
+                rechazos_mes = cur.fetchone()[0]
+                cur.execute("SELECT COUNT(*) FROM RECHAZOS WHERE Fecha_ISO BETWEEN ? AND ?", (d7, hoy_iso))
+                rechazos_7d = cur.fetchone()[0]
+                prom_30 = rechazos_mes / 30
+                prom_7  = rechazos_7d / 7
+                alerta_rechazos = prom_7 > prom_30
+
+            cur.execute(f"SELECT ADUANA, COUNT(*) as cnt FROM {tabla} WHERE FECHA_INGRESO_ISO BETWEEN ? AND ? GROUP BY ADUANA ORDER BY cnt DESC LIMIT 6", (d30, hoy_iso))
+            top_aduanas = {r[0]: r[1] for r in cur.fetchall() if r[0]}
+
+            cur.execute(f"SELECT MAX(FECHA_INGRESO_ISO) FROM {tabla}")
+            ultima_fecha_bd = cur.fetchone()[0] or ''
+            dias_sin_actualizar = 0
+            if ultima_fecha_bd:
+                try:
+                    uf = _dt.date.fromisoformat(ultima_fecha_bd[:10])
+                    dias_sin_actualizar = (hoy - uf).days
+                except: pass
+
+            evolucion = []
+            for i in range(5, -1, -1):
+                d = (hoy.replace(day=1) - _dt.timedelta(days=1)) if i > 0 else hoy
+                for _ in range(i - 1):
+                    d = (d.replace(day=1) - _dt.timedelta(days=1))
+                mes = d.strftime("%Y-%m")
+                label = d.strftime("%b %Y")
+                try:
+                    cur.execute("SELECT COUNT(*) FROM RECHAZOS WHERE Fecha_ISO LIKE ?", (f"{mes}%",))
+                    cnt = cur.fetchone()[0]
+                except: cnt = 0
+                evolucion.append({"mes": label, "total": cnt})
+
         return jsonify({
             "ok": True,
             "label_actual": "Últimos 30 días",
@@ -2097,40 +2068,37 @@ def sintia_dat_query():
     tabla, anio = _resolver_tabla_dat(p)
 
     try:
-        con = sqlite3.connect(DB_PATH)
-        con.row_factory = sqlite3.Row
-        cur = con.cursor()
-        # Verificar que la tabla existe
-        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,))
-        if not cur.fetchone():
-            con.close()
-            return jsonify({"ok": False, "error": f"Tabla {tabla} no encontrada en la BD."})
+        with get_db(DB_PATH, row_factory=True) as con:
+            cur = con.cursor()
+            # Verificar que la tabla existe
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,))
+            if not cur.fetchone():
+                return jsonify({"ok": False, "error": f"Tabla {tabla} no encontrada en la BD."})
 
-        sql = f"SELECT * FROM {tabla} {where} LIMIT ? OFFSET ?"
-        page_size = int(p.get("page_size", 500))
-        offset    = int(p.get("offset", 0))
-        cur.execute(sql, params + [page_size + 1, offset])
-        rows_raw = cur.fetchall()
+            sql = f"SELECT * FROM {tabla} {where} LIMIT ? OFFSET ?"
+            page_size = int(p.get("page_size", 500))
+            offset    = int(p.get("offset", 0))
+            cur.execute(sql, params + [page_size + 1, offset])
+            rows_raw = cur.fetchall()
 
-        cols = list(rows_raw[0].keys()) if rows_raw else []
-        truncated = len(rows_raw) > page_size
-        rows = [list(r) for r in rows_raw[:page_size]]
+            cols = list(rows_raw[0].keys()) if rows_raw else []
+            truncated = len(rows_raw) > page_size
+            rows = [list(r) for r in rows_raw[:page_size]]
 
-        resumen = {"por_pais": {}, "por_estado": {}, "total": 0}
-        try:
-            cur.execute(f"SELECT COUNT(*) FROM {tabla} {where}", params)
-            resumen["total"] = cur.fetchone()[0]
-            paises = {"Bolivia": "BO", "Paraguay": "PY", "Brasil": "BR", "Chile": "CL", "Uruguay": "UY"}
-            for nombre, cod in paises.items():
-                cur.execute(f"SELECT COUNT(*) FROM {tabla} {where} {'AND' if conditions else 'WHERE'} MIC LIKE ?", params + [f"%{cod}%"])
-                cnt = cur.fetchone()[0]
-                if cnt: resumen["por_pais"][nombre] = cnt
-            cur.execute(f"SELECT EST_MIC, COUNT(*) as cnt FROM {tabla} {where} GROUP BY EST_MIC ORDER BY cnt DESC", params)
-            resumen["por_estado"] = {r[0]: r[1] for r in cur.fetchall()}
-        except Exception as e:
-            logging.warning(f"DAT RESUMEN ERROR | {e}")
+            resumen = {"por_pais": {}, "por_estado": {}, "total": 0}
+            try:
+                cur.execute(f"SELECT COUNT(*) FROM {tabla} {where}", params)
+                resumen["total"] = cur.fetchone()[0]
+                paises = {"Bolivia": "BO", "Paraguay": "PY", "Brasil": "BR", "Chile": "CL", "Uruguay": "UY"}
+                for nombre, cod in paises.items():
+                    cur.execute(f"SELECT COUNT(*) FROM {tabla} {where} {'AND' if conditions else 'WHERE'} MIC LIKE ?", params + [f"%{cod}%"])
+                    cnt = cur.fetchone()[0]
+                    if cnt: resumen["por_pais"][nombre] = cnt
+                cur.execute(f"SELECT EST_MIC, COUNT(*) as cnt FROM {tabla} {where} GROUP BY EST_MIC ORDER BY cnt DESC", params)
+                resumen["por_estado"] = {r[0]: r[1] for r in cur.fetchall()}
+            except Exception as e:
+                logging.warning(f"DAT RESUMEN ERROR | {e}")
 
-        con.close()
         return jsonify({"ok": True, "cols": cols, "rows": rows, "truncated": truncated,
                         "resumen": resumen, "offset": offset, "page_size": page_size})
 
@@ -2167,31 +2135,29 @@ def sintia_rec_query():
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
     try:
-        con = sqlite3.connect(DB_PATH)
-        con.row_factory = sqlite3.Row
-        cur = con.cursor()
-        page_size = int(p.get("page_size", 500))
-        offset    = int(p.get("offset", 0))
-        sql = f"SELECT PaisEmisor, Anio, NroMic, Fecha_ISO, Mes, Metodo, Mensaje FROM RECHAZOS {where} ORDER BY Fecha_ISO DESC LIMIT ? OFFSET ?"
-        cur.execute(sql, params + [page_size + 1, offset])
-        rows_raw = cur.fetchall()
+        with get_db(DB_PATH, row_factory=True) as con:
+            cur = con.cursor()
+            page_size = int(p.get("page_size", 500))
+            offset    = int(p.get("offset", 0))
+            sql = f"SELECT PaisEmisor, Anio, NroMic, Fecha_ISO, Mes, Metodo, Mensaje FROM RECHAZOS {where} ORDER BY Fecha_ISO DESC LIMIT ? OFFSET ?"
+            cur.execute(sql, params + [page_size + 1, offset])
+            rows_raw = cur.fetchall()
 
-        cols = list(rows_raw[0].keys()) if rows_raw else []
-        truncated = len(rows_raw) > page_size
-        rows = [list(r) for r in rows_raw[:page_size]]
+            cols = list(rows_raw[0].keys()) if rows_raw else []
+            truncated = len(rows_raw) > page_size
+            rows = [list(r) for r in rows_raw[:page_size]]
 
-        resumen = {"por_pais": {}, "por_metodo": {}, "total": 0}
-        try:
-            cur.execute(f"SELECT COUNT(*) FROM RECHAZOS {where}", params)
-            resumen["total"] = cur.fetchone()[0]
-            cur.execute(f"SELECT PaisEmisor, COUNT(*) as cnt FROM RECHAZOS {where} GROUP BY PaisEmisor ORDER BY cnt DESC", params)
-            resumen["por_pais"] = {r[0]: r[1] for r in cur.fetchall()}
-            cur.execute(f"SELECT Metodo, COUNT(*) as cnt FROM RECHAZOS {where} GROUP BY Metodo ORDER BY cnt DESC LIMIT 6", params)
-            resumen["por_metodo"] = {r[0]: r[1] for r in cur.fetchall()}
-        except Exception as e:
-            logging.warning(f"REC RESUMEN ERROR | {e}")
+            resumen = {"por_pais": {}, "por_metodo": {}, "total": 0}
+            try:
+                cur.execute(f"SELECT COUNT(*) FROM RECHAZOS {where}", params)
+                resumen["total"] = cur.fetchone()[0]
+                cur.execute(f"SELECT PaisEmisor, COUNT(*) as cnt FROM RECHAZOS {where} GROUP BY PaisEmisor ORDER BY cnt DESC", params)
+                resumen["por_pais"] = {r[0]: r[1] for r in cur.fetchall()}
+                cur.execute(f"SELECT Metodo, COUNT(*) as cnt FROM RECHAZOS {where} GROUP BY Metodo ORDER BY cnt DESC LIMIT 6", params)
+                resumen["por_metodo"] = {r[0]: r[1] for r in cur.fetchall()}
+            except Exception as e:
+                logging.warning(f"REC RESUMEN ERROR | {e}")
 
-        con.close()
         return jsonify({"ok": True, "cols": cols, "rows": rows, "truncated": truncated,
                         "resumen": resumen, "offset": offset, "page_size": page_size})
 
@@ -2234,10 +2200,10 @@ def sintia_dat_export():
     tabla, anio = _resolver_tabla_dat(p)
 
     try:
-        con = sqlite3.connect(DB_PATH); con.row_factory = sqlite3.Row
-        cur = con.cursor()
-        cur.execute(f"SELECT * FROM {tabla} {where}", params)
-        rows_raw = cur.fetchall(); con.close()
+        with get_db(DB_PATH, row_factory=True) as con:
+            cur = con.cursor()
+            cur.execute(f"SELECT * FROM {tabla} {where}", params)
+            rows_raw = cur.fetchall()
         cols = list(rows_raw[0].keys()) if rows_raw else []
         rows = [list(r) for r in rows_raw]
         buf = _exportar_xlsx(cols, rows)
@@ -2270,10 +2236,10 @@ def sintia_rec_export():
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
     try:
-        con = sqlite3.connect(DB_PATH); con.row_factory = sqlite3.Row
-        cur = con.cursor()
-        cur.execute(f"SELECT PaisEmisor, Anio, NroMic, Fecha_ISO, Mes, Metodo, Mensaje FROM RECHAZOS {where} ORDER BY Fecha_ISO DESC", params)
-        rows_raw = cur.fetchall(); con.close()
+        with get_db(DB_PATH, row_factory=True) as con:
+            cur = con.cursor()
+            cur.execute(f"SELECT PaisEmisor, Anio, NroMic, Fecha_ISO, Mes, Metodo, Mensaje FROM RECHAZOS {where} ORDER BY Fecha_ISO DESC", params)
+            rows_raw = cur.fetchall()
         cols = list(rows_raw[0].keys()) if rows_raw else []
         rows = [list(r) for r in rows_raw]
         buf = _exportar_xlsx(cols, rows)
@@ -2299,19 +2265,17 @@ def sintia_rec_export():
 
 def _get_dira_nombres():
     """Lee el dict {indice: nombre} de direcciones regionales desde ref_dira (BD)."""
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = con.execute("SELECT indice, nombre FROM ref_dira ORDER BY orden, indice").fetchall()
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = con.execute("SELECT indice, nombre FROM ref_dira ORDER BY orden, indice").fetchall()
     return {r["indice"]: r["nombre"] for r in rows}
 
 @app.route("/api/admin/ref-dira")
 @login_required
 def ref_dira_list():
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = [dict(r) for r in con.execute(
-        "SELECT indice, nombre, orden FROM ref_dira ORDER BY orden, indice"
-    ).fetchall()]
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute(
+            "SELECT indice, nombre, orden FROM ref_dira ORDER BY orden, indice"
+        ).fetchall()]
     return jsonify({"ok": True, "rows": rows})
 
 @app.route("/api/admin/ref-dira/save", methods=["POST"])
@@ -2326,58 +2290,55 @@ def ref_dira_save():
         return jsonify({"ok": False, "error": "No se recibieron filas para guardar"}), 400
 
     # Validar que ningún índice a eliminar siga referenciado en ref_aduanas
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    indices_en_uso = {r["indice_dira"] for r in con.execute("SELECT DISTINCT indice_dira FROM ref_aduanas").fetchall()}
+    with get_db(HIST_DB, row_factory=True) as con:
+        indices_en_uso = {r["indice_dira"] for r in con.execute("SELECT DISTINCT indice_dira FROM ref_aduanas").fetchall()}
 
-    nuevos = []
-    errores = []
-    indices_vistos = set()
-    for i, row in enumerate(rows, 1):
-        try:
-            indice = str(row.get("indice", "")).strip()
-            nombre = str(row.get("nombre", "")).strip().upper()
+        nuevos = []
+        errores = []
+        indices_vistos = set()
+        for i, row in enumerate(rows, 1):
             try:
-                orden = int(row.get("orden", i))
-            except (TypeError, ValueError):
-                orden = i
-            if not indice:
-                errores.append(f"Fila {i}: índice vacío")
-                continue
-            if not nombre:
-                errores.append(f"Fila {i} (índice {indice}): nombre vacío")
-                continue
-            if indice in indices_vistos:
-                errores.append(f"Fila {i}: índice '{indice}' duplicado — se mantiene la última ocurrencia")
-            indices_vistos.add(indice)
-            nuevos.append((indice, nombre, orden))
-        except Exception as e:
-            errores.append(f"Fila {i}: {e}")
+                indice = str(row.get("indice", "")).strip()
+                nombre = str(row.get("nombre", "")).strip().upper()
+                try:
+                    orden = int(row.get("orden", i))
+                except (TypeError, ValueError):
+                    orden = i
+                if not indice:
+                    errores.append(f"Fila {i}: índice vacío")
+                    continue
+                if not nombre:
+                    errores.append(f"Fila {i} (índice {indice}): nombre vacío")
+                    continue
+                if indice in indices_vistos:
+                    errores.append(f"Fila {i}: índice '{indice}' duplicado — se mantiene la última ocurrencia")
+                indices_vistos.add(indice)
+                nuevos.append((indice, nombre, orden))
+            except Exception as e:
+                errores.append(f"Fila {i}: {e}")
 
-    if not nuevos:
-        con.close()
-        return jsonify({"ok": False, "error": "Ninguna fila válida para guardar", "detalle_errores": errores}), 400
+        if not nuevos:
+            return jsonify({"ok": False, "error": "Ninguna fila válida para guardar", "detalle_errores": errores}), 400
 
-    dedup = {}
-    for indice, nombre, orden in nuevos:
-        dedup[indice] = (nombre, orden)
-    nuevos_dedup = [(indice, n, o) for indice, (n, o) in dedup.items()]
-    indices_finales = set(dedup.keys())
+        dedup = {}
+        for indice, nombre, orden in nuevos:
+            dedup[indice] = (nombre, orden)
+        nuevos_dedup = [(indice, n, o) for indice, (n, o) in dedup.items()]
+        indices_finales = set(dedup.keys())
 
-    # Bloquear si se eliminaría un índice DIRA que todavía usa alguna aduana
-    indices_eliminados = indices_en_uso - indices_finales
-    if indices_eliminados:
-        con.close()
-        return jsonify({
-            "ok": False,
-            "error": f"No se puede eliminar el/los índice(s) {', '.join(sorted(indices_eliminados))} porque hay aduanas que todavía los usan. Reasigná esas aduanas primero en Ref. Aduanas."
-        }), 400
+        # Bloquear si se eliminaría un índice DIRA que todavía usa alguna aduana
+        indices_eliminados = indices_en_uso - indices_finales
+        if indices_eliminados:
+            return jsonify({
+                "ok": False,
+                "error": f"No se puede eliminar el/los índice(s) {', '.join(sorted(indices_eliminados))} porque hay aduanas que todavía los usan. Reasigná esas aduanas primero en Ref. Aduanas."
+            }), 400
 
-    con.execute("DELETE FROM ref_dira")
-    con.executemany("INSERT INTO ref_dira (indice, nombre, orden) VALUES (?,?,?)", nuevos_dedup)
-    con.execute("INSERT INTO ref_aduanas_log (fecha, usuario, accion, detalle) VALUES (datetime('now'),?,?,?)",
-                (session.get("username","?"), "save_ref_dira",
-                 f"{len(nuevos_dedup)} direcciones regionales guardadas" + (f", {len(errores)} filas con error" if errores else "")))
-    con.commit(); con.close()
+        con.execute("DELETE FROM ref_dira")
+        con.executemany("INSERT INTO ref_dira (indice, nombre, orden) VALUES (?,?,?)", nuevos_dedup)
+        con.execute("INSERT INTO ref_aduanas_log (fecha, usuario, accion, detalle) VALUES (datetime('now'),?,?,?)",
+                    (session.get("username","?"), "save_ref_dira",
+                     f"{len(nuevos_dedup)} direcciones regionales guardadas" + (f", {len(errores)} filas con error" if errores else "")))
     logging.info(f"REF_DIRA SAVE | user={session.get('username')} | {len(nuevos_dedup)} filas | {len(errores)} errores")
     return jsonify({"ok": True, "guardadas": len(nuevos_dedup), "errores": errores[:30]})
 
@@ -2385,11 +2346,10 @@ def ref_dira_save():
 @login_required
 def ref_aduanas_list():
     dira_nombres = _get_dira_nombres()
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = [dict(r) for r in con.execute(
-        "SELECT cod, nombre, indice_dira FROM ref_aduanas ORDER BY indice_dira, nombre"
-    ).fetchall()]
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute(
+            "SELECT cod, nombre, indice_dira FROM ref_aduanas ORDER BY indice_dira, nombre"
+        ).fetchall()]
     for r in rows:
         r["dira_nombre"] = dira_nombres.get(r["indice_dira"], "N/E")
     return jsonify({"ok": True, "rows": rows, "dira_nombres": dira_nombres})
@@ -2398,9 +2358,8 @@ def ref_aduanas_list():
 @login_required
 def ref_aduanas_download():
     """Descarga la tabla actual en el mismo formato CSV de referencia (; como separador)."""
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = con.execute("SELECT cod, nombre, indice_dira FROM ref_aduanas ORDER BY indice_dira, nombre").fetchall()
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = con.execute("SELECT cod, nombre, indice_dira FROM ref_aduanas ORDER BY indice_dira, nombre").fetchall()
     lines = ["indice_dira;nombre;cod"]
     for r in rows:
         lines.append(f"{r['indice_dira']};{r['nombre']};{int(r['cod'])}")
@@ -2454,13 +2413,12 @@ def ref_aduanas_save():
         dedup[cod] = (nombre, indice_dira)
     nuevos_dedup = [(cod, n, d) for cod, (n, d) in dedup.items()]
 
-    con = sqlite3.connect(HIST_DB)
-    con.execute("DELETE FROM ref_aduanas")
-    con.executemany("INSERT INTO ref_aduanas (cod, nombre, indice_dira) VALUES (?,?,?)", nuevos_dedup)
-    con.execute("INSERT INTO ref_aduanas_log (fecha, usuario, accion, detalle) VALUES (datetime('now'),?,?,?)",
-                (session.get("username","?"), "save_tabla_completa",
-                 f"{len(nuevos_dedup)} aduanas guardadas" + (f", {len(errores)} filas con error" if errores else "")))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        con.execute("DELETE FROM ref_aduanas")
+        con.executemany("INSERT INTO ref_aduanas (cod, nombre, indice_dira) VALUES (?,?,?)", nuevos_dedup)
+        con.execute("INSERT INTO ref_aduanas_log (fecha, usuario, accion, detalle) VALUES (datetime('now'),?,?,?)",
+                    (session.get("username","?"), "save_tabla_completa",
+                     f"{len(nuevos_dedup)} aduanas guardadas" + (f", {len(errores)} filas con error" if errores else "")))
     logging.info(f"REF_ADUANAS SAVE | user={session.get('username')} | {len(nuevos_dedup)} filas | {len(errores)} errores")
     return jsonify({"ok": True, "guardadas": len(nuevos_dedup), "errores": errores[:30]})
 
@@ -2469,11 +2427,10 @@ def ref_aduanas_save():
 @login_required
 @admin_required("bd")
 def feriados_list():
-    con = sqlite3.connect(HIST_DB); con.row_factory = sqlite3.Row
-    rows = [dict(r) for r in con.execute(
-        "SELECT fecha, descripcion FROM feriados ORDER BY fecha"
-    ).fetchall()]
-    con.close()
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute(
+            "SELECT fecha, descripcion FROM feriados ORDER BY fecha"
+        ).fetchall()]
     return jsonify({"ok": True, "rows": rows})
 
 @app.route("/api/admin/feriados", methods=["POST"])
@@ -2490,9 +2447,8 @@ def feriados_create():
         datetime.strptime(fecha, "%Y-%m-%d")
     except ValueError:
         return jsonify({"ok": False, "error": "Fecha inválida"}), 400
-    con = sqlite3.connect(HIST_DB)
-    con.execute("INSERT OR REPLACE INTO feriados (fecha, descripcion) VALUES (?,?)", (fecha, descripcion))
-    con.commit(); con.close()
+    with get_db(HIST_DB) as con:
+        con.execute("INSERT OR REPLACE INTO feriados (fecha, descripcion) VALUES (?,?)", (fecha, descripcion))
     logging.info(f"FERIADOS CREATE | user={session.get('username')} | {fecha} | {descripcion}")
     return jsonify({"ok": True})
 
@@ -2500,11 +2456,9 @@ def feriados_create():
 @login_required
 @admin_required("bd")
 def feriados_delete(fecha):
-    con = sqlite3.connect(HIST_DB)
-    cur = con.execute("DELETE FROM feriados WHERE fecha=?", (fecha,))
-    con.commit()
-    borrado = cur.rowcount > 0
-    con.close()
+    with get_db(HIST_DB) as con:
+        cur = con.execute("DELETE FROM feriados WHERE fecha=?", (fecha,))
+        borrado = cur.rowcount > 0
     if not borrado:
         return jsonify({"ok": False, "error": "No existe ese feriado"}), 404
     logging.info(f"FERIADOS DELETE | user={session.get('username')} | {fecha}")

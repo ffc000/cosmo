@@ -79,52 +79,13 @@ limiter = Limiter(key_func=get_remote_address, app=app,
 
 # ── Rutas de datos (configurables por variable de entorno para poder
 # testear sin arriesgar la base real — ver tests/conftest.py) ─────────────────
-HIST_DB           = os.environ.get("HIST_DB", "/data/historial.db")
-DB_PATH           = os.environ.get("DB_PATH", "/data/pad.db")
+# HIST_DB, DB_PATH y get_db() viven en db_utils.py (sin dependencia de Flask) —
+# ver el docstring de ese archivo para el motivo. Acá se re-exportan para que
+# `from core import get_db` siga funcionando igual que antes en app.py y los
+# blueprints.
+from db_utils import HIST_DB, DB_PATH, get_db
 OUTPUT_FOLDER     = "/data/informes"
 STOCK_REPORTS_DIR = "/data/reports/stock"
-
-import contextlib
-
-@contextlib.contextmanager
-def get_db(db_path=None, timeout=10, row_factory=False):
-    """Context manager compartido para abrir una conexión SQLite.
-
-    Antes cada función (182 lugares repartidos entre app.py y los blueprints)
-    hacía su propio `con = sqlite3.connect(...)` con timeout copiado a mano,
-    y su propio `con.commit(); con.close()` al final. Funciona, pero cualquier
-    cambio que deba aplicar a TODAS las conexiones (agregar
-    `PRAGMA foreign_keys=ON`, cambiar el timeout, sumar logging de queries
-    lentas) implica tocar esos 182 lugares uno por uno.
-
-    Este helper no cambia el modelo de concurrencia (sigue siendo una
-    conexión nueva por operación, no un pool) — solo centraliza la apertura.
-    Uso:
-        with get_db() as con:
-            con.execute("INSERT INTO ...", (...))
-        # commit automático si no hubo excepción, rollback si la hubo,
-        # con.close() siempre se ejecuta.
-
-        with get_db(DB_PATH, row_factory=True) as con:
-            rows = con.execute("SELECT * FROM ...").fetchall()  # sqlite3.Row
-
-    Migrar los 182 call-sites existentes a esto es mecánico pero no
-    automático (a propósito no se hizo de una sola vez acá, para no tocar
-    ~40 archivos en un solo cambio sin poder correr los tests de cada uno) —
-    conviene ir módulo por módulo, corriendo los tests de ese blueprint
-    después de cada migración, igual que se hizo al extraer los blueprints
-    de app.py."""
-    con = sqlite3.connect(db_path or HIST_DB, timeout=timeout)
-    if row_factory:
-        con.row_factory = sqlite3.Row
-    try:
-        yield con
-        con.commit()
-    except Exception:
-        con.rollback()
-        raise
-    finally:
-        con.close()
 
 
 # ── Migraciones ───────────────────────────────────────────────────────────────
