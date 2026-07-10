@@ -667,6 +667,20 @@ def init_historial():
             logging.warning("SEED ADMIN | tabla 'usuarios' vacía — se creó 'admin' con password temporal "
                              "(ver stdout del arranque; no se guarda en el log).")
 
+        # ── Caché persistente de opciones de filtro de Consulta DAT ─────────────────
+        # EST_MIC/ULT_ESTADO/VAR_CONTROL: se recalculan una sola vez, justo
+        # cuando termina de importarse un CSV nuevo de DAT_<año> (ver
+        # _recalcular_opciones_dat, enganchado al final de _procesar_csv) --
+        # no en cada apertura del panel (SELECT DISTINCT en vivo era lento) ni
+        # en un cron desconectado del evento real de actualización de datos.
+        con.execute("""CREATE TABLE IF NOT EXISTS sintia_dat_opciones (
+            tabla TEXT NOT NULL,
+            campo TEXT NOT NULL,
+            valores TEXT NOT NULL,
+            actualizado TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (tabla, campo)
+        )""")
+
         # ── Tabla compartida de integrantes (VUA, SENASA, SINTIA) ──────────────────
         con.execute("""CREATE TABLE IF NOT EXISTS integrantes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1367,6 +1381,15 @@ def _procesar_csv(tmp_path, tabla, log, modo="reemplazar"):
             con.commit(); con.close()
             log.append(f"✓ {tabla}: {inserted:,} registros, fechas ISO calculadas, índices creados")
 
+            # Opciones de filtro (EST_MIC/ULT_ESTADO/VAR_CONTROL) para el
+            # combo de Consulta DAT -- se recalculan acá, una sola vez por
+            # import, en vez de escanear la tabla en cada apertura del panel.
+            try:
+                _recalcular_opciones_dat(tabla)
+                log.append("✓ Opciones de filtro (Est. MIC / Ult. Estado / Var. Control) actualizadas")
+            except Exception as e:
+                log.append(f"⚠ No se pudieron recalcular las opciones de filtro: {e}")
+
         elif tabla == "RECHAZOS":
             log.append("Procesando archivo RECHAZOS (streaming)...")
             cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='RECHAZOS'")
@@ -1927,59 +1950,104 @@ def _resolver_tabla_dat(p):
         anio = _dt.date.today().year
     return f"DAT_{anio}", anio
 
-# Caché en memoria de las opciones de filtro (EST_MIC/ULT_ESTADO/VAR_CONTROL)
-# por tabla -- se recalculan con SELECT DISTINCT contra los datos reales en
-# vez de mantenerlas hardcodeadas a mano (eso fue justo el bug: el combo de
-# Est. MIC tenía valores que nunca existieron en la columna). 1h de TTL:
-# fresco de sobra para datos que se cargan una vez al día como mucho, y evita
-# pegarle a la base en cada apertura del panel.
-_CACHE_OPCIONES_DAT = {}
-_TTL_OPCIONES_DAT_SEG = 3600
+def _calcular_opciones_dat(tabla):
+    """SELECT DISTINCT real contra DB_PATH para EST_MIC/ULT_ESTADO/VAR_CONTROL.
+    Costoso en una tabla grande -- por eso esto se llama una sola vez (al
+    terminar de importar un CSV nuevo, ver _procesar_csv) y no en cada
+    apertura del panel. Devuelve el dict de opciones o levanta ValueError
+    si la tabla no existe."""
+    with get_db(DB_PATH, row_factory=False) as con:
+        existe = con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,)).fetchone()
+        if not existe:
+            raise ValueError(f"Tabla {tabla} no encontrada.")
+
+        def _distinct(col):
+            try:
+                rows = con.execute(
+                    f"SELECT DISTINCT {col} FROM {tabla} "
+                    f"WHERE {col} IS NOT NULL AND TRIM({col}) != '' ORDER BY {col}").fetchall()
+                return [r[0] for r in rows]
+            except Exception:
+                # La columna puede no existir en tablas de años viejos con
+                # schema distinto -- se devuelve vacío, no se rompe el resto
+                # del panel por una sola columna.
+                return []
+
+        return {
+            "est_mic": _distinct("EST_MIC"),
+            "ult_estado": _distinct("ULT_ESTADO"),
+            "var_control": _distinct("VAR_CONTROL"),
+        }
+
+
+def _recalcular_opciones_dat(tabla):
+    """Recalcula y guarda en HIST_DB (persistente, no en memoria -- sobrevive
+    a un restart) las opciones de filtro de una tabla DAT_<año>. Se llama
+    automáticamente al final de un import exitoso (_procesar_csv) y también
+    se puede disparar a mano desde el panel (botón "Recalcular ahora")."""
+    datos = _calcular_opciones_dat(tabla)
+    with get_db(HIST_DB) as con:
+        for campo, valores in datos.items():
+            con.execute(
+                "INSERT INTO sintia_dat_opciones (tabla, campo, valores, actualizado) VALUES (?,?,?,datetime('now')) "
+                "ON CONFLICT(tabla, campo) DO UPDATE SET valores=excluded.valores, actualizado=excluded.actualizado",
+                (tabla, campo, json.dumps(valores)))
+    return datos
+
 
 @app.route("/api/sintia/dat_opciones")
 @login_required
 @modulo_required("sintia")
 def sintia_dat_opciones():
     tabla, anio = _resolver_tabla_dat(request.args.to_dict())
-    cache_key = tabla
-    ahora = time.time()
-
-    cacheado = _CACHE_OPCIONES_DAT.get(cache_key)
-    if cacheado and (ahora - cacheado["ts"]) < _TTL_OPCIONES_DAT_SEG:
-        return jsonify({"ok": True, "anio": anio, "cached": True, **cacheado["datos"]})
-
-    if not os.path.exists(DB_PATH):
-        return jsonify({"ok": False, "error": "BD no cargada."})
 
     try:
-        with get_db(DB_PATH, row_factory=False) as con:
-            existe = con.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,)).fetchone()
-            if not existe:
-                return jsonify({"ok": False, "error": f"Tabla {tabla} no encontrada."})
+        with get_db(HIST_DB, row_factory=True) as con:
+            filas = con.execute(
+                "SELECT campo, valores, actualizado FROM sintia_dat_opciones WHERE tabla=?", (tabla,)).fetchall()
 
-            def _distinct(col):
-                try:
-                    rows = con.execute(
-                        f"SELECT DISTINCT {col} FROM {tabla} "
-                        f"WHERE {col} IS NOT NULL AND TRIM({col}) != '' ORDER BY {col}").fetchall()
-                    return [r[0] for r in rows]
-                except Exception:
-                    # La columna puede no existir en tablas de años viejos
-                    # con schema distinto -- se devuelve vacío, no se rompe
-                    # el resto del panel por una sola columna.
-                    return []
+        if filas:
+            datos = {r["campo"]: json.loads(r["valores"]) for r in filas}
+            actualizado = filas[0]["actualizado"]
+            return jsonify({"ok": True, "anio": anio, "cached": True,
+                            "actualizado": actualizado, **datos})
 
-            datos = {
-                "est_mic": _distinct("EST_MIC"),
-                "ult_estado": _distinct("ULT_ESTADO"),
-                "var_control": _distinct("VAR_CONTROL"),
-            }
-        _CACHE_OPCIONES_DAT[cache_key] = {"ts": ahora, "datos": datos}
-        return jsonify({"ok": True, "anio": anio, "cached": False, **datos})
+        # Primera vez que se pide esta tabla y todavía no se calculó nunca
+        # (ej. datos importados antes de que existiera este caché) -- se
+        # calcula ahora mismo y se guarda, para no volver a pagar el costo
+        # la próxima vez.
+        if not os.path.exists(DB_PATH):
+            return jsonify({"ok": False, "error": "BD no cargada."})
+        datos = _recalcular_opciones_dat(tabla)
+        return jsonify({"ok": True, "anio": anio, "cached": False, "actualizado": None, **datos})
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)})
     except Exception as e:
         logging.error(f"SINTIA DAT OPCIONES ERROR | {e}")
         return jsonify({"ok": False, "error": str(e)})
+
+
+@app.route("/api/sintia/dat_opciones/recalcular", methods=["POST"])
+@login_required
+@modulo_required("sintia")
+def sintia_dat_opciones_recalcular():
+    """Fuerza el recálculo ahora mismo, sin esperar al próximo import --
+    útil justo después de activar esta función por primera vez, o si se
+    tocaron los datos por fuera del flujo normal de import."""
+    tabla, anio = _resolver_tabla_dat(request.args.to_dict())
+    if not os.path.exists(DB_PATH):
+        return jsonify({"ok": False, "error": "BD no cargada."})
+    try:
+        datos = _recalcular_opciones_dat(tabla)
+        logging.info(f"SINTIA DAT OPCIONES | recalculado a mano por user={session.get('username')} | tabla={tabla}")
+        return jsonify({"ok": True, "anio": anio, **datos})
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)})
+    except Exception as e:
+        logging.error(f"SINTIA DAT OPCIONES RECALCULAR ERROR | {e}")
+        return jsonify({"ok": False, "error": str(e)})
+
 
 @app.route("/api/sintia/dashboard")
 @login_required
@@ -2364,19 +2432,33 @@ def _aduanas_nacional_datos(anio, dira_filtro=None, umbral_alerta_dias=10):
         # Sin ROUND acá: 2 decimales de día son ~14 minutos de error, y ahora
         # se muestra con precisión de segundos -- el redondeo se hace recién
         # al formatear para mostrar, no antes de promediar.
+        #
+        # El umbral (umbral_alerta_dias) ahora se aplica simétricamente:
+        # - operaciones que TODAVÍA no llegaron a SAL y ya superaron el
+        #   umbral desde el ingreso -> en_alerta_bandeja (como antes).
+        # - operaciones que YA llegaron a SAL pero tardaron más que el
+        #   umbral -> en_alerta_demora_larga (nuevo). Antes estas SÍ
+        #   entraban en el promedio y lo arrastraban para arriba -- un caso
+        #   de 101 horas con umbral de 2 días (48hs) seguía promediándose
+        #   junto con casos normales de unas pocas horas.
+        _demora_expr = f"(julianday({_FECHA_ULT_INT_ISO}) - julianday(FECHA_INGRESO_ISO))"
         agregados = [dict(r) for r in con.execute(f"""
             SELECT
                 ADUANA AS aduana_cod,
                 COUNT(*) AS total_operaciones,
                 SUM(CASE WHEN ULT_ESTADO = 'SAL' THEN 1 ELSE 0 END) AS total_sali,
-                AVG(CASE WHEN ULT_ESTADO = 'SAL'
-                    THEN julianday({_FECHA_ULT_INT_ISO}) - julianday(FECHA_INGRESO_ISO) END) AS demora_media_dias,
+                SUM(CASE WHEN ULT_ESTADO = 'SAL' AND {_demora_expr} <= ?
+                    THEN 1 ELSE 0 END) AS sali_dentro_umbral,
+                AVG(CASE WHEN ULT_ESTADO = 'SAL' AND {_demora_expr} <= ?
+                    THEN {_demora_expr} END) AS demora_media_dias,
                 SUM(CASE WHEN ULT_ESTADO != 'SAL'
                     AND (julianday('now') - julianday(FECHA_INGRESO_ISO)) > ?
-                    THEN 1 ELSE 0 END) AS en_alerta_bandeja
+                    THEN 1 ELSE 0 END) AS en_alerta_bandeja,
+                SUM(CASE WHEN ULT_ESTADO = 'SAL' AND {_demora_expr} > ?
+                    THEN 1 ELSE 0 END) AS en_alerta_demora_larga
             FROM {tabla}
             GROUP BY ADUANA
-        """, [umbral_alerta_dias]).fetchall()]
+        """, [umbral_alerta_dias, umbral_alerta_dias, umbral_alerta_dias, umbral_alerta_dias]).fetchall()]
 
     with get_db(HIST_DB, row_factory=True) as con:
         cat_aduanas = {r["cod"]: dict(r) for r in con.execute(
@@ -2400,9 +2482,12 @@ def _aduanas_nacional_datos(anio, dira_filtro=None, umbral_alerta_dias=10):
             "dira_nombre": dira_nombre,
             "total_operaciones": a["total_operaciones"],
             "total_sali": a["total_sali"],
+            "sali_dentro_umbral": a["sali_dentro_umbral"],
             "demora_media_dias": a["demora_media_dias"],
             "demora_media_fmt": _formatear_demora(a["demora_media_dias"]),
             "en_alerta_bandeja": a["en_alerta_bandeja"],
+            "en_alerta_demora_larga": a["en_alerta_demora_larga"],
+            "en_alerta_total": a["en_alerta_bandeja"] + a["en_alerta_demora_larga"],
         })
 
     if dira_filtro:
@@ -2412,19 +2497,24 @@ def _aduanas_nacional_datos(anio, dira_filtro=None, umbral_alerta_dias=10):
     total_operaciones = sum(f["total_operaciones"] for f in filas)
     total_sali = sum(f["total_sali"] for f in filas)
     en_alerta_bandeja = sum(f["en_alerta_bandeja"] for f in filas)
-    # Promedio ponderado por cantidad de SALI por aduana -- no el promedio
-    # simple de los promedios (eso sesgaría hacia las aduanas con pocas
-    # operaciones). Matemáticamente equivale al promedio sobre todas las
-    # operaciones SALI del país, sin tener que volver a leer cada fila.
-    suma_ponderada = sum((f["demora_media_dias"] or 0) * f["total_sali"] for f in filas)
-    demora_media_nacional = (suma_ponderada / total_sali) if total_sali else None
+    en_alerta_demora_larga = sum(f["en_alerta_demora_larga"] for f in filas)
+    sali_dentro_umbral_total = sum(f["sali_dentro_umbral"] for f in filas)
+    # Promedio ponderado por cantidad de SALI-dentro-del-umbral por aduana
+    # (no por total_sali -- las que superaron el umbral quedan afuera del
+    # promedio, así que tampoco deben pesar en él). Evita además el sesgo
+    # de promediar promedios simples entre aduanas con distinto volumen.
+    suma_ponderada = sum((f["demora_media_dias"] or 0) * f["sali_dentro_umbral"] for f in filas)
+    demora_media_nacional = (suma_ponderada / sali_dentro_umbral_total) if sali_dentro_umbral_total else None
 
     indicadores = {
         "total_operaciones": total_operaciones,
         "total_sali": total_sali,
+        "sali_dentro_umbral": sali_dentro_umbral_total,
         "demora_media_dias": demora_media_nacional,
         "demora_media_fmt": _formatear_demora(demora_media_nacional),
         "en_alerta_bandeja": en_alerta_bandeja,
+        "en_alerta_demora_larga": en_alerta_demora_larga,
+        "en_alerta_total": en_alerta_bandeja + en_alerta_demora_larga,
     }
     return filas, indicadores, diras
 
@@ -2479,11 +2569,14 @@ def sintia_aduanas_nacional_export():
 
     try:
         filas, _indicadores, _diras = _aduanas_nacional_datos(anio, dira_filtro, umbral_alerta_dias)
-        cols = ["Aduana", "DIRA", "Operaciones", "Salieron",
-                "Demora media (días, decimal)", "Demora media (h/m/s)", "En alerta (bandeja)"]
+        cols = ["Aduana", "DIRA", "Operaciones", "Salieron", "Salieron dentro del umbral",
+                "Demora media (días, decimal)", "Demora media (h/m/s)",
+                "En alerta - pendiente (bandeja)", "En alerta - salió tarde", "En alerta total"]
         datos = [[f["aduana_nombre"], f["dira_nombre"], f["total_operaciones"], f["total_sali"],
+                  f["sali_dentro_umbral"],
                   round(f["demora_media_dias"], 4) if f["demora_media_dias"] is not None else None,
-                  f["demora_media_fmt"] or "", f["en_alerta_bandeja"]] for f in filas]
+                  f["demora_media_fmt"] or "", f["en_alerta_bandeja"], f["en_alerta_demora_larga"],
+                  f["en_alerta_total"]] for f in filas]
         buf = _exportar_xlsx(cols, datos)
         return send_file(buf, as_attachment=True,
                          download_name=f"Aduanas_nacional_{anio}.xlsx",
