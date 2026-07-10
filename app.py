@@ -1927,6 +1927,60 @@ def _resolver_tabla_dat(p):
         anio = _dt.date.today().year
     return f"DAT_{anio}", anio
 
+# Caché en memoria de las opciones de filtro (EST_MIC/ULT_ESTADO/VAR_CONTROL)
+# por tabla -- se recalculan con SELECT DISTINCT contra los datos reales en
+# vez de mantenerlas hardcodeadas a mano (eso fue justo el bug: el combo de
+# Est. MIC tenía valores que nunca existieron en la columna). 1h de TTL:
+# fresco de sobra para datos que se cargan una vez al día como mucho, y evita
+# pegarle a la base en cada apertura del panel.
+_CACHE_OPCIONES_DAT = {}
+_TTL_OPCIONES_DAT_SEG = 3600
+
+@app.route("/api/sintia/dat_opciones")
+@login_required
+@modulo_required("sintia")
+def sintia_dat_opciones():
+    tabla, anio = _resolver_tabla_dat(request.args.to_dict())
+    cache_key = tabla
+    ahora = time.time()
+
+    cacheado = _CACHE_OPCIONES_DAT.get(cache_key)
+    if cacheado and (ahora - cacheado["ts"]) < _TTL_OPCIONES_DAT_SEG:
+        return jsonify({"ok": True, "anio": anio, "cached": True, **cacheado["datos"]})
+
+    if not os.path.exists(DB_PATH):
+        return jsonify({"ok": False, "error": "BD no cargada."})
+
+    try:
+        with get_db(DB_PATH, row_factory=False) as con:
+            existe = con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,)).fetchone()
+            if not existe:
+                return jsonify({"ok": False, "error": f"Tabla {tabla} no encontrada."})
+
+            def _distinct(col):
+                try:
+                    rows = con.execute(
+                        f"SELECT DISTINCT {col} FROM {tabla} "
+                        f"WHERE {col} IS NOT NULL AND TRIM({col}) != '' ORDER BY {col}").fetchall()
+                    return [r[0] for r in rows]
+                except Exception:
+                    # La columna puede no existir en tablas de años viejos
+                    # con schema distinto -- se devuelve vacío, no se rompe
+                    # el resto del panel por una sola columna.
+                    return []
+
+            datos = {
+                "est_mic": _distinct("EST_MIC"),
+                "ult_estado": _distinct("ULT_ESTADO"),
+                "var_control": _distinct("VAR_CONTROL"),
+            }
+        _CACHE_OPCIONES_DAT[cache_key] = {"ts": ahora, "datos": datos}
+        return jsonify({"ok": True, "anio": anio, "cached": False, **datos})
+    except Exception as e:
+        logging.error(f"SINTIA DAT OPCIONES ERROR | {e}")
+        return jsonify({"ok": False, "error": str(e)})
+
 @app.route("/api/sintia/dashboard")
 @login_required
 @modulo_required("sintia")
@@ -2059,6 +2113,10 @@ def sintia_dat_query():
         params += [f"%{p['vehiculo']}%", f"%{p['vehiculo']}%"]
     if p.get("est"):
         conditions.append("EST_MIC = ?");           params.append(p["est"])
+    if p.get("ult_estado"):
+        conditions.append("ULT_ESTADO = ?");        params.append(p["ult_estado"])
+    if p.get("var_control"):
+        conditions.append("VAR_CONTROL = ?");       params.append(p["var_control"])
     if p.get("novedad"):
         conditions.append("tiene_novedad = ?");     params.append(p["novedad"])
 
@@ -2194,6 +2252,8 @@ def sintia_dat_export():
         conditions.append("(TRACTOR LIKE ? OR SEMI LIKE ?)");
         params += [f"%{p['vehiculo']}%", f"%{p['vehiculo']}%"]
     if p.get("est"):     conditions.append("EST_MIC = ?");            params.append(p["est"])
+    if p.get("ult_estado"): conditions.append("ULT_ESTADO = ?");      params.append(p["ult_estado"])
+    if p.get("var_control"): conditions.append("VAR_CONTROL = ?");    params.append(p["var_control"])
     if p.get("novedad"): conditions.append("tiene_novedad = ?");      params.append(p["novedad"])
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
