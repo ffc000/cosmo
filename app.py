@@ -2279,10 +2279,10 @@ def _aduanas_nacional_datos(anio, dira_filtro=None, umbral_alerta_dias=10):
             SELECT
                 ADUANA AS aduana_cod,
                 COUNT(*) AS total_operaciones,
-                SUM(CASE WHEN ULT_ESTADO = 'SALI' THEN 1 ELSE 0 END) AS total_sali,
-                ROUND(AVG(CASE WHEN ULT_ESTADO = 'SALI'
+                SUM(CASE WHEN ULT_ESTADO = 'SAL' THEN 1 ELSE 0 END) AS total_sali,
+                ROUND(AVG(CASE WHEN ULT_ESTADO = 'SAL'
                     THEN julianday(FECHA_ULT_INT) - julianday(FECHA_INGRESO_ISO) END), 2) AS demora_media_dias,
-                SUM(CASE WHEN ULT_ESTADO != 'SALI'
+                SUM(CASE WHEN ULT_ESTADO != 'SAL'
                     AND (julianday('now') - julianday(FECHA_INGRESO_ISO)) > ?
                     THEN 1 ELSE 0 END) AS en_alerta_bandeja
             FROM {tabla}
@@ -2344,13 +2344,13 @@ def _aduanas_nacional_datos(anio, dira_filtro=None, umbral_alerta_dias=10):
 def sintia_aduanas_nacional():
     """Indicadores + tabla de todas las aduanas del país, con demora media de
     desaduanamiento (FECHA_ULT_INT - FECHA_INGRESO_ISO para las que llegaron
-    a ULT_ESTADO='SALI'). Ver _aduanas_nacional_datos() para el detalle de
+    a ULT_ESTADO='SAL'). Ver _aduanas_nacional_datos() para el detalle de
     por qué esto cruza dos bases SQLite distintas.
 
     Supuestos sobre el schema de PAD que hay que confirmar contra datos
     reales antes de usar esto para algo que se cite hacia afuera (ver
     conversación 09-10/07/2026):
-      - DAT_<año>.ULT_ESTADO = 'SALI' marca que la operación salió.
+      - DAT_<año>.ULT_ESTADO = 'SAL' marca que la operación salió.
       - DAT_<año>.FECHA_ULT_INT = fecha del último movimiento/estado.
       - DAT_<año>.ADUANA coincide en formato con ref_aduanas.cod.
         Si no matchea, la fila igual aparece pero con "(sin nombre en
