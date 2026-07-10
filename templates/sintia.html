@@ -309,7 +309,7 @@ input:checked+.slider::before{transform:translateX(18px)}
         {% endif %}
         <div class="card">
           <div class="card-title">Filtros
-            <select id="dat-anio" style="font-size:.78rem;margin-left:.5rem;width:auto;display:inline-block">
+            <select id="dat-anio" style="font-size:.78rem;margin-left:.5rem;width:auto;display:inline-block" onchange="cargarOpcionesDat()">
               <option value="{{ now.year }}">DAT_{{ now.year }}</option>
               <option value="{{ now.year - 1 }}">DAT_{{ now.year - 1 }}</option>
               <option value="{{ now.year - 2 }}">DAT_{{ now.year - 2 }}</option>
@@ -420,9 +420,6 @@ input:checked+.slider::before{transform:translateX(18px)}
             <div><label>Est. MIC</label>
               <select id="dat-est">
                 <option value="">Todos</option>
-                <option value="Oficializado">Oficializado</option>
-                <option value="Cancelado">Cancelado</option>
-                <option value="Cerrado">Cerrado</option>
               </select>
             </div>
             <div><label>Tiene novedad</label>
@@ -430,6 +427,18 @@ input:checked+.slider::before{transform:translateX(18px)}
                 <option value="">Todos</option>
                 <option value="SI">SI</option>
                 <option value="NO">NO</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row cols2">
+            <div><label>Ult. Estado</label>
+              <select id="dat-ult-estado">
+                <option value="">Todos</option>
+              </select>
+            </div>
+            <div><label>Var. Control</label>
+              <select id="dat-var-control">
+                <option value="">Todos</option>
               </select>
             </div>
           </div>
@@ -630,7 +639,7 @@ function showPanel(id) {
   document.getElementById('nav-'+id).classList.add('active');
   document.getElementById('topbar-title').textContent = TITULOS[id] || '';
   // Limpiar el otro panel al cambiar
-  if(id==='dat'){limpiarRec();}
+  if(id==='dat'){limpiarRec();cargarOpcionesDat();}
   else if(id==='rec'){limpiarDat();}
   else if(id==='dashboard'){loadDashboard();}
   else if(id==='repositorio'){cargarRepositorio('sintia');}
@@ -726,6 +735,29 @@ let _recParams={}, _recOffset=0, _recTotal=0;
 const PAGE_SIZE=500;
 
 // ── CONSULTA DAT ──
+let _datOpcionesAnioCargado = null;
+
+async function cargarOpcionesDat() {
+  const anio = document.getElementById('dat-anio').value;
+  if (_datOpcionesAnioCargado === anio) return;  // ya están cargadas para este año
+  try {
+    const r = await fetch('/api/sintia/dat_opciones?anio=' + anio);
+    const d = await r.json();
+    if (!d.ok) return;  // si falla, los combos quedan en "Todos" nomás -- no rompe el resto del panel
+    const llenar = (id, valores) => {
+      const sel = document.getElementById(id);
+      const actual = sel.value;
+      sel.innerHTML = '<option value="">Todos</option>' +
+        valores.map(v => `<option value="${escHtml(v)}">${escHtml(v)}</option>`).join('');
+      if (valores.includes(actual)) sel.value = actual;  // preservar selección si sigue siendo válida
+    };
+    llenar('dat-est', d.est_mic);
+    llenar('dat-ult-estado', d.ult_estado);
+    llenar('dat-var-control', d.var_control);
+    _datOpcionesAnioCargado = anio;
+  } catch (e) { /* silencioso -- los combos quedan usables igual, solo sin opciones */ }
+}
+
 function buscarDat(){
   _datParams={
     anio:   document.getElementById('dat-anio').value,
@@ -742,6 +774,8 @@ function buscarDat(){
     empresa:document.getElementById('dat-empresa').value.trim(),
     vehiculo:document.getElementById('dat-vehiculo').value.trim(),
     est:    document.getElementById('dat-est').value,
+    ult_estado: document.getElementById('dat-ult-estado').value,
+    var_control: document.getElementById('dat-var-control').value,
     novedad:document.getElementById('dat-novedad').value,
   };
   _datOffset=0;
@@ -769,7 +803,7 @@ function _fetchDat(){
 }
 function limpiarDat(){
   ['dat-fec-d','dat-fec-h','dat-ftx-d','dat-ftx-h','dat-mic','dat-lot','dat-empresa','dat-vehiculo'].forEach(id=>document.getElementById(id).value='');
-  ['dat-aduana','dat-tipo','dat-cargado','dat-pais','dat-est','dat-novedad'].forEach(id=>document.getElementById(id).value='');
+  ['dat-aduana','dat-tipo','dat-cargado','dat-pais','dat-est','dat-ult-estado','dat-var-control','dat-novedad'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('dat-resultado').style.display='none';
   document.getElementById('dat-resumen').innerHTML='';
   document.getElementById('dat-filtro').value='';
@@ -792,6 +826,8 @@ function exportarDat(){
     empresa:document.getElementById('dat-empresa').value.trim(),
     vehiculo:document.getElementById('dat-vehiculo').value.trim(),
     est:document.getElementById('dat-est').value,
+    ult_estado: document.getElementById('dat-ult-estado').value,
+    var_control: document.getElementById('dat-var-control').value,
     novedad:document.getElementById('dat-novedad').value,
   };
   fetch('/api/sintia/dat/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(params)})
