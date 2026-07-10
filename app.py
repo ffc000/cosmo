@@ -2562,22 +2562,85 @@ def sintia_aduanas_nacional():
 @login_required
 @modulo_required("sintia")
 def sintia_aduanas_nacional_export():
-    """Mismos datos que sintia_aduanas_nacional(), exportados a Excel."""
+    """Mismos datos que sintia_aduanas_nacional(), exportados a Excel con
+    dos hojas: 'Resumen' (qué filtro se usó + indicadores nacionales, para
+    que el archivo tenga sentido solo, sin depender de recordar qué se tenía
+    tildado en pantalla) y 'Aduanas' (el detalle fila por fila)."""
     anio = request.args.get("anio", str(date.today().year))
     dira_filtro = request.args.get("dira", "").strip() or None
     umbral_alerta_dias = int(request.args.get("umbral_dias", 10))
 
     try:
-        filas, _indicadores, _diras = _aduanas_nacional_datos(anio, dira_filtro, umbral_alerta_dias)
+        filas, indicadores, diras = _aduanas_nacional_datos(anio, dira_filtro, umbral_alerta_dias)
+        dira_nombre_filtro = next((d["nombre"] for d in diras if d["indice"] == dira_filtro), dira_filtro) \
+            if dira_filtro else "Todas"
+
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+
+        wb = Workbook()
+
+        # ── Hoja 1: Resumen ──────────────────────────────────────────────
+        ws1 = wb.active
+        ws1.title = "Resumen"
+        ws1.append(["Reporte de Aduanas del país — SINTIA"])
+        ws1["A1"].font = Font(bold=True, size=14, color="242D4F")
+        ws1.append([])
+
+        ws1.append(["Filtros aplicados"])
+        ws1[f"A{ws1.max_row}"].font = Font(bold=True)
+        for etiqueta, valor in [
+            ("Generado", datetime.now().strftime("%d/%m/%Y %H:%M")),
+            ("Año (tabla DAT)", anio),
+            ("DIRA", dira_nombre_filtro),
+            ("Umbral de alerta (días)", umbral_alerta_dias),
+        ]:
+            ws1.append([etiqueta, valor])
+
+        ws1.append([])
+        ws1.append(["Indicadores nacionales"])
+        ws1[f"A{ws1.max_row}"].font = Font(bold=True)
+        for etiqueta, valor in [
+            ("Operaciones totales", indicadores["total_operaciones"]),
+            ("Salieron (SAL)", indicadores["total_sali"]),
+            ("Salieron dentro del umbral", indicadores["sali_dentro_umbral"]),
+            ("Demora media (h/m/s)", indicadores["demora_media_fmt"] or "—"),
+            ("Demora media (días, decimal)",
+             round(indicadores["demora_media_dias"], 4) if indicadores["demora_media_dias"] is not None else None),
+            ("En alerta - pendiente (bandeja)", indicadores["en_alerta_bandeja"]),
+            ("En alerta - salió tarde", indicadores["en_alerta_demora_larga"]),
+            ("En alerta total", indicadores["en_alerta_total"]),
+        ]:
+            ws1.append([etiqueta, valor])
+
+        ws1.column_dimensions["A"].width = 32
+        ws1.column_dimensions["B"].width = 26
+
+        # ── Hoja 2: Aduanas (detalle) ────────────────────────────────────
+        ws2 = wb.create_sheet("Aduanas")
         cols = ["Aduana", "DIRA", "Operaciones", "Salieron", "Salieron dentro del umbral",
                 "Demora media (días, decimal)", "Demora media (h/m/s)",
                 "En alerta - pendiente (bandeja)", "En alerta - salió tarde", "En alerta total"]
-        datos = [[f["aduana_nombre"], f["dira_nombre"], f["total_operaciones"], f["total_sali"],
-                  f["sali_dentro_umbral"],
-                  round(f["demora_media_dias"], 4) if f["demora_media_dias"] is not None else None,
-                  f["demora_media_fmt"] or "", f["en_alerta_bandeja"], f["en_alerta_demora_larga"],
-                  f["en_alerta_total"]] for f in filas]
-        buf = _exportar_xlsx(cols, datos)
+        ws2.append(cols)
+        for cell in ws2[1]:
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill("solid", fgColor="242D4F")
+            cell.alignment = Alignment(horizontal="center")
+        for f in filas:
+            ws2.append([
+                f["aduana_nombre"], f["dira_nombre"], f["total_operaciones"], f["total_sali"],
+                f["sali_dentro_umbral"],
+                round(f["demora_media_dias"], 4) if f["demora_media_dias"] is not None else None,
+                f["demora_media_fmt"] or "",
+                f["en_alerta_bandeja"], f["en_alerta_demora_larga"], f["en_alerta_total"],
+            ])
+        for col in ws2.columns:
+            max_len = max((len(str(c.value if c.value is not None else "")) for c in col), default=8)
+            ws2.column_dimensions[col[0].column_letter].width = min(max_len + 2, 42)
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
         return send_file(buf, as_attachment=True,
                          download_name=f"Aduanas_nacional_{anio}.xlsx",
                          mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
