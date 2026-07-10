@@ -182,6 +182,7 @@ input:checked+.slider::before{transform:translateX(18px)}
       <div class="nav-item" id="nav-generar" onclick="showPanel('generar')"><span class="nav-icon">📄</span><span class="nav-label">Generar informe</span></div>
       <div class="nav-item" id="nav-dat"     onclick="showPanel('dat')"><span class="nav-icon">🔍</span><span class="nav-label">Consulta DAT</span></div>
       <div class="nav-item" id="nav-rec"     onclick="showPanel('rec')"><span class="nav-icon">⚠️</span><span class="nav-label">Consulta Rechazos</span></div>
+      <div class="nav-item" id="nav-aduanas" onclick="showPanel('aduanas')"><span class="nav-icon">🌎</span><span class="nav-label">Aduanas del país</span></div>
       <div class="nav-item" id="nav-repositorio" onclick="showPanel('repositorio')"><span class="nav-icon">🗂️</span><span class="nav-label">Repositorio</span></div>
     </nav>
     <div class="sidebar-footer">
@@ -545,6 +546,69 @@ input:checked+.slider::before{transform:translateX(18px)}
         </div>
       </div>
 
+      <!-- ═══════════ PANEL: ADUANAS DEL PAÍS ═══════════ -->
+      <div class="panel" id="tab-aduanas">
+        <div id="aduanas-loading" style="color:var(--muted);font-size:.82rem;padding:2rem 0">Cargando...</div>
+        <div id="aduanas-error" style="display:none;color:var(--danger);font-size:.82rem;padding:.5rem 0"></div>
+        <div id="aduanas-content" style="display:none">
+
+          <p style="font-size:.76rem;color:var(--muted);margin-bottom:.9rem">
+            Demora = días entre el registro de la operación y su salida (estado SALI). Solo se promedia sobre
+            operaciones que ya salieron — las que siguen en trámite hace más de <span id="aduanas-umbral-txt">10</span> días
+            se cuentan aparte como alerta, no entran en el promedio.
+          </p>
+
+          <div class="form-row" style="margin-bottom:1rem;align-items:flex-end">
+            <div>
+              <label>Año</label>
+              <input type="number" id="aduanas-anio" style="width:100px" placeholder="2026">
+            </div>
+            <div>
+              <label>DIRA</label>
+              <select id="aduanas-dira" style="min-width:220px"><option value="">Todas</option></select>
+            </div>
+            <div>
+              <label>Alerta a partir de (días)</label>
+              <input type="number" id="aduanas-umbral" value="10" style="width:90px">
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="cargarAduanasNacional()">Actualizar</button>
+            <button class="btn btn-outline btn-sm" onclick="exportarAduanasNacional()">⬇ Excel</button>
+          </div>
+
+          <!-- Indicadores nacionales -->
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:.9rem;margin-bottom:1.25rem">
+            <div class="card" style="padding:1rem 1.2rem;margin:0">
+              <div class="card-title" style="margin-bottom:.4rem">Operaciones</div>
+              <div id="aduanas-kpi-total" style="font-size:1.8rem;font-weight:700;color:var(--accent);font-family:var(--mono)">—</div>
+            </div>
+            <div class="card" style="padding:1rem 1.2rem;margin:0">
+              <div class="card-title" style="margin-bottom:.4rem">Salieron (SALI)</div>
+              <div id="aduanas-kpi-sali" style="font-size:1.8rem;font-weight:700;color:var(--text);font-family:var(--mono)">—</div>
+            </div>
+            <div class="card" style="padding:1rem 1.2rem;margin:0">
+              <div class="card-title" style="margin-bottom:.4rem">Demora media (días)</div>
+              <div id="aduanas-kpi-demora" style="font-size:1.8rem;font-weight:700;color:var(--accent);font-family:var(--mono)">—</div>
+            </div>
+            <div class="card" style="padding:1rem 1.2rem;margin:0">
+              <div class="card-title" style="margin-bottom:.4rem">En alerta (bandeja)</div>
+              <div id="aduanas-kpi-alerta" style="font-size:1.8rem;font-weight:700;color:var(--danger);font-family:var(--mono)">—</div>
+            </div>
+          </div>
+
+          <div class="card" style="margin:0">
+            <div class="card-title">Aduanas</div>
+            <table class="data-table">
+              <thead><tr>
+                <th>Aduana</th><th>DIRA</th><th>Operaciones</th><th>Salieron</th>
+                <th>Demora media (días)</th><th>En alerta (bandeja)</th>
+              </tr></thead>
+              <tbody id="aduanas-body"></tbody>
+            </table>
+          </div>
+
+        </div>
+      </div>
+
     </div><!-- /content -->
   </div><!-- /main -->
 </div><!-- /app -->
@@ -556,7 +620,7 @@ document.getElementById('hamburger').addEventListener('click',()=>{sidebar.class
 overlay.addEventListener('click',()=>{sidebar.classList.remove('open');overlay.classList.remove('visible')});
 
 // ── Panel switching ──
-const TITULOS = {dashboard:'SINTIA — Dashboard', generar:'SINTIA — Generar informe', dat:'SINTIA — Consulta DAT', rec:'SINTIA — Consulta Rechazos', repositorio:'SINTIA — Repositorio de Documentos'};
+const TITULOS = {dashboard:'SINTIA — Dashboard', generar:'SINTIA — Generar informe', dat:'SINTIA — Consulta DAT', rec:'SINTIA — Consulta Rechazos', repositorio:'SINTIA — Repositorio de Documentos', aduanas:'SINTIA — Aduanas del país'};
 let _dashCharts = {};
 let _dashLoaded = false;
 function showPanel(id) {
@@ -570,6 +634,7 @@ function showPanel(id) {
   else if(id==='rec'){limpiarDat();}
   else if(id==='dashboard'){loadDashboard();}
   else if(id==='repositorio'){cargarRepositorio('sintia');}
+  else if(id==='aduanas'){cargarAduanasNacional();}
 }
 showPanel('dashboard');
 
@@ -881,6 +946,87 @@ async function recargarDashboard() {
   document.getElementById('dash-content').style.display = 'none';
   document.getElementById('dash-loading').style.display = 'block';
   await _fetchDashboard();
+}
+
+// ── Aduanas del país ─────────────────────────────────────────────────────────
+let _aduanasDirasCargadas = false;
+
+function _semaforoDemora(dias) {
+  if (dias == null) return 'var(--muted)';
+  if (dias <= 1) return 'var(--ok, #16a34a)';
+  if (dias <= 2) return '#d97706';
+  return 'var(--danger)';
+}
+
+async function cargarAduanasNacional() {
+  const loading = document.getElementById('aduanas-loading');
+  const error   = document.getElementById('aduanas-error');
+  const content = document.getElementById('aduanas-content');
+  error.style.display = 'none';
+  loading.style.display = 'block';
+  content.style.display = 'none';
+
+  const anio = document.getElementById('aduanas-anio').value || new Date().getFullYear();
+  const dira = document.getElementById('aduanas-dira').value;
+  const umbral = document.getElementById('aduanas-umbral').value || 10;
+
+  try {
+    const params = new URLSearchParams({ anio, umbral_dias: umbral });
+    if (dira) params.set('dira', dira);
+    const r = await fetch('/api/sintia/aduanas_nacional?' + params.toString());
+    const d = await r.json();
+    if (!d.ok) { error.textContent = d.error; error.style.display = 'block'; loading.style.display = 'none'; return; }
+
+    if (!_aduanasDirasCargadas) {
+      const sel = document.getElementById('aduanas-dira');
+      d.diras.forEach(dr => {
+        const opt = document.createElement('option');
+        opt.value = dr.indice; opt.textContent = dr.nombre;
+        sel.appendChild(opt);
+      });
+      _aduanasDirasCargadas = true;
+      if (dira) sel.value = dira;
+    }
+
+    document.getElementById('aduanas-umbral-txt').textContent = d.umbral_dias;
+    document.getElementById('aduanas-anio').value = d.anio;
+
+    const ind = d.indicadores || {};
+    document.getElementById('aduanas-kpi-total').textContent = ind.total_operaciones ?? '—';
+    document.getElementById('aduanas-kpi-sali').textContent = ind.total_sali ?? '—';
+    document.getElementById('aduanas-kpi-demora').textContent = ind.demora_media_dias != null ? ind.demora_media_dias : '—';
+    document.getElementById('aduanas-kpi-alerta').textContent = ind.en_alerta_bandeja ?? '—';
+
+    const body = document.getElementById('aduanas-body');
+    if (!d.rows.length) {
+      body.innerHTML = '<tr><td colspan="6" style="color:var(--muted);text-align:center;padding:1.5rem">Sin datos para este año/filtro.</td></tr>';
+    } else {
+      body.innerHTML = d.rows.map(a => `<tr>
+        <td>${escHtml(a.aduana_nombre)}</td>
+        <td style="font-size:.78rem;color:var(--muted)">${escHtml(a.dira_nombre)}</td>
+        <td style="font-family:var(--mono)">${a.total_operaciones}</td>
+        <td style="font-family:var(--mono)">${a.total_sali}</td>
+        <td style="font-family:var(--mono);font-weight:600;color:${_semaforoDemora(a.demora_media_dias)}">${a.demora_media_dias != null ? a.demora_media_dias : '—'}</td>
+        <td style="font-family:var(--mono)${a.en_alerta_bandeja > 0 ? ';color:var(--danger);font-weight:600' : ''}">${a.en_alerta_bandeja}</td>
+      </tr>`).join('');
+    }
+
+    loading.style.display = 'none';
+    content.style.display = 'block';
+  } catch (e) {
+    error.textContent = 'Error de conexión: ' + e;
+    error.style.display = 'block';
+    loading.style.display = 'none';
+  }
+}
+
+function exportarAduanasNacional() {
+  const anio = document.getElementById('aduanas-anio').value || new Date().getFullYear();
+  const dira = document.getElementById('aduanas-dira').value;
+  const umbral = document.getElementById('aduanas-umbral').value || 10;
+  const params = new URLSearchParams({ anio, umbral_dias: umbral });
+  if (dira) params.set('dira', dira);
+  window.location.href = '/api/sintia/aduanas_nacional/export?' + params.toString();
 }
 
 async function _fetchDashboard() {
