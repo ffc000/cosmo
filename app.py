@@ -2251,6 +2251,150 @@ def sintia_rec_export():
         return jsonify({"ok": False, "error": str(e)})
 
 
+@app.route("/api/sintia/aduanas_nacional")
+@login_required
+@modulo_required("sintia")
+def sintia_aduanas_nacional():
+    """Indicadores + tabla de todas las aduanas del país, con demora media de
+    desaduanamiento (FECHA_ULT_INT - FECHA_INGRESO_ISO para las que llegaron
+    a ULT_ESTADO='SALI').
+
+    Supuestos sobre el schema de PAD que hay que confirmar contra datos
+    reales antes de usar esto para algo que se cite hacia afuera (ver
+    conversación 09-10/07/2026):
+      - DAT_<año>.ULT_ESTADO = 'SALI' marca que la operación salió.
+      - DAT_<año>.FECHA_ULT_INT = fecha del último movimiento/estado.
+      - DAT_<año>.ADUANA coincide en formato con ref_aduanas.cod (join).
+        Si no matchea, la fila igual aparece (LEFT JOIN) pero sin nombre
+        de aduana/DIRA — señal de que el código no coincide.
+    """
+    anio = request.args.get("anio", str(date.today().year))
+    dira_filtro = request.args.get("dira", "").strip()
+    umbral_alerta_dias = int(request.args.get("umbral_dias", 10))
+    tabla = f"DAT_{anio}"
+
+    if not os.path.exists(DB_PATH):
+        return jsonify({"ok": False, "error": "BD no cargada."})
+
+    try:
+        with get_db(DB_PATH, row_factory=True) as con:
+            existe = con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,)).fetchone()
+            if not existe:
+                return jsonify({"ok": False, "error": f"Tabla {tabla} no encontrada."})
+
+            filtro_dira_sql = ""
+            params_tabla = []
+            if dira_filtro:
+                filtro_dira_sql = "AND rd.indice = ?"
+                params_tabla.append(dira_filtro)
+
+            rows = con.execute(f"""
+                SELECT
+                    t.ADUANA AS aduana_cod,
+                    COALESCE(ra.nombre, t.ADUANA || ' (sin nombre en ref_aduanas)') AS aduana_nombre,
+                    ra.indice_dira AS dira_indice,
+                    COALESCE(rd.nombre, 'Sin DIRA asignada') AS dira_nombre,
+                    COUNT(*) AS total_operaciones,
+                    SUM(CASE WHEN t.ULT_ESTADO = 'SALI' THEN 1 ELSE 0 END) AS total_sali,
+                    ROUND(AVG(CASE WHEN t.ULT_ESTADO = 'SALI'
+                        THEN julianday(t.FECHA_ULT_INT) - julianday(t.FECHA_INGRESO_ISO) END), 2) AS demora_media_dias,
+                    SUM(CASE WHEN t.ULT_ESTADO != 'SALI'
+                        AND (julianday('now') - julianday(t.FECHA_INGRESO_ISO)) > ?
+                        THEN 1 ELSE 0 END) AS en_alerta_bandeja
+                FROM {tabla} t
+                LEFT JOIN ref_aduanas ra ON t.ADUANA = ra.cod
+                LEFT JOIN ref_dira rd ON ra.indice_dira = rd.indice
+                WHERE 1=1 {filtro_dira_sql}
+                GROUP BY t.ADUANA
+                ORDER BY dira_nombre, aduana_nombre
+            """, [umbral_alerta_dias] + params_tabla).fetchall()
+
+            filas = [dict(r) for r in rows]
+
+            # Indicadores nacionales: sobre el mismo universo filtrado por DIRA (si aplica)
+            resumen = con.execute(f"""
+                SELECT
+                    COUNT(*) AS total_operaciones,
+                    SUM(CASE WHEN t.ULT_ESTADO = 'SALI' THEN 1 ELSE 0 END) AS total_sali,
+                    ROUND(AVG(CASE WHEN t.ULT_ESTADO = 'SALI'
+                        THEN julianday(t.FECHA_ULT_INT) - julianday(t.FECHA_INGRESO_ISO) END), 2) AS demora_media_dias,
+                    SUM(CASE WHEN t.ULT_ESTADO != 'SALI'
+                        AND (julianday('now') - julianday(t.FECHA_INGRESO_ISO)) > ?
+                        THEN 1 ELSE 0 END) AS en_alerta_bandeja
+                FROM {tabla} t
+                LEFT JOIN ref_aduanas ra ON t.ADUANA = ra.cod
+                LEFT JOIN ref_dira rd ON ra.indice_dira = rd.indice
+                WHERE 1=1 {filtro_dira_sql}
+            """, [umbral_alerta_dias] + params_tabla).fetchone()
+
+            diras = con.execute(
+                "SELECT indice, nombre FROM ref_dira ORDER BY nombre").fetchall()
+
+        return jsonify({
+            "ok": True,
+            "anio": anio,
+            "umbral_dias": umbral_alerta_dias,
+            "indicadores": dict(resumen) if resumen else {},
+            "rows": filas,
+            "diras": [dict(d) for d in diras],
+        })
+    except Exception as e:
+        logging.error(f"SINTIA ADUANAS NACIONAL ERROR | {e}")
+        return jsonify({"ok": False, "error": str(e)})
+
+
+@app.route("/api/sintia/aduanas_nacional/export")
+@login_required
+@modulo_required("sintia")
+def sintia_aduanas_nacional_export():
+    """Mismo query que sintia_aduanas_nacional(), exportado a Excel."""
+    anio = request.args.get("anio", str(date.today().year))
+    dira_filtro = request.args.get("dira", "").strip()
+    umbral_alerta_dias = int(request.args.get("umbral_dias", 10))
+    tabla = f"DAT_{anio}"
+
+    if not os.path.exists(DB_PATH):
+        return jsonify({"ok": False, "error": "BD no cargada."})
+
+    try:
+        filtro_dira_sql = ""
+        params_tabla = []
+        if dira_filtro:
+            filtro_dira_sql = "AND rd.indice = ?"
+            params_tabla.append(dira_filtro)
+
+        with get_db(DB_PATH, row_factory=True) as con:
+            rows = con.execute(f"""
+                SELECT
+                    COALESCE(ra.nombre, t.ADUANA || ' (sin nombre en ref_aduanas)') AS "Aduana",
+                    COALESCE(rd.nombre, 'Sin DIRA asignada') AS "DIRA",
+                    COUNT(*) AS "Operaciones",
+                    SUM(CASE WHEN t.ULT_ESTADO = 'SALI' THEN 1 ELSE 0 END) AS "Salieron",
+                    ROUND(AVG(CASE WHEN t.ULT_ESTADO = 'SALI'
+                        THEN julianday(t.FECHA_ULT_INT) - julianday(t.FECHA_INGRESO_ISO) END), 2) AS "Demora media (días)",
+                    SUM(CASE WHEN t.ULT_ESTADO != 'SALI'
+                        AND (julianday('now') - julianday(t.FECHA_INGRESO_ISO)) > ?
+                        THEN 1 ELSE 0 END) AS "En alerta (bandeja)"
+                FROM {tabla} t
+                LEFT JOIN ref_aduanas ra ON t.ADUANA = ra.cod
+                LEFT JOIN ref_dira rd ON ra.indice_dira = rd.indice
+                WHERE 1=1 {filtro_dira_sql}
+                GROUP BY t.ADUANA
+                ORDER BY "DIRA", "Aduana"
+            """, [umbral_alerta_dias] + params_tabla).fetchall()
+
+        cols = list(rows[0].keys()) if rows else \
+            ["Aduana", "DIRA", "Operaciones", "Salieron", "Demora media (días)", "En alerta (bandeja)"]
+        datos = [list(r) for r in rows]
+        buf = _exportar_xlsx(cols, datos)
+        return send_file(buf, as_attachment=True,
+                         download_name=f"Aduanas_nacional_{anio}.xlsx",
+                         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    except Exception as e:
+        logging.error(f"SINTIA ADUANAS NACIONAL EXPORT ERROR | {e}")
+        return jsonify({"ok": False, "error": str(e)})
+
 
 # MÓDULOS GARMIN + TRAINING -> blueprints/training.py (registrado como training_bp)
 
