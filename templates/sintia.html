@@ -442,6 +442,13 @@ input:checked+.slider::before{transform:translateX(18px)}
               </select>
             </div>
           </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;font-size:.72rem;color:var(--muted);margin-bottom:.5rem">
+            <span id="dat-opciones-info"></span>
+            <button class="btn btn-outline btn-sm" id="btn-recalcular-opciones" onclick="recalcularOpcionesDat()"
+              title="Las opciones de estos combos se actualizan solas al importar un CSV nuevo. Usar esto solo si hace falta forzarlo antes del próximo import.">
+              ↻ Recalcular ahora
+            </button>
+          </div>
           <div class="btn-row">
             <button class="btn btn-primary" id="btn-dat-buscar" {% if not db_exists %}disabled{% endif %} onclick="buscarDat()">🔍 Buscar</button>
             <button class="btn btn-secondary" onclick="limpiarDat()">✕ Limpiar</button>
@@ -562,9 +569,10 @@ input:checked+.slider::before{transform:translateX(18px)}
         <div id="aduanas-content" style="display:none">
 
           <p style="font-size:.76rem;color:var(--muted);margin-bottom:.9rem">
-            Demora = tiempo entre el registro de la operación y su salida (estado SAL). Solo se promedia sobre
-            operaciones que ya salieron — las que siguen en trámite hace más de <span id="aduanas-umbral-txt">10</span> días
-            se cuentan aparte como alerta, no entran en el promedio.
+            Demora = tiempo entre el registro de la operación y su salida (estado SAL). El promedio solo
+            considera operaciones que salieron <strong>dentro</strong> de <span id="aduanas-umbral-txt">10</span> días —
+            tanto las que siguen en trámite hace más de ese tiempo como las que salieron pero tardaron más de
+            eso se cuentan aparte, como alerta, sin ensuciar el promedio.
           </p>
 
           <div class="form-row" style="margin-bottom:1rem;align-items:flex-end">
@@ -599,8 +607,9 @@ input:checked+.slider::before{transform:translateX(18px)}
               <div id="aduanas-kpi-demora" style="font-size:1.3rem;font-weight:700;color:var(--accent);font-family:var(--mono)">—</div>
             </div>
             <div class="card" style="padding:1rem 1.2rem;margin:0">
-              <div class="card-title" style="margin-bottom:.4rem">En alerta (bandeja)</div>
+              <div class="card-title" style="margin-bottom:.4rem">En alerta (total)</div>
               <div id="aduanas-kpi-alerta" style="font-size:1.8rem;font-weight:700;color:var(--danger);font-family:var(--mono)">—</div>
+              <div id="aduanas-kpi-alerta-desglose" style="font-size:.68rem;color:var(--muted);margin-top:.2rem"></div>
             </div>
           </div>
 
@@ -609,7 +618,7 @@ input:checked+.slider::before{transform:translateX(18px)}
             <table class="data-table">
               <thead><tr>
                 <th>Aduana</th><th>DIRA</th><th>Operaciones</th><th>Salieron</th>
-                <th>Demora media (h/m/s)</th><th>En alerta (bandeja)</th>
+                <th>Demora media (h/m/s)</th><th>En alerta (pendiente)</th><th>En alerta (salió tarde)</th>
               </tr></thead>
               <tbody id="aduanas-body"></tbody>
             </table>
@@ -737,9 +746,9 @@ const PAGE_SIZE=500;
 // ── CONSULTA DAT ──
 let _datOpcionesAnioCargado = null;
 
-async function cargarOpcionesDat() {
+async function cargarOpcionesDat(forzar) {
   const anio = document.getElementById('dat-anio').value;
-  if (_datOpcionesAnioCargado === anio) return;  // ya están cargadas para este año
+  if (!forzar && _datOpcionesAnioCargado === anio) return;  // ya están cargadas para este año
   try {
     const r = await fetch('/api/sintia/dat_opciones?anio=' + anio);
     const d = await r.json();
@@ -755,7 +764,23 @@ async function cargarOpcionesDat() {
     llenar('dat-ult-estado', d.ult_estado);
     llenar('dat-var-control', d.var_control);
     _datOpcionesAnioCargado = anio;
+    const info = document.getElementById('dat-opciones-info');
+    if (info) info.textContent = d.actualizado ? `Opciones actualizadas: ${d.actualizado}` : '';
   } catch (e) { /* silencioso -- los combos quedan usables igual, solo sin opciones */ }
+}
+
+async function recalcularOpcionesDat() {
+  const anio = document.getElementById('dat-anio').value;
+  const btn = document.getElementById('btn-recalcular-opciones');
+  if (btn) { btn.disabled = true; btn.textContent = 'Recalculando...'; }
+  try {
+    const r = await fetch('/api/sintia/dat_opciones/recalcular?anio=' + anio, { method: 'POST' });
+    const d = await r.json();
+    if (!d.ok) { alert(d.error || 'No se pudo recalcular.'); return; }
+    await cargarOpcionesDat(true);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '↻ Recalcular ahora'; }
+  }
 }
 
 function buscarDat(){
@@ -1032,7 +1057,11 @@ async function cargarAduanasNacional() {
     document.getElementById('aduanas-kpi-total').textContent = ind.total_operaciones ?? '—';
     document.getElementById('aduanas-kpi-sali').textContent = ind.total_sali ?? '—';
     document.getElementById('aduanas-kpi-demora').textContent = ind.demora_media_fmt || '—';
-    document.getElementById('aduanas-kpi-alerta').textContent = ind.en_alerta_bandeja ?? '—';
+    document.getElementById('aduanas-kpi-alerta').textContent = ind.en_alerta_total ?? '—';
+    document.getElementById('aduanas-kpi-alerta-desglose').textContent =
+      (ind.en_alerta_bandeja != null && ind.en_alerta_demora_larga != null)
+        ? `${ind.en_alerta_bandeja} pendiente + ${ind.en_alerta_demora_larga} salió tarde`
+        : '';
 
     const body = document.getElementById('aduanas-body');
     if (!d.rows.length) {
@@ -1045,6 +1074,7 @@ async function cargarAduanasNacional() {
         <td style="font-family:var(--mono)">${a.total_sali}</td>
         <td style="font-family:var(--mono);font-weight:600;color:${_semaforoDemora(a.demora_media_dias)}">${a.demora_media_fmt || '—'}</td>
         <td style="font-family:var(--mono)${a.en_alerta_bandeja > 0 ? ';color:var(--danger);font-weight:600' : ''}">${a.en_alerta_bandeja}</td>
+        <td style="font-family:var(--mono)${a.en_alerta_demora_larga > 0 ? ';color:var(--danger);font-weight:600' : ''}">${a.en_alerta_demora_larga}</td>
       </tr>`).join('');
     }
 
