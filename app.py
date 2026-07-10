@@ -2342,6 +2342,19 @@ def _aduanas_nacional_datos(anio, dira_filtro=None, umbral_alerta_dias=10):
     if not os.path.exists(DB_PATH):
         raise ValueError("BD no cargada.")
 
+    # FECHA_ULT_INT viene como "DD-MM-YYYY HH:MM:SS" (formato argentino), NO
+    # como "YYYY-MM-DD..." -- julianday() de SQLite solo reconoce este último
+    # y devuelve NULL en silencio con el otro (sin error, por eso el bug
+    # pasó desapercibido: la demora daba 0h 00m 00s en vez de fallar fuerte).
+    # Se reconstruye a mano con substr() antes de pasarlo a julianday(). El
+    # CASE cubre los dos formatos por si en algún momento conviven filas
+    # viejas ya en ISO con filas nuevas en DD-MM-YYYY.
+    _FECHA_ULT_INT_ISO = (
+        "(CASE WHEN FECHA_ULT_INT LIKE '____-__-__%' THEN FECHA_ULT_INT "
+        "ELSE substr(FECHA_ULT_INT,7,4) || '-' || substr(FECHA_ULT_INT,4,2) "
+        "|| '-' || substr(FECHA_ULT_INT,1,2) || substr(FECHA_ULT_INT,11) END)"
+    )
+
     with get_db(DB_PATH, row_factory=True) as con:
         existe = con.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,)).fetchone()
@@ -2357,7 +2370,7 @@ def _aduanas_nacional_datos(anio, dira_filtro=None, umbral_alerta_dias=10):
                 COUNT(*) AS total_operaciones,
                 SUM(CASE WHEN ULT_ESTADO = 'SAL' THEN 1 ELSE 0 END) AS total_sali,
                 AVG(CASE WHEN ULT_ESTADO = 'SAL'
-                    THEN julianday(FECHA_ULT_INT) - julianday(FECHA_INGRESO_ISO) END) AS demora_media_dias,
+                    THEN julianday({_FECHA_ULT_INT_ISO}) - julianday(FECHA_INGRESO_ISO) END) AS demora_media_dias,
                 SUM(CASE WHEN ULT_ESTADO != 'SAL'
                     AND (julianday('now') - julianday(FECHA_INGRESO_ISO)) > ?
                     THEN 1 ELSE 0 END) AS en_alerta_bandeja
