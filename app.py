@@ -2251,94 +2251,127 @@ def sintia_rec_export():
         return jsonify({"ok": False, "error": str(e)})
 
 
+def _aduanas_nacional_datos(anio, dira_filtro=None, umbral_alerta_dias=10):
+    """Arma la tabla de aduanas + indicadores nacionales.
+
+    DAT_<año>/RECHAZOS viven en DB_PATH (se reemplazan enteras con cada
+    import de PAD — ver _procesar_csv), pero ref_aduanas/ref_dira viven en
+    HIST_DB (datos de referencia curados a mano, a propósito en una base
+    aparte para no arriesgarlos si algún día se reimporta DB_PATH).
+    SQLite no puede hacer JOIN entre archivos distintos sin ATTACH DATABASE,
+    así que esto se resuelve en Python: se agrega por aduana en DB_PATH,
+    se trae el catálogo de aduanas/DIRA de HIST_DB, y se cruzan acá.
+
+    Levanta ValueError con un mensaje prolijo si la tabla del año pedido no
+    existe. Devuelve (filas, indicadores, diras).
+    """
+    tabla = f"DAT_{anio}"
+    if not os.path.exists(DB_PATH):
+        raise ValueError("BD no cargada.")
+
+    with get_db(DB_PATH, row_factory=True) as con:
+        existe = con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,)).fetchone()
+        if not existe:
+            raise ValueError(f"Tabla {tabla} no encontrada.")
+
+        agregados = [dict(r) for r in con.execute(f"""
+            SELECT
+                ADUANA AS aduana_cod,
+                COUNT(*) AS total_operaciones,
+                SUM(CASE WHEN ULT_ESTADO = 'SALI' THEN 1 ELSE 0 END) AS total_sali,
+                ROUND(AVG(CASE WHEN ULT_ESTADO = 'SALI'
+                    THEN julianday(FECHA_ULT_INT) - julianday(FECHA_INGRESO_ISO) END), 2) AS demora_media_dias,
+                SUM(CASE WHEN ULT_ESTADO != 'SALI'
+                    AND (julianday('now') - julianday(FECHA_INGRESO_ISO)) > ?
+                    THEN 1 ELSE 0 END) AS en_alerta_bandeja
+            FROM {tabla}
+            GROUP BY ADUANA
+        """, [umbral_alerta_dias]).fetchall()]
+
+    with get_db(HIST_DB, row_factory=True) as con:
+        cat_aduanas = {r["cod"]: dict(r) for r in con.execute(
+            "SELECT cod, nombre, indice_dira FROM ref_aduanas").fetchall()}
+        cat_diras = {r["indice"]: r["nombre"] for r in con.execute(
+            "SELECT indice, nombre FROM ref_dira").fetchall()}
+        diras = [dict(r) for r in con.execute(
+            "SELECT indice, nombre FROM ref_dira ORDER BY nombre").fetchall()]
+
+    filas = []
+    for a in agregados:
+        cod = a["aduana_cod"]
+        info = cat_aduanas.get(cod)
+        dira_indice = info["indice_dira"] if info else None
+        dira_nombre = cat_diras.get(dira_indice, "Sin DIRA asignada") if dira_indice else "Sin DIRA asignada"
+        aduana_nombre = info["nombre"] if info else f"{cod} (sin nombre en ref_aduanas)"
+        filas.append({
+            "aduana_cod": cod,
+            "aduana_nombre": aduana_nombre,
+            "dira_indice": dira_indice,
+            "dira_nombre": dira_nombre,
+            "total_operaciones": a["total_operaciones"],
+            "total_sali": a["total_sali"],
+            "demora_media_dias": a["demora_media_dias"],
+            "en_alerta_bandeja": a["en_alerta_bandeja"],
+        })
+
+    if dira_filtro:
+        filas = [f for f in filas if f["dira_indice"] == dira_filtro]
+    filas.sort(key=lambda f: (f["dira_nombre"], f["aduana_nombre"]))
+
+    total_operaciones = sum(f["total_operaciones"] for f in filas)
+    total_sali = sum(f["total_sali"] for f in filas)
+    en_alerta_bandeja = sum(f["en_alerta_bandeja"] for f in filas)
+    # Promedio ponderado por cantidad de SALI por aduana -- no el promedio
+    # simple de los promedios (eso sesgaría hacia las aduanas con pocas
+    # operaciones). Matemáticamente equivale al promedio sobre todas las
+    # operaciones SALI del país, sin tener que volver a leer cada fila.
+    suma_ponderada = sum((f["demora_media_dias"] or 0) * f["total_sali"] for f in filas)
+    demora_media_nacional = round(suma_ponderada / total_sali, 2) if total_sali else None
+
+    indicadores = {
+        "total_operaciones": total_operaciones,
+        "total_sali": total_sali,
+        "demora_media_dias": demora_media_nacional,
+        "en_alerta_bandeja": en_alerta_bandeja,
+    }
+    return filas, indicadores, diras
+
+
 @app.route("/api/sintia/aduanas_nacional")
 @login_required
 @modulo_required("sintia")
 def sintia_aduanas_nacional():
     """Indicadores + tabla de todas las aduanas del país, con demora media de
     desaduanamiento (FECHA_ULT_INT - FECHA_INGRESO_ISO para las que llegaron
-    a ULT_ESTADO='SALI').
+    a ULT_ESTADO='SALI'). Ver _aduanas_nacional_datos() para el detalle de
+    por qué esto cruza dos bases SQLite distintas.
 
     Supuestos sobre el schema de PAD que hay que confirmar contra datos
     reales antes de usar esto para algo que se cite hacia afuera (ver
     conversación 09-10/07/2026):
       - DAT_<año>.ULT_ESTADO = 'SALI' marca que la operación salió.
       - DAT_<año>.FECHA_ULT_INT = fecha del último movimiento/estado.
-      - DAT_<año>.ADUANA coincide en formato con ref_aduanas.cod (join).
-        Si no matchea, la fila igual aparece (LEFT JOIN) pero sin nombre
-        de aduana/DIRA — señal de que el código no coincide.
+      - DAT_<año>.ADUANA coincide en formato con ref_aduanas.cod.
+        Si no matchea, la fila igual aparece pero con "(sin nombre en
+        ref_aduanas)" — señal de que el código no coincide.
     """
     anio = request.args.get("anio", str(date.today().year))
-    dira_filtro = request.args.get("dira", "").strip()
+    dira_filtro = request.args.get("dira", "").strip() or None
     umbral_alerta_dias = int(request.args.get("umbral_dias", 10))
-    tabla = f"DAT_{anio}"
-
-    if not os.path.exists(DB_PATH):
-        return jsonify({"ok": False, "error": "BD no cargada."})
 
     try:
-        with get_db(DB_PATH, row_factory=True) as con:
-            existe = con.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,)).fetchone()
-            if not existe:
-                return jsonify({"ok": False, "error": f"Tabla {tabla} no encontrada."})
-
-            filtro_dira_sql = ""
-            params_tabla = []
-            if dira_filtro:
-                filtro_dira_sql = "AND rd.indice = ?"
-                params_tabla.append(dira_filtro)
-
-            rows = con.execute(f"""
-                SELECT
-                    t.ADUANA AS aduana_cod,
-                    COALESCE(ra.nombre, t.ADUANA || ' (sin nombre en ref_aduanas)') AS aduana_nombre,
-                    ra.indice_dira AS dira_indice,
-                    COALESCE(rd.nombre, 'Sin DIRA asignada') AS dira_nombre,
-                    COUNT(*) AS total_operaciones,
-                    SUM(CASE WHEN t.ULT_ESTADO = 'SALI' THEN 1 ELSE 0 END) AS total_sali,
-                    ROUND(AVG(CASE WHEN t.ULT_ESTADO = 'SALI'
-                        THEN julianday(t.FECHA_ULT_INT) - julianday(t.FECHA_INGRESO_ISO) END), 2) AS demora_media_dias,
-                    SUM(CASE WHEN t.ULT_ESTADO != 'SALI'
-                        AND (julianday('now') - julianday(t.FECHA_INGRESO_ISO)) > ?
-                        THEN 1 ELSE 0 END) AS en_alerta_bandeja
-                FROM {tabla} t
-                LEFT JOIN ref_aduanas ra ON t.ADUANA = ra.cod
-                LEFT JOIN ref_dira rd ON ra.indice_dira = rd.indice
-                WHERE 1=1 {filtro_dira_sql}
-                GROUP BY t.ADUANA
-                ORDER BY dira_nombre, aduana_nombre
-            """, [umbral_alerta_dias] + params_tabla).fetchall()
-
-            filas = [dict(r) for r in rows]
-
-            # Indicadores nacionales: sobre el mismo universo filtrado por DIRA (si aplica)
-            resumen = con.execute(f"""
-                SELECT
-                    COUNT(*) AS total_operaciones,
-                    SUM(CASE WHEN t.ULT_ESTADO = 'SALI' THEN 1 ELSE 0 END) AS total_sali,
-                    ROUND(AVG(CASE WHEN t.ULT_ESTADO = 'SALI'
-                        THEN julianday(t.FECHA_ULT_INT) - julianday(t.FECHA_INGRESO_ISO) END), 2) AS demora_media_dias,
-                    SUM(CASE WHEN t.ULT_ESTADO != 'SALI'
-                        AND (julianday('now') - julianday(t.FECHA_INGRESO_ISO)) > ?
-                        THEN 1 ELSE 0 END) AS en_alerta_bandeja
-                FROM {tabla} t
-                LEFT JOIN ref_aduanas ra ON t.ADUANA = ra.cod
-                LEFT JOIN ref_dira rd ON ra.indice_dira = rd.indice
-                WHERE 1=1 {filtro_dira_sql}
-            """, [umbral_alerta_dias] + params_tabla).fetchone()
-
-            diras = con.execute(
-                "SELECT indice, nombre FROM ref_dira ORDER BY nombre").fetchall()
-
+        filas, indicadores, diras = _aduanas_nacional_datos(anio, dira_filtro, umbral_alerta_dias)
         return jsonify({
             "ok": True,
             "anio": anio,
             "umbral_dias": umbral_alerta_dias,
-            "indicadores": dict(resumen) if resumen else {},
+            "indicadores": indicadores,
             "rows": filas,
-            "diras": [dict(d) for d in diras],
+            "diras": diras,
         })
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)})
     except Exception as e:
         logging.error(f"SINTIA ADUANAS NACIONAL ERROR | {e}")
         return jsonify({"ok": False, "error": str(e)})
@@ -2348,45 +2381,16 @@ def sintia_aduanas_nacional():
 @login_required
 @modulo_required("sintia")
 def sintia_aduanas_nacional_export():
-    """Mismo query que sintia_aduanas_nacional(), exportado a Excel."""
+    """Mismos datos que sintia_aduanas_nacional(), exportados a Excel."""
     anio = request.args.get("anio", str(date.today().year))
-    dira_filtro = request.args.get("dira", "").strip()
+    dira_filtro = request.args.get("dira", "").strip() or None
     umbral_alerta_dias = int(request.args.get("umbral_dias", 10))
-    tabla = f"DAT_{anio}"
-
-    if not os.path.exists(DB_PATH):
-        return jsonify({"ok": False, "error": "BD no cargada."})
 
     try:
-        filtro_dira_sql = ""
-        params_tabla = []
-        if dira_filtro:
-            filtro_dira_sql = "AND rd.indice = ?"
-            params_tabla.append(dira_filtro)
-
-        with get_db(DB_PATH, row_factory=True) as con:
-            rows = con.execute(f"""
-                SELECT
-                    COALESCE(ra.nombre, t.ADUANA || ' (sin nombre en ref_aduanas)') AS "Aduana",
-                    COALESCE(rd.nombre, 'Sin DIRA asignada') AS "DIRA",
-                    COUNT(*) AS "Operaciones",
-                    SUM(CASE WHEN t.ULT_ESTADO = 'SALI' THEN 1 ELSE 0 END) AS "Salieron",
-                    ROUND(AVG(CASE WHEN t.ULT_ESTADO = 'SALI'
-                        THEN julianday(t.FECHA_ULT_INT) - julianday(t.FECHA_INGRESO_ISO) END), 2) AS "Demora media (días)",
-                    SUM(CASE WHEN t.ULT_ESTADO != 'SALI'
-                        AND (julianday('now') - julianday(t.FECHA_INGRESO_ISO)) > ?
-                        THEN 1 ELSE 0 END) AS "En alerta (bandeja)"
-                FROM {tabla} t
-                LEFT JOIN ref_aduanas ra ON t.ADUANA = ra.cod
-                LEFT JOIN ref_dira rd ON ra.indice_dira = rd.indice
-                WHERE 1=1 {filtro_dira_sql}
-                GROUP BY t.ADUANA
-                ORDER BY "DIRA", "Aduana"
-            """, [umbral_alerta_dias] + params_tabla).fetchall()
-
-        cols = list(rows[0].keys()) if rows else \
-            ["Aduana", "DIRA", "Operaciones", "Salieron", "Demora media (días)", "En alerta (bandeja)"]
-        datos = [list(r) for r in rows]
+        filas, _indicadores, _diras = _aduanas_nacional_datos(anio, dira_filtro, umbral_alerta_dias)
+        cols = ["Aduana", "DIRA", "Operaciones", "Salieron", "Demora media (días)", "En alerta (bandeja)"]
+        datos = [[f["aduana_nombre"], f["dira_nombre"], f["total_operaciones"], f["total_sali"],
+                  f["demora_media_dias"], f["en_alerta_bandeja"]] for f in filas]
         buf = _exportar_xlsx(cols, datos)
         return send_file(buf, as_attachment=True,
                          download_name=f"Aduanas_nacional_{anio}.xlsx",
