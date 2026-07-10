@@ -2311,6 +2311,19 @@ def sintia_rec_export():
         return jsonify({"ok": False, "error": str(e)})
 
 
+def _formatear_demora(dias):
+    """Convierte una demora en días (float, con fracción) a un texto legible
+    en horas/minutos/segundos -- 0.75 días no dice nada de un vistazo, pero
+    '18h 00m 00s' sí. Se guarda internamente en días (preciso para promediar
+    y ordenar) y se formatea recién acá, al final, para mostrar."""
+    if dias is None:
+        return None
+    total_seg = round(dias * 86400)
+    h, resto = divmod(total_seg, 3600)
+    m, s = divmod(resto, 60)
+    return f"{h}h {m:02d}m {s:02d}s"
+
+
 def _aduanas_nacional_datos(anio, dira_filtro=None, umbral_alerta_dias=10):
     """Arma la tabla de aduanas + indicadores nacionales.
 
@@ -2335,13 +2348,16 @@ def _aduanas_nacional_datos(anio, dira_filtro=None, umbral_alerta_dias=10):
         if not existe:
             raise ValueError(f"Tabla {tabla} no encontrada.")
 
+        # Sin ROUND acá: 2 decimales de día son ~14 minutos de error, y ahora
+        # se muestra con precisión de segundos -- el redondeo se hace recién
+        # al formatear para mostrar, no antes de promediar.
         agregados = [dict(r) for r in con.execute(f"""
             SELECT
                 ADUANA AS aduana_cod,
                 COUNT(*) AS total_operaciones,
                 SUM(CASE WHEN ULT_ESTADO = 'SAL' THEN 1 ELSE 0 END) AS total_sali,
-                ROUND(AVG(CASE WHEN ULT_ESTADO = 'SAL'
-                    THEN julianday(FECHA_ULT_INT) - julianday(FECHA_INGRESO_ISO) END), 2) AS demora_media_dias,
+                AVG(CASE WHEN ULT_ESTADO = 'SAL'
+                    THEN julianday(FECHA_ULT_INT) - julianday(FECHA_INGRESO_ISO) END) AS demora_media_dias,
                 SUM(CASE WHEN ULT_ESTADO != 'SAL'
                     AND (julianday('now') - julianday(FECHA_INGRESO_ISO)) > ?
                     THEN 1 ELSE 0 END) AS en_alerta_bandeja
@@ -2372,6 +2388,7 @@ def _aduanas_nacional_datos(anio, dira_filtro=None, umbral_alerta_dias=10):
             "total_operaciones": a["total_operaciones"],
             "total_sali": a["total_sali"],
             "demora_media_dias": a["demora_media_dias"],
+            "demora_media_fmt": _formatear_demora(a["demora_media_dias"]),
             "en_alerta_bandeja": a["en_alerta_bandeja"],
         })
 
@@ -2387,12 +2404,13 @@ def _aduanas_nacional_datos(anio, dira_filtro=None, umbral_alerta_dias=10):
     # operaciones). Matemáticamente equivale al promedio sobre todas las
     # operaciones SALI del país, sin tener que volver a leer cada fila.
     suma_ponderada = sum((f["demora_media_dias"] or 0) * f["total_sali"] for f in filas)
-    demora_media_nacional = round(suma_ponderada / total_sali, 2) if total_sali else None
+    demora_media_nacional = (suma_ponderada / total_sali) if total_sali else None
 
     indicadores = {
         "total_operaciones": total_operaciones,
         "total_sali": total_sali,
         "demora_media_dias": demora_media_nacional,
+        "demora_media_fmt": _formatear_demora(demora_media_nacional),
         "en_alerta_bandeja": en_alerta_bandeja,
     }
     return filas, indicadores, diras
@@ -2448,9 +2466,11 @@ def sintia_aduanas_nacional_export():
 
     try:
         filas, _indicadores, _diras = _aduanas_nacional_datos(anio, dira_filtro, umbral_alerta_dias)
-        cols = ["Aduana", "DIRA", "Operaciones", "Salieron", "Demora media (días)", "En alerta (bandeja)"]
+        cols = ["Aduana", "DIRA", "Operaciones", "Salieron",
+                "Demora media (días, decimal)", "Demora media (h/m/s)", "En alerta (bandeja)"]
         datos = [[f["aduana_nombre"], f["dira_nombre"], f["total_operaciones"], f["total_sali"],
-                  f["demora_media_dias"], f["en_alerta_bandeja"]] for f in filas]
+                  round(f["demora_media_dias"], 4) if f["demora_media_dias"] is not None else None,
+                  f["demora_media_fmt"] or "", f["en_alerta_bandeja"]] for f in filas]
         buf = _exportar_xlsx(cols, datos)
         return send_file(buf, as_attachment=True,
                          download_name=f"Aduanas_nacional_{anio}.xlsx",
