@@ -562,7 +562,7 @@ input:checked+.slider::before{transform:translateX(18px)}
         <div id="aduanas-content" style="display:none">
 
           <p style="font-size:.76rem;color:var(--muted);margin-bottom:.9rem">
-            Demora = días entre el registro de la operación y su salida (estado SAL). Solo se promedia sobre
+            Demora = tiempo entre el registro de la operación y su salida (estado SAL). Solo se promedia sobre
             operaciones que ya salieron — las que siguen en trámite hace más de <span id="aduanas-umbral-txt">10</span> días
             se cuentan aparte como alerta, no entran en el promedio.
           </p>
@@ -595,8 +595,8 @@ input:checked+.slider::before{transform:translateX(18px)}
               <div id="aduanas-kpi-sali" style="font-size:1.8rem;font-weight:700;color:var(--text);font-family:var(--mono)">—</div>
             </div>
             <div class="card" style="padding:1rem 1.2rem;margin:0">
-              <div class="card-title" style="margin-bottom:.4rem">Demora media (días)</div>
-              <div id="aduanas-kpi-demora" style="font-size:1.8rem;font-weight:700;color:var(--accent);font-family:var(--mono)">—</div>
+              <div class="card-title" style="margin-bottom:.4rem">Demora media (h/m/s)</div>
+              <div id="aduanas-kpi-demora" style="font-size:1.3rem;font-weight:700;color:var(--accent);font-family:var(--mono)">—</div>
             </div>
             <div class="card" style="padding:1rem 1.2rem;margin:0">
               <div class="card-title" style="margin-bottom:.4rem">En alerta (bandeja)</div>
@@ -609,7 +609,7 @@ input:checked+.slider::before{transform:translateX(18px)}
             <table class="data-table">
               <thead><tr>
                 <th>Aduana</th><th>DIRA</th><th>Operaciones</th><th>Salieron</th>
-                <th>Demora media (días)</th><th>En alerta (bandeja)</th>
+                <th>Demora media (h/m/s)</th><th>En alerta (bandeja)</th>
               </tr></thead>
               <tbody id="aduanas-body"></tbody>
             </table>
@@ -989,8 +989,9 @@ let _aduanasDirasCargadas = false;
 
 function _semaforoDemora(dias) {
   if (dias == null) return 'var(--muted)';
-  if (dias <= 1) return 'var(--ok, #16a34a)';
-  if (dias <= 2) return '#d97706';
+  const horas = dias * 24;
+  if (horas <= 6)  return 'var(--ok, #16a34a)';
+  if (horas <= 24) return '#d97706';
   return 'var(--danger)';
 }
 
@@ -1030,7 +1031,7 @@ async function cargarAduanasNacional() {
     const ind = d.indicadores || {};
     document.getElementById('aduanas-kpi-total').textContent = ind.total_operaciones ?? '—';
     document.getElementById('aduanas-kpi-sali').textContent = ind.total_sali ?? '—';
-    document.getElementById('aduanas-kpi-demora').textContent = ind.demora_media_dias != null ? ind.demora_media_dias : '—';
+    document.getElementById('aduanas-kpi-demora').textContent = ind.demora_media_fmt || '—';
     document.getElementById('aduanas-kpi-alerta').textContent = ind.en_alerta_bandeja ?? '—';
 
     const body = document.getElementById('aduanas-body');
@@ -1042,7 +1043,7 @@ async function cargarAduanasNacional() {
         <td style="font-size:.78rem;color:var(--muted)">${escHtml(a.dira_nombre)}</td>
         <td style="font-family:var(--mono)">${a.total_operaciones}</td>
         <td style="font-family:var(--mono)">${a.total_sali}</td>
-        <td style="font-family:var(--mono);font-weight:600;color:${_semaforoDemora(a.demora_media_dias)}">${a.demora_media_dias != null ? a.demora_media_dias : '—'}</td>
+        <td style="font-family:var(--mono);font-weight:600;color:${_semaforoDemora(a.demora_media_dias)}">${a.demora_media_fmt || '—'}</td>
         <td style="font-family:var(--mono)${a.en_alerta_bandeja > 0 ? ';color:var(--danger);font-weight:600' : ''}">${a.en_alerta_bandeja}</td>
       </tr>`).join('');
     }
