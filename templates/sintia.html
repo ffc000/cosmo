@@ -613,6 +613,15 @@ input:checked+.slider::before{transform:translateX(18px)}
             </div>
           </div>
 
+          <div class="card" style="margin:0 0 1rem 0">
+            <div class="card-title">Evolución mensual de la demora <span id="aduanas-evol-ambito" style="font-weight:400;color:var(--muted);font-size:.78rem"></span></div>
+            <p style="font-size:.72rem;color:var(--muted);margin-bottom:.6rem">
+              Promedio agregado (nacional, o de la DIRA filtrada) — con muchas aduanas, un gráfico con una línea
+              por cada una es ilegible. El detalle mes a mes por aduana está en la hoja "Evolución mensual" del Excel.
+            </p>
+            <canvas id="aduanas-chart-evol" height="80"></canvas>
+          </div>
+
           <div class="card" style="margin:0">
             <div class="card-title">Aduanas</div>
             <table class="data-table">
@@ -1011,6 +1020,7 @@ async function recargarDashboard() {
 
 // ── Aduanas del país ─────────────────────────────────────────────────────────
 let _aduanasDirasCargadas = false;
+let _aduanasChartEvol = null;
 
 function _semaforoDemora(dias) {
   if (dias == null) return 'var(--muted)';
@@ -1018,6 +1028,50 @@ function _semaforoDemora(dias) {
   if (horas <= 6)  return 'var(--ok, #16a34a)';
   if (horas <= 24) return '#d97706';
   return 'var(--danger)';
+}
+
+function _renderAduanasEvolChart(serie) {
+  const ctx = document.getElementById('aduanas-chart-evol');
+  if (_aduanasChartEvol) { _aduanasChartEvol.destroy(); _aduanasChartEvol = null; }
+  const labels = serie.map(p => _mesLabelCorto(p.mes));
+  const valoresHoras = serie.map(p => p.demora_media_dias != null ? +(p.demora_media_dias * 24).toFixed(2) : null);
+  _aduanasChartEvol = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Demora media (horas)',
+        data: valoresHoras,
+        borderColor: '#2563eb',
+        backgroundColor: 'rgba(37,99,235,.12)',
+        spanGaps: true,
+        tension: .25,
+        fill: true,
+        pointRadius: 3,
+      }],
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const p = serie[ctx.dataIndex];
+              return p && p.demora_media_fmt ? `Demora media: ${p.demora_media_fmt}` : 'Sin datos';
+            },
+          },
+        },
+      },
+      scales: { y: { beginAtZero: true, title: { display: true, text: 'Horas' } } },
+    },
+  });
+}
+
+function _mesLabelCorto(clave) {
+  const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  const [y, m] = (clave || '').split('-');
+  return m ? `${MESES[parseInt(m,10)-1]} ${y}` : clave;
 }
 
 async function cargarAduanasNacional() {
@@ -1052,6 +1106,8 @@ async function cargarAduanasNacional() {
 
     document.getElementById('aduanas-umbral-txt').textContent = d.umbral_dias;
     document.getElementById('aduanas-anio').value = d.anio;
+    document.getElementById('aduanas-evol-ambito').textContent =
+      dira ? `— ${document.getElementById('aduanas-dira').selectedOptions[0].textContent}` : '— Nacional';
 
     const ind = d.indicadores || {};
     document.getElementById('aduanas-kpi-total').textContent = ind.total_operaciones ?? '—';
@@ -1062,6 +1118,8 @@ async function cargarAduanasNacional() {
       (ind.en_alerta_bandeja != null && ind.en_alerta_demora_larga != null)
         ? `${ind.en_alerta_bandeja} pendiente + ${ind.en_alerta_demora_larga} salió tarde`
         : '';
+
+    _renderAduanasEvolChart(d.evolucion_mensual || []);
 
     const body = document.getElementById('aduanas-body');
     if (!d.rows.length) {
