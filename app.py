@@ -2379,6 +2379,17 @@ def sintia_rec_export():
         return jsonify({"ok": False, "error": str(e)})
 
 
+_MESES_CORTOS = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
+
+def _mes_label_corto(clave_yyyy_mm):
+    """'2026-07' -> 'Jul 2026' -- para encabezados de columna legibles."""
+    try:
+        y, m = clave_yyyy_mm.split("-")
+        return f"{_MESES_CORTOS[int(m) - 1]} {y}"
+    except Exception:
+        return clave_yyyy_mm
+
+
 def _formatear_demora(dias):
     """Convierte una demora en días (float, con fracción) a un texto legible
     en horas/minutos/segundos -- 0.75 días no dice nada de un vistazo, pero
@@ -2390,6 +2401,21 @@ def _formatear_demora(dias):
     h, resto = divmod(total_seg, 3600)
     m, s = divmod(resto, 60)
     return f"{h}h {m:02d}m {s:02d}s"
+
+
+# FECHA_ULT_INT viene como "DD-MM-YYYY HH:MM:SS" (formato argentino), NO
+# como "YYYY-MM-DD..." -- julianday() de SQLite solo reconoce este último y
+# devuelve NULL en silencio con el otro (sin error, por eso el bug de la
+# demora en 0h 00m 00s pasó desapercibido). Se reconstruye a mano con
+# substr() antes de pasarlo a julianday(). El CASE cubre los dos formatos
+# por si en algún momento conviven filas viejas ya en ISO con nuevas en
+# DD-MM-YYYY. A nivel de módulo porque la usan varias funciones (tabla de
+# aduanas, evolución mensual).
+_FECHA_ULT_INT_ISO = (
+    "(CASE WHEN FECHA_ULT_INT LIKE '____-__-__%' THEN FECHA_ULT_INT "
+    "ELSE substr(FECHA_ULT_INT,7,4) || '-' || substr(FECHA_ULT_INT,4,2) "
+    "|| '-' || substr(FECHA_ULT_INT,1,2) || substr(FECHA_ULT_INT,11) END)"
+)
 
 
 def _aduanas_nacional_datos(anio, dira_filtro=None, umbral_alerta_dias=10):
@@ -2409,19 +2435,6 @@ def _aduanas_nacional_datos(anio, dira_filtro=None, umbral_alerta_dias=10):
     tabla = f"DAT_{anio}"
     if not os.path.exists(DB_PATH):
         raise ValueError("BD no cargada.")
-
-    # FECHA_ULT_INT viene como "DD-MM-YYYY HH:MM:SS" (formato argentino), NO
-    # como "YYYY-MM-DD..." -- julianday() de SQLite solo reconoce este último
-    # y devuelve NULL en silencio con el otro (sin error, por eso el bug
-    # pasó desapercibido: la demora daba 0h 00m 00s en vez de fallar fuerte).
-    # Se reconstruye a mano con substr() antes de pasarlo a julianday(). El
-    # CASE cubre los dos formatos por si en algún momento conviven filas
-    # viejas ya en ISO con filas nuevas en DD-MM-YYYY.
-    _FECHA_ULT_INT_ISO = (
-        "(CASE WHEN FECHA_ULT_INT LIKE '____-__-__%' THEN FECHA_ULT_INT "
-        "ELSE substr(FECHA_ULT_INT,7,4) || '-' || substr(FECHA_ULT_INT,4,2) "
-        "|| '-' || substr(FECHA_ULT_INT,1,2) || substr(FECHA_ULT_INT,11) END)"
-    )
 
     with get_db(DB_PATH, row_factory=True) as con:
         existe = con.execute(
@@ -2519,6 +2532,134 @@ def _aduanas_nacional_datos(anio, dira_filtro=None, umbral_alerta_dias=10):
     return filas, indicadores, diras
 
 
+def _aduanas_codigos_de_dira(dira_filtro):
+    """Códigos de aduana (ref_aduanas.cod) que pertenecen a una DIRA -- para
+    filtrar DAT_<año> por DIRA sin poder hacer JOIN entre bases (ver nota en
+    _aduanas_nacional_datos)."""
+    with get_db(HIST_DB, row_factory=True) as con:
+        return {r["cod"] for r in con.execute(
+            "SELECT cod FROM ref_aduanas WHERE indice_dira=?", (dira_filtro,)).fetchall()}
+
+
+def _evolucion_mensual_nacional(anio, dira_filtro=None, umbral_alerta_dias=10, meses=6):
+    """Serie mensual (últimos N meses) de demora media agregada -- nacional,
+    o de la DIRA filtrada si se pasa una. Pensada para el gráfico en
+    pantalla: UNA sola serie, no una por aduana (con 50+ aduanas un gráfico
+    con una línea por cada una sería ilegible). El desglose fino por aduana
+    va solo al Excel -- ver _evolucion_mensual_por_aduana().
+    """
+    tabla = f"DAT_{anio}"
+    if not os.path.exists(DB_PATH):
+        raise ValueError("BD no cargada.")
+
+    aduanas_permitidas = _aduanas_codigos_de_dira(dira_filtro) if dira_filtro else None
+    if dira_filtro and not aduanas_permitidas:
+        return []
+
+    filtro_aduanas_sql = ""
+    params = [umbral_alerta_dias]
+    if aduanas_permitidas:
+        filtro_aduanas_sql = f"AND ADUANA IN ({','.join('?' * len(aduanas_permitidas))})"
+        params += list(aduanas_permitidas)
+
+    with get_db(DB_PATH, row_factory=True) as con:
+        existe = con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,)).fetchone()
+        if not existe:
+            raise ValueError(f"Tabla {tabla} no encontrada.")
+
+        _demora_expr = f"(julianday({_FECHA_ULT_INT_ISO}) - julianday(FECHA_INGRESO_ISO))"
+        rows = con.execute(f"""
+            SELECT substr(FECHA_INGRESO_ISO,1,7) AS mes,
+                   AVG(CASE WHEN ULT_ESTADO = 'SAL' AND {_demora_expr} <= ?
+                       THEN {_demora_expr} END) AS demora_media_dias
+            FROM {tabla}
+            WHERE 1=1 {filtro_aduanas_sql}
+            GROUP BY mes
+            ORDER BY mes
+        """, params).fetchall()
+
+    por_mes = {r["mes"]: r["demora_media_dias"] for r in rows if r["mes"]}
+
+    # Completar los últimos N meses aunque no haya datos en alguno (mejor un
+    # hueco visible en el gráfico que un mes salteado sin explicación).
+    hoy = date.today()
+    serie = []
+    for i in range(meses - 1, -1, -1):
+        y, m = hoy.year, hoy.month - i
+        while m <= 0:
+            m += 12; y -= 1
+        clave = f"{y:04d}-{m:02d}"
+        dias = por_mes.get(clave)
+        serie.append({
+            "mes": clave,
+            "demora_media_dias": dias,
+            "demora_media_fmt": _formatear_demora(dias),
+        })
+    return serie
+
+
+def _evolucion_mensual_por_aduana(anio, dira_filtro=None, umbral_alerta_dias=10, meses=6):
+    """Igual que _evolucion_mensual_nacional() pero desglosado por aduana --
+    solo se usa en el export a Excel, nunca en pantalla (con 50+ aduanas x 6
+    meses ya son 300 celdas, imposible de leer como gráfico pero perfecto
+    como tabla/pivot en una hoja aparte)."""
+    tabla = f"DAT_{anio}"
+    if not os.path.exists(DB_PATH):
+        raise ValueError("BD no cargada.")
+
+    aduanas_permitidas = _aduanas_codigos_de_dira(dira_filtro) if dira_filtro else None
+    if dira_filtro and not aduanas_permitidas:
+        return [], []
+
+    filtro_aduanas_sql = ""
+    params = [umbral_alerta_dias]
+    if aduanas_permitidas:
+        filtro_aduanas_sql = f"AND ADUANA IN ({','.join('?' * len(aduanas_permitidas))})"
+        params += list(aduanas_permitidas)
+
+    with get_db(DB_PATH, row_factory=True) as con:
+        existe = con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,)).fetchone()
+        if not existe:
+            raise ValueError(f"Tabla {tabla} no encontrada.")
+
+        _demora_expr = f"(julianday({_FECHA_ULT_INT_ISO}) - julianday(FECHA_INGRESO_ISO))"
+        rows = con.execute(f"""
+            SELECT ADUANA AS aduana_cod, substr(FECHA_INGRESO_ISO,1,7) AS mes,
+                   AVG(CASE WHEN ULT_ESTADO = 'SAL' AND {_demora_expr} <= ?
+                       THEN {_demora_expr} END) AS demora_media_dias
+            FROM {tabla}
+            WHERE 1=1 {filtro_aduanas_sql}
+            GROUP BY ADUANA, mes
+        """, params).fetchall()
+
+    with get_db(HIST_DB, row_factory=True) as con:
+        cat_aduanas = {r["cod"]: r["nombre"] for r in con.execute("SELECT cod, nombre FROM ref_aduanas").fetchall()}
+
+    hoy = date.today()
+    meses_cols = []
+    for i in range(meses - 1, -1, -1):
+        y, m = hoy.year, hoy.month - i
+        while m <= 0:
+            m += 12; y -= 1
+        meses_cols.append(f"{y:04d}-{m:02d}")
+
+    por_aduana = {}
+    for r in rows:
+        cod = r["aduana_cod"]
+        por_aduana.setdefault(cod, {})[r["mes"]] = r["demora_media_dias"]
+
+    filas = []
+    for cod, valores_por_mes in sorted(por_aduana.items()):
+        fila = {"aduana_cod": cod, "aduana_nombre": cat_aduanas.get(cod, f"{cod} (sin nombre en ref_aduanas)")}
+        for mes in meses_cols:
+            fila[mes] = valores_por_mes.get(mes)
+        filas.append(fila)
+    filas.sort(key=lambda f: f["aduana_nombre"])
+    return filas, meses_cols
+
+
 @app.route("/api/sintia/aduanas_nacional")
 @login_required
 @modulo_required("sintia")
@@ -2543,6 +2684,10 @@ def sintia_aduanas_nacional():
 
     try:
         filas, indicadores, diras = _aduanas_nacional_datos(anio, dira_filtro, umbral_alerta_dias)
+        try:
+            evolucion = _evolucion_mensual_nacional(anio, dira_filtro, umbral_alerta_dias)
+        except Exception:
+            evolucion = []  # que la falla de un gráfico secundario no rompa el resto del panel
         return jsonify({
             "ok": True,
             "anio": anio,
@@ -2550,6 +2695,7 @@ def sintia_aduanas_nacional():
             "indicadores": indicadores,
             "rows": filas,
             "diras": diras,
+            "evolucion_mensual": evolucion,
         })
     except ValueError as e:
         return jsonify({"ok": False, "error": str(e)})
@@ -2637,6 +2783,31 @@ def sintia_aduanas_nacional_export():
         for col in ws2.columns:
             max_len = max((len(str(c.value if c.value is not None else "")) for c in col), default=8)
             ws2.column_dimensions[col[0].column_letter].width = min(max_len + 2, 42)
+
+        # ── Hoja 3: Evolución mensual por aduana (pivot) ──────────────────
+        # Solo acá, no en pantalla -- con 50+ aduanas x 6 meses ya son ~300
+        # celdas, imposible como gráfico legible pero perfecto como tabla
+        # para ordenar/filtrar en Excel (ver conversación 10/07/2026).
+        from openpyxl.utils import get_column_letter
+        filas_evol, meses_cols = _evolucion_mensual_por_aduana(anio, dira_filtro, umbral_alerta_dias)
+        ws3 = wb.create_sheet("Evolución mensual")
+        encabezado_evol = ["Aduana"] + [_mes_label_corto(m) for m in meses_cols]
+        ws3.append(encabezado_evol)
+        for cell in ws3[1]:
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill("solid", fgColor="242D4F")
+            cell.alignment = Alignment(horizontal="center")
+        for f in filas_evol:
+            fila_valores = [f["aduana_nombre"]] + [
+                round(f[m], 4) if f.get(m) is not None else None for m in meses_cols]
+            ws3.append(fila_valores)
+        ws3.column_dimensions["A"].width = 32
+        for i in range(len(meses_cols)):
+            ws3.column_dimensions[get_column_letter(2 + i)].width = 14
+        if filas_evol:
+            ws3.append([])
+            ws3.append(["Valores en días (decimal) — demora media de ese mes, mismo criterio que la hoja Aduanas "
+                        "(solo SAL dentro del umbral). Celda vacía = sin operaciones SAL ese mes."])
 
         buf = io.BytesIO()
         wb.save(buf)
