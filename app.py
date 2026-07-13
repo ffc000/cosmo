@@ -2616,9 +2616,12 @@ def _evolucion_mensual_nacional(anio, dira_filtro=None, umbral_alerta_dias=10, m
 
 def _evolucion_mensual_por_aduana(anio, dira_filtro=None, umbral_alerta_dias=10, meses=6):
     """Igual que _evolucion_mensual_nacional() pero desglosado por aduana --
-    solo se usa en el export a Excel, nunca en pantalla (con 50+ aduanas x 6
-    meses ya son 300 celdas, imposible de leer como gráfico pero perfecto
-    como tabla/pivot en una hoja aparte)."""
+    se usa en el export a Excel (pivot con TODAS las aduanas) y en el Word
+    (tabla + gráfico de cada aduana en alerta). Cada mes trae demora Y
+    cantidad de operaciones -- el gráfico de cada aduana en el Word combina
+    las dos (línea de demora + barras de operaciones en un eje aparte) para
+    poder ver de un vistazo si un pico de demora coincide con un pico de
+    volumen, sin tener que ir a la tabla principal."""
     tabla = f"DAT_{anio}"
     if not os.path.exists(DB_PATH):
         raise ValueError("BD no cargada.")
@@ -2642,6 +2645,7 @@ def _evolucion_mensual_por_aduana(anio, dira_filtro=None, umbral_alerta_dias=10,
         _demora_expr = f"(julianday({_FECHA_ULT_INT_ISO}) - julianday(FECHA_INGRESO_ISO))"
         rows = con.execute(f"""
             SELECT ADUANA AS aduana_cod, substr(FECHA_INGRESO_ISO,1,7) AS mes,
+                   COUNT(*) AS operaciones,
                    AVG(CASE WHEN ULT_ESTADO = 'SAL' AND {_demora_expr} <= ?
                        THEN {_demora_expr} END) AS demora_media_dias
             FROM {tabla}
@@ -2663,13 +2667,14 @@ def _evolucion_mensual_por_aduana(anio, dira_filtro=None, umbral_alerta_dias=10,
     por_aduana = {}
     for r in rows:
         cod = r["aduana_cod"]
-        por_aduana.setdefault(cod, {})[r["mes"]] = r["demora_media_dias"]
+        por_aduana.setdefault(cod, {})[r["mes"]] = {
+            "demora": r["demora_media_dias"], "operaciones": r["operaciones"]}
 
     filas = []
     for cod, valores_por_mes in sorted(por_aduana.items()):
         fila = {"aduana_cod": cod, "aduana_nombre": cat_aduanas.get(cod, f"{cod} (sin nombre en ref_aduanas)")}
         for mes in meses_cols:
-            fila[mes] = valores_por_mes.get(mes)
+            fila[mes] = valores_por_mes.get(mes, {"demora": None, "operaciones": 0})
         filas.append(fila)
     filas.sort(key=lambda f: f["aduana_nombre"])
     return filas, meses_cols
@@ -2841,10 +2846,14 @@ def _verificar_narrativa_aduanas(texto, indicadores, log_fn):
                f"valores, o un número mal citado por la IA — no se pudo distinguir automáticamente).")
 
 
-def _grafico_evolucion_aduana(nombre_aduana, meses_cols, valores_dias):
-    """Gráfico de línea (horas en el eje Y, igual criterio que el gráfico en
-    pantalla) para una aduana puntual -- reusa el estilo visual del resto de
-    la app (ver generar_graficos.py: figsize, spines ocultos, grilla suave)."""
+def _grafico_evolucion_aduana(nombre_aduana, meses_cols, valores_dias, valores_operaciones=None):
+    """Gráfico combinado para una aduana puntual: línea de demora (horas,
+    eje izquierdo, igual criterio que el gráfico en pantalla) + barras de
+    cantidad de operaciones (eje derecho, detrás de la línea). Combinarlos
+    en un solo gráfico -- en vez de uno aparte -- deja ver de un vistazo si
+    un pico de demora coincide con un pico de volumen, sin duplicar
+    gráficos ni alargar el informe al doble por cada aduana en alerta.
+    Reusa el estilo visual del resto de la app (ver generar_graficos.py)."""
     try:
         from generar_graficos import fig_to_bytes
         import matplotlib; matplotlib.use('Agg')
@@ -2857,18 +2866,39 @@ def _grafico_evolucion_aduana(nombre_aduana, meses_cols, valores_dias):
     x = list(range(len(labels)))
 
     fig, ax = plt.subplots(figsize=(7, 3.2), facecolor="white")
+
+    if valores_operaciones:
+        ax2 = ax.twinx()
+        ax2.bar(x, valores_operaciones, color="#94a3b8", alpha=0.35, width=0.55, zorder=1,
+                label="Operaciones")
+        ax2.set_ylabel("Operaciones", fontsize=9, color="#64748b")
+        ax2.tick_params(axis="y", labelsize=8, labelcolor="#64748b")
+        ax2.spines["top"].set_visible(False)
+        max_ops = max(valores_operaciones) if valores_operaciones else 0
+        if max_ops > 0:
+            ax2.set_ylim(0, max_ops * 1.3)  # deja aire arriba para que no tape la línea de demora
+
     # spanGaps manual: matplotlib no une puntos separados por None solo, hay
     # que filtrar los huecos para la línea pero mantener el eje X completo.
     xs_validos = [xi for xi, v in zip(x, horas) if v is not None]
     ys_validos = [v for v in horas if v is not None]
     if ys_validos:
-        ax.plot(xs_validos, ys_validos, marker="o", color="#2563eb", linewidth=2, markersize=5)
-        ax.fill_between(xs_validos, ys_validos, color="#2563eb", alpha=0.08)
+        ax.plot(xs_validos, ys_validos, marker="o", color="#2563eb", linewidth=2, markersize=5, zorder=3,
+                label="Demora media")
+        ax.fill_between(xs_validos, ys_validos, color="#2563eb", alpha=0.08, zorder=2)
+    ax.set_zorder(ax2.get_zorder() + 1 if valores_operaciones else 1)  # línea de demora siempre encima de las barras
+    ax.patch.set_visible(False)  # fondo transparente para que se vean las barras del eje de atrás
     ax.set_xticks(x); ax.set_xticklabels(labels, fontsize=8)
-    ax.set_ylabel("Horas", fontsize=9)
+    ax.set_ylabel("Horas (demora)", fontsize=9, color="#2563eb")
+    ax.tick_params(axis="y", labelsize=8, labelcolor="#2563eb")
     ax.set_title(f"Evolución mensual — {nombre_aduana}", fontsize=10, fontweight="bold")
     ax.yaxis.grid(True, alpha=0.3); ax.set_axisbelow(True)
-    ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+    ax.spines["top"].set_visible(False)
+    if valores_operaciones:
+        ax.spines["right"].set_visible(False)
+        fig.legend(loc="upper left", bbox_to_anchor=(0.13, 0.98), fontsize=7.5, frameon=False, ncol=2)
+    else:
+        ax.spines["right"].set_visible(False)
     if ax.get_ylim()[1] < 1:
         ax.set_ylim(0, 1)
     fig.tight_layout()
@@ -2983,7 +3013,12 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
     # Al final del documento, a propósito: es el detalle más fino de todos
     # (una sección completa por aduana), así que va después de todo lo
     # demás, no compitiendo por atención con el resumen ejecutivo.
-    aduanas_en_alerta = [f for f in filas if f["en_alerta_total"] > 0]
+    #
+    # Orden: de más alertas a menos (a pedido -- distinto del orden
+    # alfabético/por DIRA que usa la tabla "Detalle por aduana" de arriba).
+    aduanas_en_alerta = sorted(
+        [f for f in filas if f["en_alerta_total"] > 0],
+        key=lambda f: f["en_alerta_total"], reverse=True)
     if aduanas_en_alerta and evolucion_por_aduana and meses_cols:
         por_cod = {f["aduana_cod"]: f for f in evolucion_por_aduana}
         doc.add_page_break()
@@ -2992,8 +3027,9 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
         titulo_sec_run.bold = True; titulo_sec_run.font.size = Pt(13)
         titulo_sec_run.font.color.rgb = RGBColor(0x24, 0x2D, 0x4F)
         doc.add_paragraph().add_run(
-            "Demora media mensual de cada aduana que tiene al menos una operación en alerta "
-            "(pendiente hace más del umbral, o que salió tarde) en el período analizado."
+            "Demora media y cantidad de operaciones por mes, de cada aduana que tiene al menos una "
+            "operación en alerta (pendiente hace más del umbral, o que salió tarde). Ordenadas de "
+            "mayor a menor cantidad de alertas."
         ).italic = True
 
         for f in aduanas_en_alerta:
@@ -3002,16 +3038,20 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
                 continue
             doc.add_paragraph()
             nombre_p = doc.add_paragraph()
-            nombre_run = nombre_p.add_run(f["aduana_nombre"])
+            nombre_run = nombre_p.add_run(f"{f['aduana_nombre']} ")
             nombre_run.bold = True; nombre_run.font.size = Pt(12)
+            alerta_run = nombre_p.add_run(f"({f['en_alerta_total']} en alerta)")
+            alerta_run.bold = True; alerta_run.font.size = Pt(12); alerta_run.font.color.rgb = RGBColor(0xDC, 0x26, 0x26)
 
-            valores_dias = [datos_aduana.get(m) for m in meses_cols]
-            _tabla_simple(doc, ["Mes", "Demora media"], [
-                (_mes_label_corto(m), _formatear_demora(v) or "—")
-                for m, v in zip(meses_cols, valores_dias)
+            valores_mes = [datos_aduana.get(m) or {"demora": None, "operaciones": 0} for m in meses_cols]
+            valores_dias = [v["demora"] for v in valores_mes]
+            valores_ops = [v["operaciones"] for v in valores_mes]
+            _tabla_simple(doc, ["Mes", "Demora media", "Operaciones"], [
+                (_mes_label_corto(m), _formatear_demora(v["demora"]) or "—", v["operaciones"])
+                for m, v in zip(meses_cols, valores_mes)
             ])
 
-            img = _grafico_evolucion_aduana(f["aduana_nombre"], meses_cols, valores_dias)
+            img = _grafico_evolucion_aduana(f["aduana_nombre"], meses_cols, valores_dias, valores_ops)
             if img:
                 p_img = doc.add_paragraph(); p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 p_img.add_run().add_picture(img, width=Cm(13))
@@ -3228,7 +3268,8 @@ def sintia_aduanas_nacional_export():
             cell.alignment = Alignment(horizontal="center")
         for f in filas_evol:
             fila_valores = [f["aduana_nombre"]] + [
-                round(f[m], 4) if f.get(m) is not None else None for m in meses_cols]
+                round(f[m]["demora"], 4) if f.get(m) and f[m].get("demora") is not None else None
+                for m in meses_cols]
             ws3.append(fila_valores)
         ws3.column_dimensions["A"].width = 32
         for i in range(len(meses_cols)):
@@ -3241,8 +3282,11 @@ def sintia_aduanas_nacional_export():
         # ── Hoja 4: tablas individuales por aduana en alerta ──────────────
         # A pedido: una tabla por cada aduana con alertas (mes/demora en
         # columna, no pivot como la hoja 3) -- acá solo tablas, sin gráfico
-        # (los gráficos van únicamente en el Word).
-        aduanas_en_alerta = [f for f in filas if f["en_alerta_total"] > 0]
+        # (los gráficos van únicamente en el Word). Mismo orden que el Word:
+        # de más alertas a menos.
+        aduanas_en_alerta = sorted(
+            [f for f in filas if f["en_alerta_total"] > 0],
+            key=lambda f: f["en_alerta_total"], reverse=True)
         if aduanas_en_alerta:
             por_cod = {f["aduana_cod"]: f for f in filas_evol}
             ws4 = wb.create_sheet("Evolución - aduanas en alerta")
@@ -3251,30 +3295,35 @@ def sintia_aduanas_nacional_export():
                 datos_aduana = por_cod.get(f["aduana_cod"])
                 if not datos_aduana:
                     continue
-                celda_titulo = ws4.cell(row=fila_actual, column=1, value=f["aduana_nombre"])
+                celda_titulo = ws4.cell(row=fila_actual, column=1,
+                    value=f"{f['aduana_nombre']} ({f['en_alerta_total']} en alerta)")
                 celda_titulo.font = Font(bold=True, size=12, color="242D4F")
                 fila_actual += 1
 
                 ws4.cell(row=fila_actual, column=1, value="Mes")
                 ws4.cell(row=fila_actual, column=2, value="Demora media (días)")
                 ws4.cell(row=fila_actual, column=3, value="Demora media (h/m/s)")
-                for col in (1, 2, 3):
+                ws4.cell(row=fila_actual, column=4, value="Operaciones")
+                for col in (1, 2, 3, 4):
                     c = ws4.cell(row=fila_actual, column=col)
                     c.font = Font(bold=True, color="FFFFFF")
                     c.fill = PatternFill("solid", fgColor="242D4F")
                 fila_actual += 1
 
                 for mes in meses_cols:
-                    valor_dias = datos_aduana.get(mes)
+                    valor_mes = datos_aduana.get(mes) or {"demora": None, "operaciones": 0}
+                    valor_dias = valor_mes["demora"]
                     ws4.cell(row=fila_actual, column=1, value=_mes_label_corto(mes))
                     ws4.cell(row=fila_actual, column=2, value=round(valor_dias, 4) if valor_dias is not None else None)
                     ws4.cell(row=fila_actual, column=3, value=_formatear_demora(valor_dias) or "")
+                    ws4.cell(row=fila_actual, column=4, value=valor_mes["operaciones"])
                     fila_actual += 1
                 fila_actual += 2  # una fila en blanco entre aduanas
 
             ws4.column_dimensions["A"].width = 32
             ws4.column_dimensions["B"].width = 20
             ws4.column_dimensions["C"].width = 20
+            ws4.column_dimensions["D"].width = 14
 
         buf = io.BytesIO()
         wb.save(buf)
