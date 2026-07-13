@@ -590,7 +590,11 @@ input:checked+.slider::before{transform:translateX(18px)}
             </div>
             <button class="btn btn-primary btn-sm" onclick="cargarAduanasNacional()">Actualizar</button>
             <button class="btn btn-outline btn-sm" onclick="exportarAduanasNacional()">⬇ Excel</button>
+            <button class="btn btn-outline btn-sm" id="btn-informe-aduanas" onclick="generarInformeAduanas()">🤖 Generar informe (Word)</button>
           </div>
+
+          <div id="aduanas-informe-log" class="log-box"></div>
+          <div id="aduanas-informe-descarga" style="display:none;margin-bottom:1rem"></div>
 
           <!-- Indicadores nacionales -->
           <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:.9rem;margin-bottom:1.25rem">
@@ -1152,6 +1156,56 @@ function exportarAduanasNacional() {
   const params = new URLSearchParams({ anio, umbral_dias: umbral });
   if (dira) params.set('dira', dira);
   window.location.href = '/api/sintia/aduanas_nacional/export?' + params.toString();
+}
+
+function generarInformeAduanas() {
+  const anio = document.getElementById('aduanas-anio').value || new Date().getFullYear();
+  const dira = document.getElementById('aduanas-dira').value;
+  const umbral = document.getElementById('aduanas-umbral').value || 10;
+
+  const logBox = document.getElementById('aduanas-informe-log');
+  const dlArea = document.getElementById('aduanas-informe-descarga');
+  const btn = document.getElementById('btn-informe-aduanas');
+
+  logBox.classList.add('visible'); logBox.innerHTML = '';
+  dlArea.classList.remove('visible'); dlArea.style.display = 'none'; dlArea.innerHTML = '';
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Generando...';
+  addLog(logBox, 'Iniciando informe...');
+
+  fetch('/api/sintia/aduanas_nacional/informe', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ anio, dira, umbral_dias: umbral })
+  }).then(r => r.json()).then(data => {
+    if (!data.ok) { addLog(logBox, '✗ ' + data.error, 'err'); _resetBtnInforme(btn); return; }
+    _pollJobInformeAduanas(data.job_id, logBox, dlArea, btn);
+  });
+}
+
+function _resetBtnInforme(btn) {
+  btn.disabled = false; btn.innerHTML = '🤖 Generar informe (Word)';
+}
+
+function _pollJobInformeAduanas(jobId, logBox, dlArea, btn) {
+  let lastLen = 0;
+  const iv = setInterval(() => {
+    fetch('/api/job/' + jobId).then(r => r.json()).then(data => {
+      (data.log || []).slice(lastLen).forEach(l => addLog(logBox, l));
+      lastLen = (data.log || []).length;
+      if (data.status === 'done') {
+        clearInterval(iv); _resetBtnInforme(btn);
+        (data.files || []).forEach((f, i) => {
+          const a = document.createElement('a');
+          a.href = `/api/download/${jobId}/${i}`;
+          a.className = 'download-btn';
+          a.textContent = '📄 Descargar informe (Word)';
+          dlArea.appendChild(a);
+        });
+        dlArea.style.display = 'block'; dlArea.classList.add('visible');
+      } else if (data.status === 'error') {
+        clearInterval(iv); _resetBtnInforme(btn);
+      }
+    });
+  }, 1200);
 }
 
 async function _fetchDashboard() {
