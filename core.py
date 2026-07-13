@@ -26,6 +26,7 @@ from flask import Flask, session, redirect, url_for, request, jsonify
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_wtf import CSRFProtect
+from flask_wtf.csrf import CSRFError
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 # ── App Flask + CSRF + rate limiter ─────────────────────────────────────────
@@ -69,6 +70,28 @@ def _security_headers(resp):
     return resp
 
 csrf = CSRFProtect(app)
+
+@app.errorhandler(CSRFError)
+def _manejar_csrf_error(e):
+    """Sin esto, un token CSRF vencido (típico: la pestaña quedó abierta
+    desde antes de un reinicio del servidor) hacía que Flask devolviera su
+    página de error HTML por default -- y el frontend, que en /api/ siempre
+    espera JSON, explotaba con 'Unexpected token <, "<!doctype"...' en vez
+    de un mensaje entendible. Encontrado en la práctica (13/07/2026)."""
+    if request.path.startswith("/api/"):
+        return jsonify({"ok": False,
+            "error": "Tu sesión quedó desactualizada (token de seguridad vencido). "
+                     "Recargá la página (Ctrl+Shift+R) e intentá de nuevo."}), 400
+    return redirect(url_for("login"))
+
+@app.errorhandler(400)
+def _manejar_400_generico(e):
+    """Mismo criterio que el de arriba, para cualquier otro 400 (ej. un
+    POST con JSON malformado) en rutas /api/ -- que el frontend siempre
+    reciba JSON, nunca la página de error HTML de Flask."""
+    if request.path.startswith("/api/"):
+        return jsonify({"ok": False, "error": "Solicitud inválida."}), 400
+    return e
 
 # storage_uri: en memoria por defecto (sirve con 1 solo worker). Si se corre con
 # más de un worker (gunicorn -w >1), cada worker llevaría su propia cuenta y el
