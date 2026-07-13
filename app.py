@@ -2796,7 +2796,42 @@ def _verificar_narrativa_aduanas(texto, indicadores, log_fn):
                f"valores, o un número mal citado por la IA — no se pudo distinguir automáticamente).")
 
 
-def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicadores, filas, evolucion, narrativa):
+def _grafico_evolucion_aduana(nombre_aduana, meses_cols, valores_dias):
+    """Gráfico de línea (horas en el eje Y, igual criterio que el gráfico en
+    pantalla) para una aduana puntual -- reusa el estilo visual del resto de
+    la app (ver generar_graficos.py: figsize, spines ocultos, grilla suave)."""
+    try:
+        from generar_graficos import fig_to_bytes
+        import matplotlib; matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return None
+
+    labels = [_mes_label_corto(m) for m in meses_cols]
+    horas = [round(v * 24, 2) if v is not None else None for v in valores_dias]
+    x = list(range(len(labels)))
+
+    fig, ax = plt.subplots(figsize=(7, 3.2), facecolor="white")
+    # spanGaps manual: matplotlib no une puntos separados por None solo, hay
+    # que filtrar los huecos para la línea pero mantener el eje X completo.
+    xs_validos = [xi for xi, v in zip(x, horas) if v is not None]
+    ys_validos = [v for v in horas if v is not None]
+    if ys_validos:
+        ax.plot(xs_validos, ys_validos, marker="o", color="#2563eb", linewidth=2, markersize=5)
+        ax.fill_between(xs_validos, ys_validos, color="#2563eb", alpha=0.08)
+    ax.set_xticks(x); ax.set_xticklabels(labels, fontsize=8)
+    ax.set_ylabel("Horas", fontsize=9)
+    ax.set_title(f"Evolución mensual — {nombre_aduana}", fontsize=10, fontweight="bold")
+    ax.yaxis.grid(True, alpha=0.3); ax.set_axisbelow(True)
+    ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+    if ax.get_ylim()[1] < 1:
+        ax.set_ylim(0, 1)
+    fig.tight_layout()
+    return fig_to_bytes(fig)
+
+
+def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicadores, filas, evolucion,
+                                   narrativa, evolucion_por_aduana=None, meses_cols=None):
     """Arma el Word del informe de Aduanas del País: filtros, indicadores,
     análisis IA, evolución mensual, y detalle por aduana. No reusa
     actas.generar_acta_word() -- esa está pensada para minutas de reunión
@@ -2899,6 +2934,43 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
                       [(f["aduana_nombre"], f["dira_nombre"], f["total_operaciones"],
                         f["demora_media_fmt"] or "—", f["en_alerta_total"]) for f in filas])
 
+    # ── Evolución mensual de cada aduana en alerta (tabla + gráfico) ──────
+    # Al final del documento, a propósito: es el detalle más fino de todos
+    # (una sección completa por aduana), así que va después de todo lo
+    # demás, no compitiendo por atención con el resumen ejecutivo.
+    aduanas_en_alerta = [f for f in filas if f["en_alerta_total"] > 0]
+    if aduanas_en_alerta and evolucion_por_aduana and meses_cols:
+        por_cod = {f["aduana_cod"]: f for f in evolucion_por_aduana}
+        doc.add_page_break()
+        titulo_sec = doc.add_paragraph()
+        titulo_sec_run = titulo_sec.add_run("Evolución mensual — aduanas en alerta")
+        titulo_sec_run.bold = True; titulo_sec_run.font.size = Pt(13)
+        titulo_sec_run.font.color.rgb = RGBColor(0x24, 0x2D, 0x4F)
+        doc.add_paragraph().add_run(
+            "Demora media mensual de cada aduana que tiene al menos una operación en alerta "
+            "(pendiente hace más del umbral, o que salió tarde) en el período analizado."
+        ).italic = True
+
+        for f in aduanas_en_alerta:
+            datos_aduana = por_cod.get(f["aduana_cod"])
+            if not datos_aduana:
+                continue
+            doc.add_paragraph()
+            nombre_p = doc.add_paragraph()
+            nombre_run = nombre_p.add_run(f["aduana_nombre"])
+            nombre_run.bold = True; nombre_run.font.size = Pt(12)
+
+            valores_dias = [datos_aduana.get(m) for m in meses_cols]
+            _tabla_simple(doc, ["Mes", "Demora media"], [
+                (_mes_label_corto(m), _formatear_demora(v) or "—")
+                for m, v in zip(meses_cols, valores_dias)
+            ])
+
+            img = _grafico_evolucion_aduana(f["aduana_nombre"], meses_cols, valores_dias)
+            if img:
+                p_img = doc.add_paragraph(); p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                p_img.add_run().add_picture(img, width=Cm(13))
+
     return doc
 
 
@@ -2923,9 +2995,13 @@ def _job_informe_aduanas_nacional(job_id, anio, dira_filtro, umbral_alerta_dias,
             anio, dira_nombre, umbral_alerta_dias, indicadores, filas, evolucion, api_key)
         _verificar_narrativa_aduanas(narrativa, indicadores, log.append)
 
+        log.append("Calculando evolución por aduana...")
+        evolucion_por_aduana, meses_cols = _evolucion_mensual_por_aduana(anio, dira_filtro, umbral_alerta_dias)
+
         log.append("Armando Word...")
         doc = _generar_word_informe_aduanas(
-            anio, dira_nombre, umbral_alerta_dias, indicadores, filas, evolucion, narrativa)
+            anio, dira_nombre, umbral_alerta_dias, indicadores, filas, evolucion, narrativa,
+            evolucion_por_aduana, meses_cols)
         os.makedirs(OUTPUT_FOLDER, exist_ok=True)
         fname = f"Informe_Aduanas_Pais_{anio}_{job_id}.docx"
         ruta = os.path.join(OUTPUT_FOLDER, fname)
@@ -3065,6 +3141,44 @@ def sintia_aduanas_nacional_export():
             ws3.append([])
             ws3.append(["Valores en días (decimal) — demora media de ese mes, mismo criterio que la hoja Aduanas "
                         "(solo SAL dentro del umbral). Celda vacía = sin operaciones SAL ese mes."])
+
+        # ── Hoja 4: tablas individuales por aduana en alerta ──────────────
+        # A pedido: una tabla por cada aduana con alertas (mes/demora en
+        # columna, no pivot como la hoja 3) -- acá solo tablas, sin gráfico
+        # (los gráficos van únicamente en el Word).
+        aduanas_en_alerta = [f for f in filas if f["en_alerta_total"] > 0]
+        if aduanas_en_alerta:
+            por_cod = {f["aduana_cod"]: f for f in filas_evol}
+            ws4 = wb.create_sheet("Evolución - aduanas en alerta")
+            fila_actual = 1
+            for f in aduanas_en_alerta:
+                datos_aduana = por_cod.get(f["aduana_cod"])
+                if not datos_aduana:
+                    continue
+                celda_titulo = ws4.cell(row=fila_actual, column=1, value=f["aduana_nombre"])
+                celda_titulo.font = Font(bold=True, size=12, color="242D4F")
+                fila_actual += 1
+
+                ws4.cell(row=fila_actual, column=1, value="Mes")
+                ws4.cell(row=fila_actual, column=2, value="Demora media (días)")
+                ws4.cell(row=fila_actual, column=3, value="Demora media (h/m/s)")
+                for col in (1, 2, 3):
+                    c = ws4.cell(row=fila_actual, column=col)
+                    c.font = Font(bold=True, color="FFFFFF")
+                    c.fill = PatternFill("solid", fgColor="242D4F")
+                fila_actual += 1
+
+                for mes in meses_cols:
+                    valor_dias = datos_aduana.get(mes)
+                    ws4.cell(row=fila_actual, column=1, value=_mes_label_corto(mes))
+                    ws4.cell(row=fila_actual, column=2, value=round(valor_dias, 4) if valor_dias is not None else None)
+                    ws4.cell(row=fila_actual, column=3, value=_formatear_demora(valor_dias) or "")
+                    fila_actual += 1
+                fila_actual += 2  # una fila en blanco entre aduanas
+
+            ws4.column_dimensions["A"].width = 32
+            ws4.column_dimensions["B"].width = 20
+            ws4.column_dimensions["C"].width = 20
 
         buf = io.BytesIO()
         wb.save(buf)
