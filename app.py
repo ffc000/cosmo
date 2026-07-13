@@ -1359,9 +1359,9 @@ def _procesar_csv(tmp_path, tabla, log, modo="reemplazar"):
             log.append(f"Procesando archivo DAT (streaming, modo: {modo})...")
             cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,))
             tabla_existe = cur.fetchone() is not None
-            rowid_inicio = 1
+            total_antes = 0
             if modo == "agregar" and tabla_existe:
-                rowid_inicio = (cur.execute(f"SELECT COALESCE(MAX(rowid),0) FROM {tabla}").fetchone()[0]) + 1
+                total_antes = cur.execute(f"SELECT COUNT(*) FROM {tabla}").fetchone()[0]
             headers = None
             placeholders = None
             batch = []
@@ -1380,17 +1380,45 @@ def _procesar_csv(tmp_path, tabla, log, modo="reemplazar"):
                         headers = [col_normalize.get(h, h) for h in headers]
                         insert_sql = None
                         if modo == "agregar" and tabla_existe:
-                            log.append("Modo agregar: se suman filas a la tabla existente, no se pisa nada.")
+                            # OPERACION_PAD_EXT (+ MIC + TIPO_REGISTRO) es el
+                            # identificador único real de una operación (dato
+                            # confirmado en conversación 13/07/2026) -- el
+                            # archivo semanal trae el semestre ENTERO
+                            # acumulado, no solo lo nuevo, así que reinsertar
+                            # una operación ya vista es normal y esperado
+                            # (puede venir con el estado actualizado, ej.
+                            # pasó de pendiente a SAL). OR REPLACE hace que
+                            # eso actualice la fila existente en vez de
+                            # duplicarla o de romper por violar el índice
+                            # único. El índice se crea ACÁ, antes de
+                            # insertar nada -- antes se creaba recién al
+                            # final, con lo cual nunca llegaba a hacer nada
+                            # durante el insert (y si había datos repetidos,
+                            # la creación del índice fallaba en silencio,
+                            # dejando la tabla sin el índice Y con los
+                            # duplicados adentro).
+                            log.append("Modo agregar: se actualizan operaciones ya existentes "
+                                       "(por OPERACION_PAD_EXT) y se suman las nuevas.")
+                            try:
+                                cur.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{tabla}_key "
+                                           f"ON {tabla}(OPERACION_PAD_EXT, MIC, TIPO_REGISTRO)")
+                            except Exception as e:
+                                log.append(f"⚠ No se pudo asegurar el índice único antes de insertar: {e}")
                             cols_quoted = ", ".join(f'"{h}"' for h in headers)
                             placeholders = ", ".join(["?" for _ in headers])
-                            insert_sql = f"INSERT INTO {tabla} ({cols_quoted}) VALUES ({placeholders})"
+                            insert_sql = f"INSERT OR REPLACE INTO {tabla} ({cols_quoted}) VALUES ({placeholders})"
                         else:
                             cur.execute(f"DROP TABLE IF EXISTS {tabla}")
                             cols_def = ", ".join([f'"{h}" TEXT' for h in headers])
                             cur.execute(f"CREATE TABLE {tabla} ({cols_def})")
+                            try:
+                                cur.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{tabla}_key "
+                                           f"ON {tabla}(OPERACION_PAD_EXT, MIC, TIPO_REGISTRO)")
+                            except Exception as e:
+                                log.append(f"⚠ No se pudo crear el índice único: {e}")
                             log.append(f"Columnas: {len(headers)} — tabla creada, insertando...")
                             placeholders = ", ".join(["?" for _ in headers])
-                            insert_sql = f"INSERT INTO {tabla} VALUES ({placeholders})"
+                            insert_sql = f"INSERT OR REPLACE INTO {tabla} VALUES ({placeholders})"
                         con.commit()
                         continue
                     vals = [v.strip() for v in line.split(";")]
@@ -1402,40 +1430,57 @@ def _procesar_csv(tmp_path, tabla, log, modo="reemplazar"):
                         batch = []
                         if inserted % 50000 == 0:
                             con.commit()
-                            log.append(f"  {inserted:,} filas insertadas...")
+                            log.append(f"  {inserted:,} filas procesadas...")
             if batch:
                 cur.executemany(insert_sql, batch)
                 inserted += len(batch)
             con.commit()
             if inserted == 0:
                 log.append("✗ No se encontraron datos válidos"); con.close(); return
-            log.append(f"  {inserted:,} filas insertadas en total. Calculando fechas ISO...")
+            total_despues = cur.execute(f"SELECT COUNT(*) FROM {tabla}").fetchone()[0]
+            if modo == "agregar" and tabla_existe:
+                nuevas = total_despues - total_antes
+                actualizadas = inserted - nuevas
+                log.append(f"  {inserted:,} filas del archivo procesadas: {nuevas:,} operaciones nuevas, "
+                          f"{actualizadas:,} actualizadas (ya existían, se refrescó su estado). "
+                          f"Total en la tabla ahora: {total_despues:,}.")
+            else:
+                log.append(f"  {inserted:,} filas insertadas en total. Calculando fechas ISO...")
             for col in ["FECHA_INGRESO_ISO","FECHA_TRANS_ISO"]:
                 try: cur.execute(f"ALTER TABLE {tabla} ADD COLUMN {col} TEXT")
                 except: pass
-            # Actualizar en batches para no bloquear el proceso con tablas grandes
-            iso_sql = f"""UPDATE {tabla} SET
-                FECHA_INGRESO_ISO = CASE
-                    WHEN FECHA_INGRESO IS NOT NULL AND length(FECHA_INGRESO)>=10 THEN
-                        substr(FECHA_INGRESO,7,4)||'-'||substr(FECHA_INGRESO,4,2)||'-'||substr(FECHA_INGRESO,1,2)||
-                        CASE WHEN instr(FECHA_INGRESO,' ')>0 THEN ' '||substr(FECHA_INGRESO,instr(FECHA_INGRESO,' ')+1,5) ELSE ' 00:00' END
-                    ELSE NULL END,
-                FECHA_TRANS_ISO = CASE
-                    WHEN FECHA_TRANS IS NOT NULL AND FECHA_TRANS NOT IN ('-','') AND length(FECHA_TRANS)>=10 THEN
-                        substr(FECHA_TRANS,7,4)||'-'||substr(FECHA_TRANS,4,2)||'-'||substr(FECHA_TRANS,1,2)||
-                        CASE WHEN instr(FECHA_TRANS,' ')>0 THEN ' '||substr(FECHA_TRANS,instr(FECHA_TRANS,' ')+1,5) ELSE ' 00:00' END
-                    ELSE NULL END
-                WHERE rowid BETWEEN ? AND ?"""
-            batch_iso = 50000
-            rowid_fin = rowid_inicio + inserted - 1
-            for start in range(rowid_inicio, rowid_fin + 1, batch_iso):
-                fin_batch = min(start + batch_iso - 1, rowid_fin)
-                cur.execute(iso_sql, (start, fin_batch))
-                con.commit()
-                log.append(f"  Fechas ISO: {fin_batch - rowid_inicio + 1:,} / {inserted:,}...")
-            log.append("Creando índice...")
-            try: cur.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{tabla}_key ON {tabla}(OPERACION_PAD_EXT, MIC, TIPO_REGISTRO)")
-            except: pass
+            # Antes esto actualizaba por rango de rowid (rowid_inicio..rowid_fin
+            # de las filas recién insertadas). Con INSERT OR REPLACE eso ya no
+            # sirve: reemplazar una fila existente la borra y la vuelve a
+            # insertar con un rowid NUEVO, no necesariamente contiguo con las
+            # demás filas de este import -- el rango calculado de antemano
+            # podía quedar desalineado. Ahora se apunta directamente a "toda
+            # fila que todavía no tiene la fecha ISO calculada", que es
+            # exactamente el conjunto correcto sin importar cómo haya
+            # quedado el rowid.
+            rango = cur.execute(f"SELECT MIN(rowid), MAX(rowid) FROM {tabla} WHERE FECHA_INGRESO_ISO IS NULL").fetchone()
+            if rango and rango[0] is not None:
+                rowid_min, rowid_max = rango
+                iso_sql = f"""UPDATE {tabla} SET
+                    FECHA_INGRESO_ISO = CASE
+                        WHEN FECHA_INGRESO IS NOT NULL AND length(FECHA_INGRESO)>=10 THEN
+                            substr(FECHA_INGRESO,7,4)||'-'||substr(FECHA_INGRESO,4,2)||'-'||substr(FECHA_INGRESO,1,2)||
+                            CASE WHEN instr(FECHA_INGRESO,' ')>0 THEN ' '||substr(FECHA_INGRESO,instr(FECHA_INGRESO,' ')+1,5) ELSE ' 00:00' END
+                        ELSE NULL END,
+                    FECHA_TRANS_ISO = CASE
+                        WHEN FECHA_TRANS IS NOT NULL AND FECHA_TRANS NOT IN ('-','') AND length(FECHA_TRANS)>=10 THEN
+                            substr(FECHA_TRANS,7,4)||'-'||substr(FECHA_TRANS,4,2)||'-'||substr(FECHA_TRANS,1,2)||
+                            CASE WHEN instr(FECHA_TRANS,' ')>0 THEN ' '||substr(FECHA_TRANS,instr(FECHA_TRANS,' ')+1,5) ELSE ' 00:00' END
+                        ELSE NULL END
+                    WHERE rowid BETWEEN ? AND ? AND FECHA_INGRESO_ISO IS NULL"""
+                batch_iso = 50000
+                total_iso = rowid_max - rowid_min + 1
+                for start in range(rowid_min, rowid_max + 1, batch_iso):
+                    fin_batch = min(start + batch_iso - 1, rowid_max)
+                    cur.execute(iso_sql, (start, fin_batch))
+                    con.commit()
+                    log.append(f"  Fechas ISO: hasta {min(fin_batch - rowid_min + 1, total_iso):,} / {total_iso:,}...")
+            log.append("Creando índices...")
             try: cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{tabla}_fecha ON {tabla}(FECHA_INGRESO_ISO)")
             except: pass
             try: cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{tabla}_estado ON {tabla}(EST_MIC)")
@@ -1443,7 +1488,7 @@ def _procesar_csv(tmp_path, tabla, log, modo="reemplazar"):
             try: cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{tabla}_aduana ON {tabla}(ADUANA)")
             except: pass
             con.commit(); con.close()
-            log.append(f"✓ {tabla}: {inserted:,} registros, fechas ISO calculadas, índices creados")
+            log.append(f"✓ {tabla}: fechas ISO calculadas, índices creados")
 
             # Opciones de filtro (EST_MIC/ULT_ESTADO/VAR_CONTROL) para el
             # combo de Consulta DAT -- se recalculan acá, una sola vez por
