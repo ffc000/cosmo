@@ -627,14 +627,36 @@ input:checked+.slider::before{transform:translateX(18px)}
           </div>
 
           <div class="card" style="margin:0">
-            <div class="card-title">Aduanas</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:.6rem">
+              <div class="card-title" style="margin-bottom:0">Aduanas</div>
+              <div style="display:flex;align-items:center;gap:.5rem;font-size:.78rem">
+                <label style="color:var(--muted)">Ordenar por</label>
+                <select id="aduanas-orden" onchange="_renderAduanasTabla()" style="width:auto">
+                  <option value="alfabetico">Alfabético</option>
+                  <option value="operaciones">Más operaciones primero</option>
+                  <option value="alertas">Más alertas primero</option>
+                </select>
+              </div>
+            </div>
             <table class="data-table">
-              <thead><tr>
-                <th>Aduana</th><th>DIRA</th><th>Operaciones</th><th>Salieron</th>
-                <th>Demora media (h/m/s)</th><th>En alerta (pendiente)</th><th>En alerta (salió tarde)</th>
-              </tr></thead>
+              <thead>
+                <tr>
+                  <th>Aduana</th><th>DIRA</th><th>Operaciones</th><th>Salieron</th>
+                  <th>Demora media (h/m/s)</th><th>En alerta (pendiente)</th><th>En alerta (salió tarde)</th>
+                </tr>
+                <tr>
+                  <th style="padding:.3rem"><input type="text" id="fcol-aduana" oninput="_renderAduanasTabla()" placeholder="Filtrar..." style="width:100%;font-size:.72rem;padding:.25rem .4rem"></th>
+                  <th style="padding:.3rem"><input type="text" id="fcol-dira" oninput="_renderAduanasTabla()" placeholder="Filtrar..." style="width:100%;font-size:.72rem;padding:.25rem .4rem"></th>
+                  <th style="padding:.3rem"><input type="number" min="0" id="fcol-operaciones" oninput="_renderAduanasTabla()" placeholder="mín." style="width:100%;font-size:.72rem;padding:.25rem .4rem"></th>
+                  <th style="padding:.3rem"><input type="number" min="0" id="fcol-salieron" oninput="_renderAduanasTabla()" placeholder="mín." style="width:100%;font-size:.72rem;padding:.25rem .4rem"></th>
+                  <th style="padding:.3rem"><input type="number" min="0" id="fcol-demora-horas" oninput="_renderAduanasTabla()" placeholder="mín. hs" style="width:100%;font-size:.72rem;padding:.25rem .4rem"></th>
+                  <th style="padding:.3rem"><input type="number" min="0" id="fcol-alerta-pend" oninput="_renderAduanasTabla()" placeholder="mín." style="width:100%;font-size:.72rem;padding:.25rem .4rem"></th>
+                  <th style="padding:.3rem"><input type="number" min="0" id="fcol-alerta-tarde" oninput="_renderAduanasTabla()" placeholder="mín." style="width:100%;font-size:.72rem;padding:.25rem .4rem"></th>
+                </tr>
+              </thead>
               <tbody id="aduanas-body"></tbody>
             </table>
+            <div id="aduanas-filtro-info" style="font-size:.72rem;color:var(--muted);margin-top:.5rem"></div>
           </div>
 
         </div>
@@ -1125,20 +1147,8 @@ async function cargarAduanasNacional() {
 
     _renderAduanasEvolChart(d.evolucion_mensual || []);
 
-    const body = document.getElementById('aduanas-body');
-    if (!d.rows.length) {
-      body.innerHTML = '<tr><td colspan="6" style="color:var(--muted);text-align:center;padding:1.5rem">Sin datos para este año/filtro.</td></tr>';
-    } else {
-      body.innerHTML = d.rows.map(a => `<tr>
-        <td>${escHtml(a.aduana_nombre)}</td>
-        <td style="font-size:.78rem;color:var(--muted)">${escHtml(a.dira_nombre)}</td>
-        <td style="font-family:var(--mono)">${a.total_operaciones}</td>
-        <td style="font-family:var(--mono)">${a.total_sali}</td>
-        <td style="font-family:var(--mono);font-weight:600;color:${_semaforoDemora(a.demora_media_dias)}">${a.demora_media_fmt || '—'}</td>
-        <td style="font-family:var(--mono)${a.en_alerta_bandeja > 0 ? ';color:var(--danger);font-weight:600' : ''}">${a.en_alerta_bandeja}</td>
-        <td style="font-family:var(--mono)${a.en_alerta_demora_larga > 0 ? ';color:var(--danger);font-weight:600' : ''}">${a.en_alerta_demora_larga}</td>
-      </tr>`).join('');
-    }
+    _aduanasRowsRaw = d.rows || [];
+    _renderAduanasTabla();
 
     loading.style.display = 'none';
     content.style.display = 'block';
@@ -1146,6 +1156,65 @@ async function cargarAduanasNacional() {
     error.textContent = 'Error de conexión: ' + e;
     error.style.display = 'block';
     loading.style.display = 'none';
+  }
+}
+
+let _aduanasRowsRaw = [];
+
+function _renderAduanasTabla() {
+  const body = document.getElementById('aduanas-body');
+  const info = document.getElementById('aduanas-filtro-info');
+
+  const fAduana = (document.getElementById('fcol-aduana')?.value || '').trim().toLowerCase();
+  const fDira = (document.getElementById('fcol-dira')?.value || '').trim().toLowerCase();
+  const fOperaciones = parseFloat(document.getElementById('fcol-operaciones')?.value);
+  const fSalieron = parseFloat(document.getElementById('fcol-salieron')?.value);
+  const fDemoraHoras = parseFloat(document.getElementById('fcol-demora-horas')?.value);
+  const fAlertaPend = parseFloat(document.getElementById('fcol-alerta-pend')?.value);
+  const fAlertaTarde = parseFloat(document.getElementById('fcol-alerta-tarde')?.value);
+  const orden = document.getElementById('aduanas-orden')?.value || 'alfabetico';
+
+  let filas = _aduanasRowsRaw.filter(a => {
+    if (fAduana && !a.aduana_nombre.toLowerCase().includes(fAduana)) return false;
+    if (fDira && !a.dira_nombre.toLowerCase().includes(fDira)) return false;
+    if (!isNaN(fOperaciones) && a.total_operaciones < fOperaciones) return false;
+    if (!isNaN(fSalieron) && a.total_sali < fSalieron) return false;
+    if (!isNaN(fDemoraHoras)) {
+      const horas = a.demora_media_dias != null ? a.demora_media_dias * 24 : null;
+      if (horas == null || horas < fDemoraHoras) return false;
+    }
+    if (!isNaN(fAlertaPend) && a.en_alerta_bandeja < fAlertaPend) return false;
+    if (!isNaN(fAlertaTarde) && a.en_alerta_demora_larga < fAlertaTarde) return false;
+    return true;
+  });
+
+  if (orden === 'operaciones') {
+    filas = filas.slice().sort((x, y) => y.total_operaciones - x.total_operaciones);
+  } else if (orden === 'alertas') {
+    filas = filas.slice().sort((x, y) => y.en_alerta_total - x.en_alerta_total);
+  } else {
+    filas = filas.slice().sort((x, y) => x.aduana_nombre.localeCompare(y.aduana_nombre, 'es'));
+  }
+
+  if (!filas.length) {
+    body.innerHTML = '<tr><td colspan="7" style="color:var(--muted);text-align:center;padding:1.5rem">'
+      + (_aduanasRowsRaw.length ? 'Ningún resultado con estos filtros.' : 'Sin datos para este año/filtro.') + '</td></tr>';
+  } else {
+    body.innerHTML = filas.map(a => `<tr>
+      <td>${escHtml(a.aduana_nombre)}</td>
+      <td style="font-size:.78rem;color:var(--muted)">${escHtml(a.dira_nombre)}</td>
+      <td style="font-family:var(--mono)">${a.total_operaciones}</td>
+      <td style="font-family:var(--mono)">${a.total_sali}</td>
+      <td style="font-family:var(--mono);font-weight:600;color:${_semaforoDemora(a.demora_media_dias)}">${a.demora_media_fmt || '—'}</td>
+      <td style="font-family:var(--mono)${a.en_alerta_bandeja > 0 ? ';color:var(--danger);font-weight:600' : ''}">${a.en_alerta_bandeja}</td>
+      <td style="font-family:var(--mono)${a.en_alerta_demora_larga > 0 ? ';color:var(--danger);font-weight:600' : ''}">${a.en_alerta_demora_larga}</td>
+    </tr>`).join('');
+  }
+
+  if (info) {
+    info.textContent = filas.length < _aduanasRowsRaw.length
+      ? `Mostrando ${filas.length} de ${_aduanasRowsRaw.length} aduanas (filtrado).`
+      : '';
   }
 }
 
