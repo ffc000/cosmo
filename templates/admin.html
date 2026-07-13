@@ -109,6 +109,7 @@ select option{background:var(--surface)}
 .tag-sintia{background:var(--accent-light);color:var(--accent);border:1px solid rgba(26,86,219,.2)}
 .tag-minuta{background:var(--accent2-light);color:var(--accent2);border:1px solid rgba(5,122,85,.2)}
 .tag-propia{background:var(--warn-light);color:var(--warn);border:1px solid rgba(217,119,6,.2)}
+.tag-aduanas{background:var(--danger-light);color:var(--danger);border:1px solid rgba(220,38,38,.2)}
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:200;display:none;align-items:center;justify-content:center;padding:1rem}
 .modal-overlay.visible{display:flex}
 .modal{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.75rem;width:100%;max-width:520px;max-height:90vh;overflow-y:auto;box-shadow:var(--shadow)}
@@ -284,6 +285,7 @@ select option{background:var(--surface)}
               <button class="btn btn-outline btn-sm" id="fil-todos" onclick="filtrarHist('todos')">Todos</button>
               <button class="btn btn-outline btn-sm" id="fil-sintia" onclick="filtrarHist('sintia')">📊 SINTIA</button>
               <button class="btn btn-outline btn-sm" id="fil-minuta" onclick="filtrarHist('minuta')">📋 Minutas</button>
+              <button class="btn btn-outline btn-sm" id="fil-aduanas_pais" onclick="filtrarHist('aduanas_pais')">🌎 Aduanas del país</button>
             </div>
           </div>
           <div id="hist-content"><div style="color:var(--muted);font-size:.82rem">Cargando...</div></div>
@@ -559,7 +561,12 @@ function renderHistorial(){
   if(!rows.length){el.innerHTML='<div style="color:var(--muted);font-size:.82rem">No hay registros.</div>';return}
   let html='<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Fecha</th><th>Tipo</th><th>Descripción</th><th class="col-hide-mobile">Usuario</th><th>Archivos</th><th></th></tr></thead><tbody>';
   rows.forEach(r=>{
-    const tipo=r.tipo==='minuta'?'<span class="tag tag-minuta">📋 Minuta</span>':'<span class="tag tag-sintia">📊 SINTIA</span>';
+    const TAGS = {
+      minuta: '<span class="tag tag-minuta">📋 Minuta</span>',
+      vua: '<span class="tag tag-minuta">✈️ VUA</span>',
+      aduanas_pais: '<span class="tag tag-aduanas">🌎 Aduanas del país</span>',
+    };
+    const tipo = TAGS[r.tipo] || '<span class="tag tag-sintia">📊 SINTIA</span>';
     const dl=r.tipo==='minuta'?`<a href="/api/vua/minutas/${r.id}/download" class="download-btn" style="padding:.25rem .6rem;font-size:.65rem">📥</a>`:`${r.archivo_word?`<a href="/api/historial/${r.id}/download/word" class="download-btn" style="padding:.25rem .6rem;font-size:.65rem">📄</a>`:''} ${r.archivo_excel?`<a href="/api/historial/${r.id}/download/excel" class="download-btn" style="padding:.25rem .6rem;font-size:.65rem">📊</a>`:''}`;
     html+=`<tr><td style="font-family:var(--mono);font-size:.68rem;white-space:nowrap">${(r.fecha||'').slice(0,16)}</td><td>${tipo}</td><td style="font-size:.78rem">${esc(r.descripcion||'')}</td><td class="col-hide-mobile" style="font-size:.72rem;color:var(--muted)">${esc(r.usuario||'')}</td><td style="display:flex;gap:.3rem;flex-wrap:wrap">${dl}</td><td><button class="btn btn-danger btn-sm" onclick="eliminarHist('${r.id}','${r.tipo}')">🗑</button></td></tr>`;
   });
