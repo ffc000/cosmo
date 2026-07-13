@@ -681,6 +681,22 @@ def init_historial():
             PRIMARY KEY (tabla, campo)
         )""")
 
+        # ── Metadata de modificaciones a tablas de DB_PATH (PAD) ────────────────────
+        # SQLite no trackea "última modificación" por tabla -- se registra a
+        # mano acá cada vez que una tabla se toca por alguno de los caminos
+        # de import (_procesar_csv, /api/import-sql, /api/import-sql-agregar).
+        # Tablas que ya existían antes de este registro, o que se tocaron
+        # por fuera de estos caminos (ej. corriendo sqlite3 a mano en el
+        # servidor), van a aparecer sin fecha -- es lo honesto, no se puede
+        # inventar una fecha que no se registró.
+        con.execute("""CREATE TABLE IF NOT EXISTS tabla_metadata (
+            tabla TEXT PRIMARY KEY,
+            ultima_modificacion TEXT,
+            usuario TEXT,
+            accion TEXT,
+            filas_procesadas INTEGER
+        )""")
+
         # ── Tabla compartida de integrantes (VUA, SENASA, SINTIA) ──────────────────
         con.execute("""CREATE TABLE IF NOT EXISTS integrantes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1090,6 +1106,51 @@ def db_status():
     except Exception as e:
         return jsonify({"exists":True,"error":str(e)})
 
+
+@app.route("/api/db-tablas-detalle")
+@login_required
+@admin_required("bd")
+def db_tablas_detalle():
+    """Submódulo de administración: nombre + cantidad de registros + schema
+    (columnas y tipos, vía PRAGMA table_info) + última modificación conocida
+    de cada tabla de DB_PATH. La 'última modificación' solo existe para
+    tablas tocadas a través de los caminos de import de esta app (ver
+    _registrar_modificacion_tabla) -- una tabla que ya estaba ahí de antes,
+    o que se tocó corriendo sqlite3 a mano en el servidor, va a aparecer
+    sin esa fecha. No se inventa un dato que no se registró."""
+    if not os.path.exists(DB_PATH):
+        return jsonify({"ok": False, "error": "BD no cargada."})
+    try:
+        with get_db(DB_PATH, row_factory=True) as con:
+            tablas = [r["name"] for r in con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()]
+            detalle = []
+            for t in tablas:
+                try:
+                    filas = con.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]
+                except Exception:
+                    filas = None
+                columnas = [
+                    {"nombre": c["name"], "tipo": c["type"] or "TEXT"}
+                    for c in con.execute(f'PRAGMA table_info("{t}")').fetchall()
+                ]
+                detalle.append({"tabla": t, "filas": filas, "columnas": columnas})
+
+        with get_db(HIST_DB, row_factory=True) as con:
+            metadata = {r["tabla"]: dict(r) for r in con.execute(
+                "SELECT tabla, ultima_modificacion, usuario, accion, filas_procesadas FROM tabla_metadata").fetchall()}
+
+        for d in detalle:
+            m = metadata.get(d["tabla"])
+            d["ultima_modificacion"] = m["ultima_modificacion"] if m else None
+            d["modificado_por"] = m["usuario"] if m else None
+            d["accion"] = m["accion"] if m else None
+
+        return jsonify({"ok": True, "tablas": detalle})
+    except Exception as e:
+        logging.error(f"DB TABLAS DETALLE ERROR | {e}")
+        return jsonify({"ok": False, "error": str(e)})
+
 # ── Upload BD ──────────────────────────────────────────────────────────────────
 @app.route("/api/upload-db", methods=["POST"])
 @login_required
@@ -1104,6 +1165,16 @@ def upload_db():
     size_gb = round(os.path.getsize(DB_PATH)/(1024**3),2)
     logging.info(f"BD UPLOAD | user={session.get('username')} | size={os.path.getsize(DB_PATH)}")
     notificar_telegram(f"📦 BD reemplazada por {session.get('username')} ({size_gb} GB)")
+    try:
+        with get_db(HIST_DB) as con_hist:
+            con_hist.execute("DELETE FROM tabla_metadata")
+        with get_db(DB_PATH) as con_pad:
+            tablas_nuevas = [r[0] for r in con_pad.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+        for t in tablas_nuevas:
+            _registrar_modificacion_tabla(t, session.get("username", "?"), "subir_db_completa")
+    except Exception as e:
+        logging.warning(f"No se pudo registrar metadata tras subir pad.db: {e}")
     return jsonify({"ok":True,"size_gb":size_gb})
 
 # ── Import SQL ─────────────────────────────────────────────────────────────────
@@ -1129,6 +1200,19 @@ def import_sql():
         size = round(os.path.getsize(DB_PATH)/(1024**3),2)
         logging.info(f"SQL IMPORT | user={session.get('username')} | size={size}GB")
         notificar_telegram(f"📦 BD reimportada desde .sql por {session.get('username')} ({size} GB)")
+        # Reemplazo total: la metadata vieja de "última modificación" ya no
+        # aplica a nada (la base entera es otra), y hay que dejar constancia
+        # de TODAS las tablas que quedaron, no solo una.
+        try:
+            with get_db(HIST_DB) as con_hist:
+                con_hist.execute("DELETE FROM tabla_metadata")
+            with get_db(DB_PATH) as con_pad:
+                tablas_nuevas = [r[0] for r in con_pad.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+            for t in tablas_nuevas:
+                _registrar_modificacion_tabla(t, session.get("username", "?"), "importar_sql_completo")
+        except Exception as e:
+            logging.warning(f"No se pudo registrar metadata tras import-sql completo: {e}")
         return jsonify({"ok":True,"size_gb":size})
     except subprocess.TimeoutExpired:
         return jsonify({"ok":False,"error":"Timeout — archivo muy grande."})
@@ -1192,6 +1276,8 @@ def import_sql_agregar():
                      f"tablas={sorted(tablas_en_sql)} | size={size}GB")
         notificar_telegram(f"📦 Tabla(s) {', '.join(sorted(tablas_en_sql))} agregada(s) a la BD "
                            f"por {session.get('username')} ({size} GB)")
+        for t in sorted(tablas_en_sql):
+            _registrar_modificacion_tabla(t, session.get("username", "?"), "importar_sql_agregar")
         return jsonify({"ok": True, "size_gb": size, "tablas": sorted(tablas_en_sql)})
     except subprocess.TimeoutExpired:
         return jsonify({"ok": False, "error": "Timeout — archivo muy grande."})
@@ -1336,7 +1422,7 @@ def _run_csv_job(job_id, tmp_path, tabla, modo="reemplazar"):
     log = job_status[job_id]["log"]
     username = job_status[job_id].get("username", "?")
     try:
-        _procesar_csv(tmp_path, tabla, log, modo)
+        _procesar_csv(tmp_path, tabla, log, modo, username)
         job_status[job_id]["status"] = "done"
         _job_persist(job_id)
         ultimo = log[-1] if log else ""
@@ -1350,7 +1436,24 @@ def _run_csv_job(job_id, tmp_path, tabla, modo="reemplazar"):
         try: os.remove(tmp_path)
         except: pass
 
-def _procesar_csv(tmp_path, tabla, log, modo="reemplazar"):
+def _registrar_modificacion_tabla(tabla, usuario, accion, filas_procesadas=None):
+    """Deja constancia de que esta tabla se tocó ahora -- llamado desde los
+    3 caminos de import (_procesar_csv, /api/import-sql, /api/import-sql-
+    agregar). Sirve para el listado de tablas en Administración (columna
+    'Última modificación')."""
+    try:
+        with get_db(HIST_DB) as con:
+            con.execute(
+                "INSERT INTO tabla_metadata (tabla, ultima_modificacion, usuario, accion, filas_procesadas) "
+                "VALUES (?, datetime('now'), ?, ?, ?) "
+                "ON CONFLICT(tabla) DO UPDATE SET ultima_modificacion=excluded.ultima_modificacion, "
+                "usuario=excluded.usuario, accion=excluded.accion, filas_procesadas=excluded.filas_procesadas",
+                (tabla, usuario, accion, filas_procesadas))
+    except Exception as e:
+        logging.warning(f"No se pudo registrar metadata de modificación para {tabla}: {e}")
+
+
+def _procesar_csv(tmp_path, tabla, log, modo="reemplazar", username="?"):
     con = sqlite3.connect(DB_PATH)
     cur = con.cursor()
     try:
@@ -1489,6 +1592,7 @@ def _procesar_csv(tmp_path, tabla, log, modo="reemplazar"):
             except: pass
             con.commit(); con.close()
             log.append(f"✓ {tabla}: fechas ISO calculadas, índices creados")
+            _registrar_modificacion_tabla(tabla, username, modo, inserted)
 
             # Opciones de filtro (EST_MIC/ULT_ESTADO/VAR_CONTROL) para el
             # combo de Consulta DAT -- se recalculan acá, una sola vez por
@@ -1575,6 +1679,7 @@ def _procesar_csv(tmp_path, tabla, log, modo="reemplazar"):
             except: pass
             con.commit(); con.close()
             log.append(f"✓ RECHAZOS: {inserted:,} registros insertados, fechas calculadas")
+            _registrar_modificacion_tabla("RECHAZOS", username, modo, inserted)
         else:
             con.close()
             log.append(f"✗ Tabla no reconocida: {tabla}")
