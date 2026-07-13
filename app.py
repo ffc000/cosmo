@@ -2060,19 +2060,116 @@ def get_user(username):
 # Requiere: openpyxl   →   pip install openpyxl --break-system-packages
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _resolver_tabla_dat(p):
-    """Resuelve la tabla DAT_<anio> a partir del parámetro opcional 'anio' del
-    request; si no viene o es inválido, usa el año actual. Valida rango para
-    evitar que un valor arbitrario llegue al f-string de la query SQL."""
+def _tablas_dat_disponibles():
+    """Años para los que existe una tabla DAT_<año> en DB_PATH, ordenados."""
+    if not os.path.exists(DB_PATH):
+        return []
+    with get_db(DB_PATH) as con:
+        rows = con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name GLOB 'DAT_[0-9][0-9][0-9][0-9]'"
+        ).fetchall()
+    anios = []
+    for (nombre,) in rows:
+        try: anios.append(int(nombre.replace("DAT_", "")))
+        except ValueError: pass
+    return sorted(anios)
+
+
+def _columnas_de_tabla(tabla):
+    with get_db(DB_PATH) as con:
+        return [r[1] for r in con.execute(f"PRAGMA table_info({tabla})").fetchall()]
+
+
+def _resolver_from_dat(anio_param):
+    """Resuelve qué tabla(s) DAT_<año> usar. anio_param puede ser:
+    - Un año puntual (ej. "2026" o 2026): tabla única, comportamiento de siempre.
+    - "todos": une TODOS los años que existan en la base (ej. 2025+2026).
+    - Una lista separada por comas (ej. "2025,2026"): une esos años puntuales.
+
+    Devuelve (from_sql, descripcion). from_sql es lo que va después de
+    "FROM " en cualquier query existente -- nombre de tabla simple si es un
+    solo año, o una subquery con alias si son varios -- así las queries que
+    ya existían siguen funcionando sin cambios, solo pasándoles este valor
+    en vez de armar "DAT_{anio}" a mano. descripcion es para mostrar/loguear
+    (ej. "2026" o "2025+2026").
+
+    Si se piden varios años, la unión SOLO usa las columnas presentes en
+    TODAS las tablas involucradas -- evita romper si un año tiene columnas
+    que otro no tiene (el schema de PAD fue cambiando con el tiempo). No
+    falla en silencio: si hay que dejar alguna columna afuera por eso, no
+    se avisa acá (quien llama puede loguearlo si le importa comparando
+    contra _columnas_de_tabla de cada tabla)."""
     import datetime as _dt
-    anio = p.get("anio")
+    disponibles = _tablas_dat_disponibles()
+    anio_str = str(anio_param).strip() if anio_param not in (None, "") else ""
+
+    if anio_str == "todos":
+        anios = disponibles
+    elif "," in anio_str:
+        pedidos = set()
+        for x in anio_str.split(","):
+            x = x.strip()
+            if x:
+                try: pedidos.add(int(x))
+                except ValueError: pass
+        anios = [a for a in disponibles if a in pedidos]
+    else:
+        try:
+            anio_unico = int(anio_str) if anio_str else _dt.date.today().year
+        except (TypeError, ValueError):
+            anio_unico = _dt.date.today().year
+        if anio_unico < 2000 or anio_unico > 2100:
+            anio_unico = _dt.date.today().year
+        return f"DAT_{anio_unico}", str(anio_unico)
+
+    if not anios:
+        anio_unico = _dt.date.today().year
+        return f"DAT_{anio_unico}", str(anio_unico)
+
+    if len(anios) == 1:
+        return f"DAT_{anios[0]}", str(anios[0])
+
+    tablas = [f"DAT_{a}" for a in anios]
+    columnas_por_tabla = {t: set(_columnas_de_tabla(t)) for t in tablas}
+    comunes = set.intersection(*columnas_por_tabla.values()) if columnas_por_tabla else set()
+
+    # Si falta alguna columna que el resto de SINTIA da por sentada (Est.
+    # MIC, estado, fechas, aduana), mejor fallar acá con un mensaje claro
+    # que dejar que explote más adelante con un "no such column" críptico
+    # en medio de una query armada dinámicamente.
+    esenciales = {"ADUANA", "EST_MIC", "ULT_ESTADO", "FECHA_INGRESO_ISO", "FECHA_ULT_INT", "OPERACION_PAD_EXT"}
+    faltantes = esenciales - comunes
+    if faltantes:
+        detalle = "; ".join(
+            f"{t} no tiene: {', '.join(sorted(esenciales - columnas_por_tabla[t]))}"
+            for t in tablas if esenciales - columnas_por_tabla[t]
+        )
+        raise ValueError(
+            f"No se pueden combinar los años {'+'.join(str(a) for a in anios)}: "
+            f"falta alguna columna que otros paneles necesitan ({', '.join(sorted(faltantes))}). {detalle}")
+
+    orden_base = [c for c in _columnas_de_tabla(tablas[0]) if c in comunes]
+    cols_sql = ", ".join(f'"{c}"' for c in orden_base)
+    selects = " UNION ALL ".join(f'SELECT {cols_sql} FROM {t}' for t in tablas)
+    descripcion = "+".join(str(a) for a in anios)
+    return f"({selects}) AS DAT_COMBINADO", descripcion
+
+
+def _resolver_tabla_dat(p):
+    """Resuelve la tabla (o unión de tablas) DAT_<anio> a partir del
+    parámetro opcional 'anio' del request; si no viene o es inválido, usa
+    el año actual. Delega en _resolver_from_dat(), que además de un año
+    puntual soporta "todos" o una lista separada por comas."""
+    from_sql, descripcion = _resolver_from_dat(p.get("anio"))
+    # Compatibilidad hacia atrás: el segundo valor devuelto históricamente
+    # era un int (el año). Si es multi-año, se devuelve la descripción como
+    # string (ej. "2025+2026") -- quien la usaba solo para mostrar/loguear
+    # sigue funcionando, quien esperaba estrictamente un int para aritmética
+    # ya no aplica en el caso multi-año (no tenía sentido antes tampoco).
     try:
-        anio = int(anio) if anio else _dt.date.today().year
-    except (TypeError, ValueError):
-        anio = _dt.date.today().year
-    if anio < 2000 or anio > 2100:
-        anio = _dt.date.today().year
-    return f"DAT_{anio}", anio
+        return from_sql, int(descripcion)
+    except ValueError:
+        return from_sql, descripcion
 
 def _calcular_opciones_dat(tabla):
     """SELECT DISTINCT real contra DB_PATH para EST_MIC/ULT_ESTADO/VAR_CONTROL.
@@ -2081,10 +2178,11 @@ def _calcular_opciones_dat(tabla):
     apertura del panel. Devuelve el dict de opciones o levanta ValueError
     si la tabla no existe."""
     with get_db(DB_PATH, row_factory=False) as con:
-        existe = con.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,)).fetchone()
-        if not existe:
-            raise ValueError(f"Tabla {tabla} no encontrada.")
+        if not tabla.startswith("("):
+            existe = con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,)).fetchone()
+            if not existe:
+                raise ValueError(f"Tabla {tabla} no encontrada.")
 
         def _distinct(col):
             try:
@@ -2118,6 +2216,18 @@ def _recalcular_opciones_dat(tabla):
                 "ON CONFLICT(tabla, campo) DO UPDATE SET valores=excluded.valores, actualizado=excluded.actualizado",
                 (tabla, campo, json.dumps(valores)))
     return datos
+
+
+@app.route("/api/sintia/anios_disponibles")
+@login_required
+@modulo_required("sintia")
+def sintia_anios_disponibles():
+    """Años para los que existe una tabla DAT_<año> en la base -- para
+    poblar los selectores de año de Consulta DAT y Aduanas del país con
+    los años que realmente hay, no una lista fija a mano (encontrado en la
+    práctica: con datos2025 recién cargado, hacía falta poder elegir 2025 y
+    2026 juntos, algo que un dropdown fijo no contemplaba)."""
+    return jsonify({"ok": True, "anios": _tablas_dat_disponibles()})
 
 
 @app.route("/api/sintia/dat_opciones")
@@ -2320,10 +2430,13 @@ def sintia_dat_query():
     try:
         with get_db(DB_PATH, row_factory=True) as con:
             cur = con.cursor()
-            # Verificar que la tabla existe
-            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,))
-            if not cur.fetchone():
-                return jsonify({"ok": False, "error": f"Tabla {tabla} no encontrada en la BD."})
+            # Verificar que la tabla existe -- si es una unión multi-año
+            # (empieza con "(", ver _resolver_from_dat), ya viene armada
+            # solo con años que existen de verdad, no hace falta chequear.
+            if not tabla.startswith("("):
+                cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,))
+                if not cur.fetchone():
+                    return jsonify({"ok": False, "error": f"Tabla {tabla} no encontrada en la BD."})
 
             sql = f"SELECT * FROM {tabla} {where} LIMIT ? OFFSET ?"
             page_size = int(p.get("page_size", 500))
@@ -2564,18 +2677,22 @@ def _aduanas_nacional_datos(anio, dira_filtro=None, umbral_alerta_dias=10):
     así que esto se resuelve en Python: se agrega por aduana en DB_PATH,
     se trae el catálogo de aduanas/DIRA de HIST_DB, y se cruzan acá.
 
+    'anio' puede ser un año puntual, "todos", o una lista separada por
+    comas (ej. "2025,2026") -- ver _resolver_from_dat().
+
     Levanta ValueError con un mensaje prolijo si la tabla del año pedido no
     existe. Devuelve (filas, indicadores, diras).
     """
-    tabla = f"DAT_{anio}"
     if not os.path.exists(DB_PATH):
         raise ValueError("BD no cargada.")
+    tabla, _anio_desc = _resolver_from_dat(anio)
 
     with get_db(DB_PATH, row_factory=True) as con:
-        existe = con.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,)).fetchone()
-        if not existe:
-            raise ValueError(f"Tabla {tabla} no encontrada.")
+        if not tabla.startswith("("):
+            existe = con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,)).fetchone()
+            if not existe:
+                raise ValueError(f"Tabla {tabla} no encontrada.")
 
         # Sin ROUND acá: 2 decimales de día son ~14 minutos de error, y ahora
         # se muestra con precisión de segundos -- el redondeo se hace recién
@@ -2683,9 +2800,9 @@ def _evolucion_mensual_nacional(anio, dira_filtro=None, umbral_alerta_dias=10, m
     con una línea por cada una sería ilegible). El desglose fino por aduana
     va solo al Excel -- ver _evolucion_mensual_por_aduana().
     """
-    tabla = f"DAT_{anio}"
     if not os.path.exists(DB_PATH):
         raise ValueError("BD no cargada.")
+    tabla, _anio_desc = _resolver_from_dat(anio)
 
     aduanas_permitidas = _aduanas_codigos_de_dira(dira_filtro) if dira_filtro else None
     if dira_filtro and not aduanas_permitidas:
@@ -2698,10 +2815,11 @@ def _evolucion_mensual_nacional(anio, dira_filtro=None, umbral_alerta_dias=10, m
         params += list(aduanas_permitidas)
 
     with get_db(DB_PATH, row_factory=True) as con:
-        existe = con.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,)).fetchone()
-        if not existe:
-            raise ValueError(f"Tabla {tabla} no encontrada.")
+        if not tabla.startswith("("):
+            existe = con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,)).fetchone()
+            if not existe:
+                raise ValueError(f"Tabla {tabla} no encontrada.")
 
         _demora_expr = f"(julianday({_FECHA_ULT_INT_ISO}) - julianday(FECHA_INGRESO_ISO))"
         rows = con.execute(f"""
@@ -2742,9 +2860,9 @@ def _evolucion_mensual_por_aduana(anio, dira_filtro=None, umbral_alerta_dias=10,
     las dos (línea de demora + barras de operaciones en un eje aparte) para
     poder ver de un vistazo si un pico de demora coincide con un pico de
     volumen, sin tener que ir a la tabla principal."""
-    tabla = f"DAT_{anio}"
     if not os.path.exists(DB_PATH):
         raise ValueError("BD no cargada.")
+    tabla, _anio_desc = _resolver_from_dat(anio)
 
     aduanas_permitidas = _aduanas_codigos_de_dira(dira_filtro) if dira_filtro else None
     if dira_filtro and not aduanas_permitidas:
@@ -2757,10 +2875,11 @@ def _evolucion_mensual_por_aduana(anio, dira_filtro=None, umbral_alerta_dias=10,
         params += list(aduanas_permitidas)
 
     with get_db(DB_PATH, row_factory=True) as con:
-        existe = con.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,)).fetchone()
-        if not existe:
-            raise ValueError(f"Tabla {tabla} no encontrada.")
+        if not tabla.startswith("("):
+            existe = con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,)).fetchone()
+            if not existe:
+                raise ValueError(f"Tabla {tabla} no encontrada.")
 
         _demora_expr = f"(julianday({_FECHA_ULT_INT_ISO}) - julianday(FECHA_INGRESO_ISO))"
         rows = con.execute(f"""
