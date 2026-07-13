@@ -303,6 +303,18 @@ select option{background:var(--surface)}
           <button class="btn btn-outline btn-sm" id="btn-refresh-db" style="margin-top:.6rem">Actualizar estado</button>
         </div>
         <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.6rem">
+            <div class="card-title" style="margin-bottom:0">Detalle de tablas</div>
+            <button class="btn btn-outline btn-sm" id="btn-refresh-tablas-detalle">Actualizar</button>
+          </div>
+          <p style="font-size:.72rem;color:var(--muted);margin-bottom:.6rem">
+            "Última modificación" solo se conoce para tablas cargadas desde esta pantalla (Importar SQL,
+            Agregar tabla, Subir base, o carga de CSV) — SQLite no lo guarda solo. Una tabla que ya estaba
+            cargada antes de este registro va a aparecer sin fecha.
+          </p>
+          <div id="tablas-detalle-content">Cargando...</div>
+        </div>
+        <div class="card">
           <div class="card-title">Carga inicial</div>
           <div style="display:flex;gap:.75rem;margin-bottom:.75rem;flex-wrap:wrap">
             <button class="btn btn-outline btn-sm" id="tab-bd-sql-btn" onclick="switchBdTab('sql')" style="border-color:var(--accent);color:var(--accent);background:var(--accent-light)">📄 Importar SQL</button>
@@ -457,7 +469,7 @@ document.querySelectorAll('.nav-item').forEach(item=>{
     const tab=document.getElementById('tab-'+item.dataset.tab);
     if(tab){tab.classList.add('active');document.getElementById('topbar-title').textContent=TITLES[item.dataset.tab]||'';}
     if(item.dataset.tab==='historial')loadHistorial();
-    if(item.dataset.tab==='bd')loadDbStatus();
+    if(item.dataset.tab==='bd'){loadDbStatus();loadTablasDetalle();}
     if(item.dataset.tab==='usuarios')loadUsuarios();
     if(item.dataset.tab==='sesiones')loadSesiones();
     if(item.dataset.tab==='prompts')loadPrompts();
@@ -503,7 +515,7 @@ function uploadTXT(fId,tabla,mId,lId,bId,anio,modo){
     const iv=setInterval(()=>{
       fetch("/api/job/"+data.job_id).then(r=>r.json()).then(d=>{
         const logs=d.log||[];logs.slice(lastLen).forEach(l=>{const div=document.createElement("div");div.className="log-line"+(l.startsWith("✓")?" ok":l.startsWith("✗")?" err":"");div.textContent=l;logBox.appendChild(div);logBox.scrollTop=logBox.scrollHeight});lastLen=logs.length;
-        if(d.status==="done"){clearInterval(iv);btn.disabled=false;btn.innerHTML="Subir y procesar";const last=logs[logs.length-1]||"";showMsg(mId,last,last.startsWith("✓")?"ok":"err");loadDbStatus();}
+        if(d.status==="done"){clearInterval(iv);btn.disabled=false;btn.innerHTML="Subir y procesar";const last=logs[logs.length-1]||"";showMsg(mId,last,last.startsWith("✓")?"ok":"err");loadDbStatus();loadTablasDetalle();}
         else if(d.status==="error"){clearInterval(iv);btn.disabled=false;btn.innerHTML="Subir y procesar";showMsg(mId,"✗ Error","err");}
       });
     },1500);
@@ -534,8 +546,35 @@ function uploadXHR(fId,url,pId,bId,wId,mId){
   const fd=new FormData();fd.append('file',file);const xhr=new XMLHttpRequest();xhr.open('POST',url);
   xhr.setRequestHeader('X-CSRFToken', document.querySelector('meta[name="csrf-token"]').content);
   document.getElementById(wId).style.display='block';
-  xhr.upload.addEventListener('progress',e=>{if(e.lengthComputable){const p=Math.round(e.loaded/e.total*100);document.getElementById(pId).textContent=`Subiendo... ${p}%`;document.getElementById(bId).style.width=p+'%'}});
-  xhr.addEventListener('load',()=>{const r=JSON.parse(xhr.responseText);if(r.ok)showMsg(mId,`✓ Completado (${r.size_gb} GB). Recargá la página.`,'ok');else showMsg(mId,'✗ '+r.error,'err')});
+  showMsg(mId,'','');
+  xhr.upload.addEventListener('progress',e=>{
+    if(e.lengthComputable){
+      const p=Math.round(e.loaded/e.total*100);
+      document.getElementById(pId).textContent=`Subiendo... ${p}%`;
+      document.getElementById(bId).style.width=p+'%';
+      if(p>=100) document.getElementById(pId).textContent='Archivo subido — procesando en el servidor, puede tardar unos minutos...';
+    }
+  });
+  xhr.addEventListener('load',()=>{
+    let r;
+    try { r=JSON.parse(xhr.responseText); }
+    catch(e) {
+      showMsg(mId,`✗ El servidor respondió algo inesperado (status ${xhr.status}). Revisá si el archivo se procesó igual actualizando el estado de la base.`,'err');
+      return;
+    }
+    if(r.ok){
+      showMsg(mId,`✓ Completado (${r.size_gb} GB)${r.tablas?' — tabla(s): '+r.tablas.join(', '):''}.`,'ok');
+      loadDbStatus();loadTablasDetalle();
+    } else {
+      showMsg(mId,'✗ '+r.error,'err');
+    }
+  });
+  xhr.addEventListener('error',()=>{
+    showMsg(mId,'✗ Error de red — la conexión se cortó antes de terminar. Revisá el estado de la base antes de reintentar (por si el archivo era muy grande y ya se procesó parcialmente).','err');
+  });
+  xhr.addEventListener('timeout',()=>{
+    showMsg(mId,'✗ Se agotó el tiempo de espera. Revisá el estado de la base antes de reintentar.','err');
+  });
   xhr.send(fd);
 }
 document.getElementById('btn-upload-sql').addEventListener('click',()=>uploadXHR('file-sql','/api/import-sql','pct-sql','bar-sql','progress-sql','msg-sql'));
@@ -557,12 +596,53 @@ function loadDbStatus(){
   fetch('/api/db-status').then(r=>r.json()).then(data=>{
     const el=document.getElementById('db-info-content');if(!el)return;
     if(!data.exists){el.innerHTML='<div class="alert alert-warn">La BD no está cargada.</div>';return}
-    let html=`<div class="alert alert-ok">✓ BD cargada — ${data.size_gb} GB</div><div class="stat-row">`;
-    for(const[t,c]of Object.entries(data.tables||{}))html+=`<div class="stat"><div class="stat-label">${t}</div><div class="stat-value">${c.toLocaleString('es-AR')}</div></div>`;
-    el.innerHTML=html+'</div>';
+    const filas = Object.entries(data.tables||{}).sort((a,b)=>a[0].localeCompare(b[0],'es'));
+    let html=`<div class="alert alert-ok">✓ BD cargada — ${data.size_gb} GB — ${filas.length} tabla(s)</div>`;
+    if(filas.length){
+      html+='<table class="data-table" style="margin-top:.6rem"><thead><tr><th>Tabla</th><th>Registros</th></tr></thead><tbody>';
+      filas.forEach(([t,c])=>{html+=`<tr><td style="font-family:var(--mono)">${escHtml(t)}</td><td style="font-family:var(--mono)">${c.toLocaleString('es-AR')}</td></tr>`});
+      html+='</tbody></table>';
+    }
+    el.innerHTML=html;
+  }).catch(e=>{
+    const el=document.getElementById('db-info-content');if(!el)return;
+    el.innerHTML='<div class="alert alert-warn">No se pudo consultar el estado de la base. Reintentá con "Actualizar estado".</div>';
   });
 }
 document.getElementById('btn-refresh-db').addEventListener('click',loadDbStatus);
+
+function loadTablasDetalle(){
+  const el=document.getElementById('tablas-detalle-content');if(!el)return;
+  fetch('/api/db-tablas-detalle').then(r=>r.json()).then(data=>{
+    if(!data.ok){el.innerHTML=`<div class="alert alert-warn">${escHtml(data.error||'No se pudo cargar.')}</div>`;return}
+    if(!data.tablas.length){el.innerHTML='<div style="color:var(--muted);font-size:.82rem">Sin tablas.</div>';return}
+    let html='<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Tabla</th><th>Filas</th><th>Última modificación</th><th>Por</th><th></th></tr></thead><tbody>';
+    data.tablas.forEach((t,i)=>{
+      const filas = t.filas != null ? t.filas.toLocaleString('es-AR') : '—';
+      const fecha = t.ultima_modificacion
+        ? `${escHtml(t.ultima_modificacion)}<div style="color:var(--muted);font-size:.68rem">${escHtml(t.accion||'')}</div>`
+        : '<span style="color:var(--muted)">Desconocida</span>';
+      html+=`<tr>
+        <td style="font-family:var(--mono)">${escHtml(t.tabla)}</td>
+        <td style="font-family:var(--mono)">${filas}</td>
+        <td style="font-size:.78rem">${fecha}</td>
+        <td style="font-size:.78rem;color:var(--muted)">${escHtml(t.modificado_por||'—')}</td>
+        <td><button class="btn btn-outline btn-sm" onclick="_toggleSchemaTabla(${i})">Ver schema</button></td>
+      </tr>
+      <tr id="schema-row-${i}" style="display:none"><td colspan="5" style="background:var(--bg)">
+        <table class="data-table" style="margin:.4rem 0"><thead><tr><th>Columna</th><th>Tipo</th></tr></thead><tbody>
+          ${t.columnas.map(c=>`<tr><td style="font-family:var(--mono)">${escHtml(c.nombre)}</td><td style="font-family:var(--mono);color:var(--muted)">${escHtml(c.tipo)}</td></tr>`).join('')}
+        </tbody></table>
+      </td></tr>`;
+    });
+    el.innerHTML=html+'</tbody></table></div>';
+  }).catch(()=>{el.innerHTML='<div class="alert alert-warn">No se pudo consultar el detalle de tablas.</div>'});
+}
+function _toggleSchemaTabla(i){
+  const row=document.getElementById('schema-row-'+i);
+  if(row) row.style.display = row.style.display==='none' ? 'table-row' : 'none';
+}
+document.getElementById('btn-refresh-tablas-detalle').addEventListener('click',loadTablasDetalle);
 
 let histData=[],filtroActivo='todos';
 function loadHistorial(){fetch('/api/historial/completo').then(r=>r.json()).then(data=>{histData=data.rows||[];renderHistorial()})}
