@@ -2704,6 +2704,263 @@ def sintia_aduanas_nacional():
         return jsonify({"ok": False, "error": str(e)})
 
 
+def _generar_narrativa_aduanas_ia(anio, dira_nombre, umbral_alerta_dias, indicadores, filas, evolucion, api_key):
+    """Arma el prompt y llama a Claude para el análisis del informe de
+    Aduanas del País. Mismo cuidado que generar_ia.py con el informe SINTIA:
+    los únicos números válidos son los que se pasan acá, la IA no debe
+    inventar ni recalcular nada.
+
+    Ojo con el alcance: esta métrica mide tiempo entre registro y salida en
+    PAD, sin desagregar la causa de la demora. No mide específicamente
+    coordinación con SENASA ni ningún otro organismo puntual -- el prompt
+    le pide a la IA que no haga esa atribución causal, porque los datos no
+    la sostienen."""
+    try:
+        import anthropic, httpx
+    except ImportError:
+        raise RuntimeError("El paquete 'anthropic' no está instalado en el servidor.")
+
+    top_alerta = sorted(filas, key=lambda f: f["en_alerta_total"], reverse=True)[:8]
+    top_alerta_txt = "\n".join(
+        f"  - {f['aduana_nombre']} ({f['dira_nombre']}): {f['en_alerta_total']} en alerta "
+        f"({f['en_alerta_bandeja']} pendiente, {f['en_alerta_demora_larga']} salió tarde), "
+        f"demora media {f['demora_media_fmt'] or 'sin datos'}"
+        for f in top_alerta if f["en_alerta_total"] > 0
+    ) or "  (ninguna aduana con alertas en este período)"
+
+    evol_txt = "\n".join(
+        f"  - {_mes_label_corto(p['mes'])}: {p['demora_media_fmt'] or 'sin datos'}"
+        for p in evolucion
+    )
+
+    prompt = f"""ADVERTENCIA: los datos numéricos de este prompt son los ÚNICOS válidos para este informe. No inventes, no redondees distinto, no calcules nada que no esté acá.
+
+Sos un analista de procesos aduaneros de ARCA (Aduana Argentina), sección DI REPA. Redactá el análisis de un informe formal sobre tiempos de desaduanamiento a nivel país, para uso interno.
+
+MUY IMPORTANTE sobre el alcance de la métrica: "demora" acá es exclusivamente el tiempo entre el registro de la operación en PAD (Plataforma Aduanera Digital) y su salida (estado SAL), calculado sobre datos de PAD. NO es una medición de demora específicamente atribuible a la coordinación con SENASA ni con ningún otro organismo puntual — los datos de PAD no permiten desagregar esa causa. Si mencionás alguna hipótesis sobre las causas de la demora, dejala explícitamente como hipótesis a confirmar con otras fuentes, nunca como un hecho que estos datos prueben.
+
+CONTEXTO DEL REPORTE:
+- Año de datos: {anio}
+- Alcance: {dira_nombre}
+- Umbral de alerta: {umbral_alerta_dias} días (operaciones que superan este tiempo, ya sea pendientes o recién salidas, se excluyen del promedio y se cuentan aparte como alerta)
+
+INDICADORES NACIONALES (o del alcance filtrado):
+- Operaciones totales: {indicadores['total_operaciones']}
+- Salieron (SAL): {indicadores['total_sali']}
+- Salieron dentro del umbral (las que arman el promedio): {indicadores['sali_dentro_umbral']}
+- Demora media: {indicadores['demora_media_fmt'] or 'sin datos suficientes'}
+- En alerta - pendientes (siguen en trámite hace más del umbral): {indicadores['en_alerta_bandeja']}
+- En alerta - salieron tarde (superaron el umbral antes de salir): {indicadores['en_alerta_demora_larga']}
+- En alerta total: {indicadores['en_alerta_total']}
+
+EVOLUCIÓN MENSUAL (demora media, últimos meses):
+{evol_txt}
+
+ADUANAS CON MÁS ALERTAS (top 8, si las hay):
+{top_alerta_txt}
+{contexto_repositorio("sintia")}
+
+Redactá en español, tono formal e institucional. Estructura:
+1. Resumen ejecutivo (2-3 líneas)
+2. Lectura de los indicadores nacionales
+3. Tendencia (según la evolución mensual — ¿mejora, empeora, se mantiene?)
+4. Puntos de atención (aduanas con más alertas, si las hay)
+Máximo 350 palabras. No repitas los números en formato de lista, integralos en prosa."""
+
+    client = anthropic.Anthropic(api_key=api_key, http_client=httpx.Client(follow_redirects=True))
+    msg = client.messages.create(
+        model="claude-haiku-4-5-20251001", max_tokens=1200, temperature=0.2,
+        messages=[{"role": "user", "content": prompt}])
+    return msg.content[0].text.strip()
+
+
+def _verificar_narrativa_aduanas(texto, indicadores, log_fn):
+    """Chequeo liviano: los números con más de un dígito que aparecen en la
+    narrativa deberían poder rastrearse a algún valor real que le dimos a
+    la IA. No corrige nada solo (a diferencia de la verificación del informe
+    SINTIA, que sí corrige denominadores) -- acá el texto es más libre y
+    corregir a ciegas podría romper la prosa. Solo deja constancia en el log
+    para que quien revise sepa qué mirar con más atención."""
+    if not texto:
+        return
+    valores_validos = set()
+    for v in indicadores.values():
+        if isinstance(v, (int, float)) and v is not None:
+            valores_validos.add(str(round(v)) if isinstance(v, float) else str(v))
+    numeros_en_texto = set(re.findall(r"\b\d{2,}\b", texto))
+    sospechosos = numeros_en_texto - valores_validos
+    if sospechosos:
+        log_fn(f"  ⚠ Revisar a mano: la narrativa menciona número(s) que no matchean "
+               f"exactamente ningún indicador calculado: {', '.join(sorted(sospechosos))} "
+               f"(puede ser una fecha/año, un cálculo válido tipo diferencia entre dos "
+               f"valores, o un número mal citado por la IA — no se pudo distinguir automáticamente).")
+
+
+def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicadores, filas, evolucion, narrativa):
+    """Arma el Word del informe de Aduanas del País: filtros, indicadores,
+    análisis IA, evolución mensual, y detalle por aduana. No reusa
+    actas.generar_acta_word() -- esa está pensada para minutas de reunión
+    (participantes/secciones con viñetas), estructura distinta a un informe
+    con tablas de indicadores."""
+    from docx import Document
+    from docx.shared import Pt, RGBColor, Cm
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    def _set_cell_color(cell, hex_color):
+        tc = cell._tc; tcPr = tc.get_or_add_tcPr(); shd = OxmlElement("w:shd")
+        shd.set(qn("w:val"), "clear"); shd.set(qn("w:color"), "auto"); shd.set(qn("w:fill"), hex_color)
+        tcPr.append(shd)
+
+    def _tabla_simple(doc, headers, filas_datos):
+        table = doc.add_table(rows=1, cols=len(headers))
+        table.style = "Table Grid"
+        for i, h in enumerate(headers):
+            c = table.rows[0].cells[i]
+            c.text = h
+            c.paragraphs[0].runs[0].bold = True
+            c.paragraphs[0].runs[0].font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+            c.paragraphs[0].runs[0].font.size = Pt(9)
+            _set_cell_color(c, "242D4F")
+        for fila in filas_datos:
+            row = table.add_row()
+            for i, val in enumerate(fila):
+                row.cells[i].text = str(val) if val is not None else "—"
+                for p in row.cells[i].paragraphs:
+                    for r in p.runs:
+                        r.font.size = Pt(9)
+        return table
+
+    doc = Document()
+    for section in doc.sections:
+        section.top_margin = Cm(2.2); section.bottom_margin = Cm(2.2)
+        section.left_margin = Cm(2.5); section.right_margin = Cm(2.2)
+
+    titulo = doc.add_paragraph(); titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = titulo.add_run("INFORME — ADUANAS DEL PAÍS")
+    run.bold = True; run.font.size = Pt(16); run.font.color.rgb = RGBColor(0x24, 0x2D, 0x4F)
+    sub = doc.add_paragraph(); sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    sub_run = sub.add_run("SINTIA — Tiempos de desaduanamiento (PAD)")
+    sub_run.font.size = Pt(11); sub_run.font.color.rgb = RGBColor(0x60, 0x60, 0x60)
+    doc.add_paragraph()
+
+    for label, valor in [
+        ("Generado:", datetime.now().strftime("%d/%m/%Y %H:%M")),
+        ("Año (datos PAD):", str(anio)),
+        ("Alcance:", dira_nombre),
+        ("Umbral de alerta:", f"{umbral_alerta_dias} días"),
+    ]:
+        p = doc.add_paragraph()
+        r1 = p.add_run(f"{label} "); r1.bold = True; r1.font.size = Pt(10)
+        r2 = p.add_run(valor); r2.font.size = Pt(10)
+
+    doc.add_paragraph()
+    nota = doc.add_paragraph()
+    nota_run = nota.add_run(
+        "Metodología: demora = tiempo entre el registro de la operación en PAD y su salida (estado SAL). "
+        "El promedio solo considera operaciones que salieron dentro del umbral definido arriba; las que "
+        "superaron ese tiempo (pendientes o ya salidas) se excluyen del promedio y se cuentan aparte como "
+        "alerta. Esta métrica no desagrega causas de demora (no mide específicamente coordinación con "
+        "SENASA ni con ningún otro organismo)."
+    )
+    nota_run.italic = True; nota_run.font.size = Pt(8.5); nota_run.font.color.rgb = RGBColor(0x60, 0x60, 0x60)
+
+    doc.add_paragraph()
+    doc.add_paragraph().add_run("Indicadores").bold = True
+    _tabla_simple(doc, ["Indicador", "Valor"], [
+        ("Operaciones totales", indicadores["total_operaciones"]),
+        ("Salieron (SAL)", indicadores["total_sali"]),
+        ("Salieron dentro del umbral", indicadores["sali_dentro_umbral"]),
+        ("Demora media", indicadores["demora_media_fmt"] or "—"),
+        ("En alerta — pendiente", indicadores["en_alerta_bandeja"]),
+        ("En alerta — salió tarde", indicadores["en_alerta_demora_larga"]),
+        ("En alerta total", indicadores["en_alerta_total"]),
+    ])
+
+    doc.add_paragraph()
+    doc.add_paragraph().add_run("Análisis").bold = True
+    for parrafo in narrativa.split("\n"):
+        if parrafo.strip():
+            p = doc.add_paragraph(parrafo.strip())
+            for r in p.runs:
+                r.font.size = Pt(10.5)
+
+    if evolucion:
+        doc.add_paragraph()
+        doc.add_paragraph().add_run("Evolución mensual").bold = True
+        _tabla_simple(doc, ["Mes", "Demora media"],
+                      [(_mes_label_corto(p["mes"]), p["demora_media_fmt"] or "—") for p in evolucion])
+
+    if filas:
+        doc.add_paragraph()
+        doc.add_paragraph().add_run("Detalle por aduana").bold = True
+        _tabla_simple(doc, ["Aduana", "DIRA", "Operaciones", "Demora media", "En alerta"],
+                      [(f["aduana_nombre"], f["dira_nombre"], f["total_operaciones"],
+                        f["demora_media_fmt"] or "—", f["en_alerta_total"]) for f in filas])
+
+    return doc
+
+
+def _job_informe_aduanas_nacional(job_id, anio, dira_filtro, umbral_alerta_dias, username):
+    log = job_status[job_id]["log"]
+    try:
+        log.append("Calculando indicadores...")
+        filas, indicadores, diras = _aduanas_nacional_datos(anio, dira_filtro, umbral_alerta_dias)
+        dira_nombre = next((d["nombre"] for d in diras if d["indice"] == dira_filtro), dira_filtro) \
+            if dira_filtro else "Todo el país"
+        evolucion = _evolucion_mensual_nacional(anio, dira_filtro, umbral_alerta_dias)
+
+        api_key = get_api_key()
+        if not api_key:
+            log.append("✗ API key no configurada — no se puede generar el análisis con IA.")
+            job_status[job_id]["status"] = "error"
+            _job_persist(job_id)
+            return
+
+        log.append("Generando análisis con IA...")
+        narrativa = _generar_narrativa_aduanas_ia(
+            anio, dira_nombre, umbral_alerta_dias, indicadores, filas, evolucion, api_key)
+        _verificar_narrativa_aduanas(narrativa, indicadores, log.append)
+
+        log.append("Armando Word...")
+        doc = _generar_word_informe_aduanas(
+            anio, dira_nombre, umbral_alerta_dias, indicadores, filas, evolucion, narrativa)
+        os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+        fname = f"Informe_Aduanas_Pais_{anio}_{job_id}.docx"
+        ruta = os.path.join(OUTPUT_FOLDER, fname)
+        doc.save(ruta)
+
+        job_status[job_id]["files"] = [ruta]
+        job_status[job_id]["status"] = "done"
+        _job_persist(job_id)
+        log.append(f"✓ Informe generado: {fname}")
+        logging.info(f"INFORME ADUANAS PAIS OK | user={username} | anio={anio} | dira={dira_filtro}")
+    except Exception as e:
+        log.append(f"✗ Error: {e}")
+        job_status[job_id]["status"] = "error"
+        _job_persist(job_id)
+        logging.error(f"INFORME ADUANAS PAIS ERROR | user={username} | {e}")
+
+
+@app.route("/api/sintia/aduanas_nacional/informe", methods=["POST"])
+@login_required
+@modulo_required("sintia")
+def sintia_aduanas_nacional_informe():
+    data = request.json or {}
+    anio = data.get("anio", str(date.today().year))
+    dira_filtro = (data.get("dira") or "").strip() or None
+    umbral_alerta_dias = int(data.get("umbral_dias", 10))
+    username = session.get("username", "?")
+
+    job_id = str(uuid.uuid4())[:8]
+    job_create(job_id, "Iniciando informe de Aduanas del País...", username=username)
+    t = threading.Thread(target=_job_informe_aduanas_nacional,
+                         args=(job_id, anio, dira_filtro, umbral_alerta_dias, username))
+    t.start()
+    return jsonify({"ok": True, "job_id": job_id})
+
+
 @app.route("/api/sintia/aduanas_nacional/export")
 @login_required
 @modulo_required("sintia")
