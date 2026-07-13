@@ -136,8 +136,8 @@ def test_analizar_rutina_inexistente_devuelve_error(client, test_user):
 def test_glosario_ejercicios_texto_incluye_los_4_alias(app_module):
     """_glosario_ejercicios_texto() es lo que se inyecta en el prompt de la
     IA — si esto no trae los alias, la IA nunca se entera de la jerga."""
-    import blueprints.training as training
-    texto = training._glosario_ejercicios_texto()
+    import blueprints.training_plan as training_plan
+    texto = training_plan._glosario_ejercicios_texto()
     for alias in ["Máquina de remo", "Tirones de polea (de pie)",
                   "Zancadas alternada hacia adelante", "Sentadilla con balón medicinal"]:
         assert alias in texto
