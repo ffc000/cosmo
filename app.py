@@ -1571,7 +1571,7 @@ def api_historial():
 @admin_required("bd")
 def historial_completo():
     """Mejora 4: paginación y filtros por tipo, fecha y usuario."""
-    tipo    = request.args.get("tipo", "todos")      # todos | sintia | minuta | vua
+    tipo    = request.args.get("tipo", "todos")      # todos | sintia | minuta | vua | aduanas_pais
     usuario = request.args.get("usuario", "")
     desde   = request.args.get("desde", "")
     hasta   = request.args.get("hasta", "")
@@ -1582,7 +1582,11 @@ def historial_completo():
         rows = []
 
         if tipo in ("todos", "sintia"):
-            where = ["1=1"]
+            # Bug encontrado en revisión (10/07/2026): faltaba filtrar por
+            # tipo='sintia' acá -- traía TODAS las filas de historial (VUA,
+            # aduanas_pais, lo que sea) etiquetadas como si fueran sintia, y
+            # además duplicadas con los bloques de abajo cuando tipo="todos".
+            where = ["tipo='sintia'"]
             params = []
             if usuario: where.append("usuario=?"); params.append(usuario)
             if desde:   where.append("fecha>=?"); params.append(desde)
@@ -1613,6 +1617,17 @@ def historial_completo():
             try:
                 rows += [dict(r) for r in con.execute(q, [limit, offset]).fetchall()]
             except: pass
+
+        if tipo in ("todos", "aduanas_pais"):
+            where = ["tipo='aduanas_pais'"]
+            params = []
+            if usuario: where.append("usuario=?"); params.append(usuario)
+            if desde:   where.append("fecha>=?"); params.append(desde)
+            if hasta:   where.append("fecha<=?"); params.append(hasta)
+            q = ("SELECT id, fecha, usuario, 'aduanas_pais' as tipo, descripcion, "
+                 "archivo_word, archivo_excel, revisado FROM historial "
+                 f"WHERE {' AND '.join(where)} ORDER BY fecha DESC LIMIT ? OFFSET ?")
+            rows += [dict(r) for r in con.execute(q, params+[limit, offset]).fetchall()]
 
     todos = sorted(rows, key=lambda x: x.get("fecha",""), reverse=True)
     return jsonify({"ok": True, "rows": todos[:limit], "total": len(todos), "offset": offset})
@@ -2733,11 +2748,41 @@ def _generar_narrativa_aduanas_ia(anio, dira_nombre, umbral_alerta_dias, indicad
         for p in evolucion
     )
 
+    # Contexto específico para Misiones: hay un proyecto de ley (PYMES,
+    # presentado por una diputada de Misiones) que afirma que la falta de
+    # coordinación Aduana-SENASA supone un tiempo medio de liberación de
+    # 24hs. La comparación numérica se calcula acá, en Python -- no se le
+    # pide a la IA que haga la cuenta, solo que la redacte, para no
+    # arriesgar un error de cálculo del modelo en algo potencialmente
+    # citado hacia afuera.
+    bloque_misiones = ""
+    if "misiones" in (dira_nombre or "").lower():
+        demora_dias = indicadores.get("demora_media_dias")
+        if demora_dias is not None:
+            demora_horas = demora_dias * 24
+            comparacion = (
+                f"la demora media medida en PAD ({indicadores['demora_media_fmt']}) es "
+                f"{'MENOR' if demora_horas < 24 else 'MAYOR' if demora_horas > 24 else 'IGUAL'} "
+                f"a esas 24hs (diferencia: {abs(24 - demora_horas):.1f} horas)."
+            )
+        else:
+            comparacion = "no hay datos suficientes en este período para calcular esa comparación."
+        bloque_misiones = f"""
+
+CONTEXTO ADICIONAL (solo para este alcance, Misiones): existe un proyecto de ley de beneficios a
+PYMES, presentado por una diputada de Misiones, que afirma que la falta de coordinación entre
+Aduana y SENASA supone un tiempo medio de liberación de 24 horas. Comparación con lo medido acá: {comparacion}
+IMPORTANTE: mencioná esta comparación en el análisis, pero dejá explícito que la métrica de PAD mide
+tiempo total de registro a salida (no específicamente demora por falta de coordinación con SENASA,
+como afirma el proyecto de ley) — son cosas relacionadas pero no exactamente lo mismo, así que la
+comparación es orientativa, no una confirmación ni un desmentido directo de esa cifra."""
+
     prompt = f"""ADVERTENCIA: los datos numéricos de este prompt son los ÚNICOS válidos para este informe. No inventes, no redondees distinto, no calcules nada que no esté acá.
 
 Sos un analista de procesos aduaneros de ARCA (Aduana Argentina), sección DI REPA. Redactá el análisis de un informe formal sobre tiempos de desaduanamiento a nivel país, para uso interno.
 
 MUY IMPORTANTE sobre el alcance de la métrica: "demora" acá es exclusivamente el tiempo entre el registro de la operación en PAD (Plataforma Aduanera Digital) y su salida (estado SAL), calculado sobre datos de PAD. NO es una medición de demora específicamente atribuible a la coordinación con SENASA ni con ningún otro organismo puntual — los datos de PAD no permiten desagregar esa causa. Si mencionás alguna hipótesis sobre las causas de la demora, dejala explícitamente como hipótesis a confirmar con otras fuentes, nunca como un hecho que estos datos prueben.
+{bloque_misiones}
 
 CONTEXTO DEL REPORTE:
 - Año de datos: {anio}
@@ -3007,6 +3052,25 @@ def _job_informe_aduanas_nacional(job_id, anio, dira_filtro, umbral_alerta_dias,
         ruta = os.path.join(OUTPUT_FOLDER, fname)
         doc.save(ruta)
 
+        # Registrar en 'historial' -- SIN esto, _limpiar_archivos_huerfanos()
+        # (que corre una vez por día y borra todo lo que haya en OUTPUT_FOLDER
+        # sin fila en historial.archivo_word/archivo_excel) se comería este
+        # archivo a las 48hs aunque el job siga diciendo "done". Encontrado
+        # en revisión post-entrega (10/07/2026) -- el resto de los generadores
+        # de Word de esta app sí se registran, este se había quedado afuera.
+        hist_id = str(uuid.uuid4())[:8]
+        # El campo 'pais' no aplica acá (es de la época en que 'historial'
+        # solo tenía informes SINTIA por país vecino) -- se reusa para
+        # guardar la combinación dira+umbral, así _buscar_informe_aduanas_
+        # cacheado() puede encontrar una corrida previa con los mismos
+        # parámetros sin tener que agregar una columna nueva.
+        clave_cache = f"dira={dira_filtro or ''};umbral={umbral_alerta_dias}"
+        with get_db(HIST_DB) as con:
+            con.execute("INSERT INTO historial VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (hist_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), username,
+                 clave_cache, anio, "", "", 1, ruta, "", 0, "aduanas_pais",
+                 f"Aduanas del país — {dira_nombre} ({anio})"))
+
         job_status[job_id]["files"] = [ruta]
         job_status[job_id]["status"] = "done"
         _job_persist(job_id)
@@ -3019,6 +3083,26 @@ def _job_informe_aduanas_nacional(job_id, anio, dira_filtro, umbral_alerta_dias,
         logging.error(f"INFORME ADUANAS PAIS ERROR | user={username} | {e}")
 
 
+def _buscar_informe_aduanas_cacheado(anio, dira_filtro, umbral_alerta_dias, ttl_horas=24):
+    """Si ya se generó un informe con exactamente los mismos parámetros
+    (año/DIRA/umbral) dentro de las últimas ttl_horas, y el archivo todavía
+    existe en disco, lo devuelve -- evita recalcular todo y volver a pagar
+    una llamada a la IA por algo que ya se generó hoy. Mismo criterio de
+    frescura que se usó para los combos de filtro: los datos de PAD no
+    cambian más seguido que una vez por semana, 24hs de caché es conservador."""
+    clave_cache = f"dira={dira_filtro or ''};umbral={umbral_alerta_dias}"
+    limite = (datetime.now() - timedelta(hours=ttl_horas)).strftime("%Y-%m-%d %H:%M:%S")
+    with get_db(HIST_DB, row_factory=True) as con:
+        fila = con.execute(
+            "SELECT id, archivo_word, fecha FROM historial "
+            "WHERE tipo='aduanas_pais' AND anio=? AND pais=? AND fecha >= ? "
+            "ORDER BY fecha DESC LIMIT 1",
+            (anio, clave_cache, limite)).fetchone()
+    if fila and fila["archivo_word"] and os.path.exists(fila["archivo_word"]):
+        return dict(fila)
+    return None
+
+
 @app.route("/api/sintia/aduanas_nacional/informe", methods=["POST"])
 @login_required
 @modulo_required("sintia")
@@ -3029,12 +3113,24 @@ def sintia_aduanas_nacional_informe():
     umbral_alerta_dias = int(data.get("umbral_dias", 10))
     username = session.get("username", "?")
 
+    cacheado = _buscar_informe_aduanas_cacheado(anio, dira_filtro, umbral_alerta_dias)
+    if cacheado:
+        job_id = str(uuid.uuid4())[:8]
+        job_create(job_id, "", username=username)
+        job_status[job_id]["log"].append(
+            f"✓ Ya existe un informe con estos mismos parámetros, generado el {cacheado['fecha']} "
+            f"(dentro de las últimas 24hs) — se reutiliza en vez de volver a llamar a la IA.")
+        job_status[job_id]["files"] = [cacheado["archivo_word"]]
+        job_status[job_id]["status"] = "done"
+        _job_persist(job_id)
+        return jsonify({"ok": True, "job_id": job_id, "cached": True})
+
     job_id = str(uuid.uuid4())[:8]
     job_create(job_id, "Iniciando informe de Aduanas del País...", username=username)
     t = threading.Thread(target=_job_informe_aduanas_nacional,
                          args=(job_id, anio, dira_filtro, umbral_alerta_dias, username))
     t.start()
-    return jsonify({"ok": True, "job_id": job_id})
+    return jsonify({"ok": True, "job_id": job_id, "cached": False})
 
 
 @app.route("/api/sintia/aduanas_nacional/export")
