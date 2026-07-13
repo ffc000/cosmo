@@ -311,8 +311,6 @@ input:checked+.slider::before{transform:translateX(18px)}
           <div class="card-title">Filtros
             <select id="dat-anio" style="font-size:.78rem;margin-left:.5rem;width:auto;display:inline-block" onchange="cargarOpcionesDat()">
               <option value="{{ now.year }}">DAT_{{ now.year }}</option>
-              <option value="{{ now.year - 1 }}">DAT_{{ now.year - 1 }}</option>
-              <option value="{{ now.year - 2 }}">DAT_{{ now.year - 2 }}</option>
             </select>
           </div>
           <div class="form-row cols4">
@@ -578,7 +576,7 @@ input:checked+.slider::before{transform:translateX(18px)}
           <div class="form-row" style="margin-bottom:1rem;align-items:flex-end">
             <div>
               <label>Año</label>
-              <input type="number" id="aduanas-anio" style="width:100px" placeholder="2026">
+              <select id="aduanas-anio" style="width:140px"></select>
             </div>
             <div>
               <label>DIRA</label>
@@ -686,11 +684,38 @@ function showPanel(id) {
   document.getElementById('nav-'+id).classList.add('active');
   document.getElementById('topbar-title').textContent = TITULOS[id] || '';
   // Limpiar el otro panel al cambiar
-  if(id==='dat'){limpiarRec();cargarOpcionesDat();}
+  if(id==='dat'){limpiarRec();_poblarSelectorAnio('dat-anio').then(()=>cargarOpcionesDat());}
   else if(id==='rec'){limpiarDat();}
   else if(id==='dashboard'){loadDashboard();}
   else if(id==='repositorio'){cargarRepositorio('sintia');}
-  else if(id==='aduanas'){cargarAduanasNacional();}
+  else if(id==='aduanas'){_poblarSelectorAnio('aduanas-anio').then(()=>cargarAduanasNacional());}
+}
+
+let _aniosDisponiblesCache = null;
+
+async function _poblarSelectorAnio(selectId, incluirTodos) {
+  incluirTodos = incluirTodos !== false;  // default true; dat-anio también lo admite, PAD lo resuelve
+  const sel = document.getElementById(selectId);
+  if (!sel || sel.dataset.poblado === '1') return;  // no repoblar en cada apertura del panel
+  try {
+    if (!_aniosDisponiblesCache) {
+      const r = await fetch('/api/sintia/anios_disponibles');
+      const d = await r.json();
+      _aniosDisponiblesCache = d.ok ? d.anios : [];
+    }
+    const anios = _aniosDisponiblesCache;
+    const actual = sel.value;
+    let opciones = anios.map(a => `<option value="${a}">DAT_${a}</option>`).join('');
+    if (incluirTodos && anios.length > 1) {
+      opciones += `<option value="todos">Todos los años (${anios.join('+')})</option>`;
+    }
+    if (opciones) {
+      sel.innerHTML = opciones;
+      if ([...sel.options].some(o => o.value === actual)) sel.value = actual;
+      else if (anios.length) sel.value = String(anios[anios.length - 1]);  // el más reciente por default
+    }
+    sel.dataset.poblado = '1';
+  } catch (e) { /* si falla, el select queda con lo que ya tenía (el año actual server-rendered) */ }
 }
 showPanel('dashboard');
 
