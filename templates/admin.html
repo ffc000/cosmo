@@ -306,15 +306,23 @@ select option{background:var(--surface)}
           <div class="card-title">Carga inicial</div>
           <div style="display:flex;gap:.75rem;margin-bottom:.75rem;flex-wrap:wrap">
             <button class="btn btn-outline btn-sm" id="tab-bd-sql-btn" onclick="switchBdTab('sql')" style="border-color:var(--accent);color:var(--accent);background:var(--accent-light)">📄 Importar SQL</button>
+            <button class="btn btn-outline btn-sm" id="tab-bd-agregar-btn" onclick="switchBdTab('agregar')">➕ Agregar tabla (SQL)</button>
             <button class="btn btn-outline btn-sm" id="tab-bd-db-btn" onclick="switchBdTab('db')">🗄️ Subir pad.db</button>
             <button class="btn btn-outline btn-sm" id="tab-bd-rech-btn" onclick="switchBdTab('rech')">🔄 Restaurar RECHAZOS</button>
           </div>
           <div id="bd-panel-sql">
-            <div class="alert alert-info" style="margin-bottom:.6rem">Subí el <strong>.sql</strong> exportado desde SQLite.</div>
+            <div class="alert alert-warn" style="margin-bottom:.6rem">⚠ <strong>Reemplaza TODA la base</strong> (borra todas las tablas existentes — DAT de todos los años, RECHAZOS, todo — y la reconstruye solo con lo que traiga este .sql). Usar solo si el archivo es un dump completo. Para sumar una tabla nueva sin perder las que ya hay, usar "➕ Agregar tabla" en vez de esto.</div>
             <div class="upload-zone" id="zone-sql"><input type="file" id="file-sql" accept=".sql"><div class="upload-icon">📄</div><div class="upload-text"><strong>archivo.sql</strong></div><div class="upload-filename" id="fname-sql"></div></div>
             <div class="progress-wrap" id="progress-sql"><div class="progress-label" id="pct-sql">Subiendo... 0%</div><div class="progress-bar-bg"><div class="progress-bar" id="bar-sql"></div></div></div>
-            <button class="btn btn-primary btn-full" id="btn-upload-sql" style="margin-top:.9rem">Importar SQL</button>
+            <button class="btn btn-primary btn-full" id="btn-upload-sql" style="margin-top:.9rem">Importar SQL (reemplaza todo)</button>
             <div id="msg-sql" style="margin-top:.6rem;font-size:.8rem;"></div>
+          </div>
+          <div id="bd-panel-agregar" style="display:none">
+            <div class="alert alert-info" style="margin-bottom:.6rem">Suma la(s) tabla(s) del .sql a la base <strong>sin borrar</strong> lo que ya existe (ej. cargar <code>DAT_2025</code> sin tocar <code>DAT_2026</code>). Si el .sql intenta crear o borrar una tabla que ya existe, se bloquea antes de tocar nada — así no se pisa un año por accidente.</div>
+            <div class="upload-zone" id="zone-agregar-sql"><input type="file" id="file-agregar-sql" accept=".sql"><div class="upload-icon">➕</div><div class="upload-text"><strong>archivo.sql</strong></div><div class="upload-filename" id="fname-agregar-sql"></div></div>
+            <div class="progress-wrap" id="progress-agregar-sql"><div class="progress-label" id="pct-agregar-sql">Subiendo... 0%</div><div class="progress-bar-bg"><div class="progress-bar" id="bar-agregar-sql"></div></div></div>
+            <button class="btn btn-primary btn-full" id="btn-upload-agregar-sql" style="margin-top:.9rem">Agregar tabla</button>
+            <div id="msg-agregar-sql" style="margin-top:.6rem;font-size:.8rem;"></div>
           </div>
           <div id="bd-panel-db" style="display:none">
             <div class="alert alert-warn" style="margin-bottom:.6rem">⚠ Reemplaza completamente la BD.</div>
@@ -530,13 +538,16 @@ function uploadXHR(fId,url,pId,bId,wId,mId){
   xhr.send(fd);
 }
 document.getElementById('btn-upload-sql').addEventListener('click',()=>uploadXHR('file-sql','/api/import-sql','pct-sql','bar-sql','progress-sql','msg-sql'));
+document.getElementById('btn-upload-agregar-sql').addEventListener('click',()=>uploadXHR('file-agregar-sql','/api/import-sql-agregar','pct-agregar-sql','bar-agregar-sql','progress-agregar-sql','msg-agregar-sql'));
 document.getElementById('btn-upload-db').addEventListener('click',()=>uploadXHR('file-db','/api/upload-db','pct-db','bar-db','progress-db','msg-db'));
 document.getElementById('btn-upload-rech-sql').addEventListener('click',()=>uploadXHR('file-rech-sql','/api/import-rechazos-sql','pct-rech-sql','bar-rech-sql','progress-rech-sql','msg-rech-sql'));
 function switchBdTab(t){
   document.getElementById('bd-panel-sql').style.display=t==='sql'?'block':'none';
+  document.getElementById('bd-panel-agregar').style.display=t==='agregar'?'block':'none';
   document.getElementById('bd-panel-db').style.display=t==='db'?'block':'none';
   document.getElementById('bd-panel-rech').style.display=t==='rech'?'block':'none';
   document.getElementById('tab-bd-sql-btn').style.cssText=t==='sql'?'border-color:var(--accent);color:var(--accent);background:var(--accent-light)':'';
+  document.getElementById('tab-bd-agregar-btn').style.cssText=t==='agregar'?'border-color:var(--accent);color:var(--accent);background:var(--accent-light)':'';
   document.getElementById('tab-bd-db-btn').style.cssText=t==='db'?'border-color:var(--accent);color:var(--accent);background:var(--accent-light)':'';
   document.getElementById('tab-bd-rech-btn').style.cssText=t==='rech'?'border-color:var(--accent);color:var(--accent);background:var(--accent-light)':'';
 }
