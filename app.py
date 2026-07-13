@@ -1135,6 +1135,70 @@ def import_sql():
     except Exception as e:
         return jsonify({"ok":False,"error":str(e)})
 
+@app.route("/api/import-sql-agregar", methods=["POST"])
+@login_required
+@admin_required("bd")
+@limiter.limit("5 per hour", error_message="Demasiados intentos de importar SQL.")
+def import_sql_agregar():
+    """Como import_sql(), pero SIN borrar la base existente primero -- corre
+    el .sql tal cual contra la base actual, para poder sumar una tabla
+    nueva (ej. DAT_2025) sin perder lo que ya hay (ej. DAT_2026). A pedido
+    (13/07/2026): 'Importar SQL' reemplaza TODA la base, y hacía falta una
+    forma de agregar sin destruir lo existente.
+
+    Protección: si el .sql intenta crear o borrar una tabla que YA existe
+    en la base, se bloquea antes de correr nada -- para no pisar datos por
+    accidente sin que el usuario se entere. Si de verdad se quiere
+    reemplazar una tabla puntual, primero hay que borrarla a mano (Limpiar
+    tabla) o usar 'Importar SQL' si se quiere reemplazar todo."""
+    if "file" not in request.files: return jsonify({"ok":False,"error":"No se recibió archivo"})
+    f = request.files["file"]
+    if not f.filename.endswith(".sql"): return jsonify({"ok":False,"error":"El archivo debe ser .sql"})
+
+    contenido = f.read().decode("utf-8", errors="replace")
+
+    tablas_en_sql = set(re.findall(r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["\']?(\w+)["\']?', contenido, re.I))
+    tablas_en_sql |= set(re.findall(r'DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?["\']?(\w+)["\']?', contenido, re.I))
+    if not tablas_en_sql:
+        return jsonify({"ok": False, "error": "No se encontró ningún CREATE TABLE en el archivo."})
+
+    tablas_existentes = set()
+    if os.path.exists(DB_PATH):
+        with get_db(DB_PATH) as con:
+            tablas_existentes = {r[0] for r in con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+
+    colision = tablas_en_sql & tablas_existentes
+    if colision:
+        return jsonify({"ok": False, "error":
+            f"El .sql crea o borra la(s) tabla(s) {', '.join(sorted(colision))}, que ya existen en la base. "
+            f"Para no pisar datos por accidente, este modo no lo permite. Si realmente querés reemplazar "
+            f"esa tabla puntual, borrala primero desde 'Limpiar tabla'; si querés reemplazar TODA la base, "
+            f"usá 'Importar SQL'."})
+
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    tmp_sql = "/tmp/import_cosmo_agregar.sql"
+    with open(tmp_sql, "w", encoding="utf-8") as fh:
+        fh.write(contenido)
+    try:
+        result = subprocess.run(["sqlite3", DB_PATH],
+            stdin=open(tmp_sql, "r", encoding="utf-8", errors="replace"),
+            capture_output=True, text=True, timeout=1800)
+        os.remove(tmp_sql)
+        if result.returncode != 0 and result.stderr:
+            return jsonify({"ok": False, "error": result.stderr[:500]})
+        size = round(os.path.getsize(DB_PATH)/(1024**3), 2)
+        logging.info(f"SQL IMPORT (agregar) | user={session.get('username')} | "
+                     f"tablas={sorted(tablas_en_sql)} | size={size}GB")
+        notificar_telegram(f"📦 Tabla(s) {', '.join(sorted(tablas_en_sql))} agregada(s) a la BD "
+                           f"por {session.get('username')} ({size} GB)")
+        return jsonify({"ok": True, "size_gb": size, "tablas": sorted(tablas_en_sql)})
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "Timeout — archivo muy grande."})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
 @app.route("/api/limpiar-tabla", methods=["POST"])
 @login_required
 @admin_required("bd")
