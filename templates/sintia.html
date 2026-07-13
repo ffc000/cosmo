@@ -591,6 +591,9 @@ input:checked+.slider::before{transform:translateX(18px)}
             <button class="btn btn-primary btn-sm" onclick="cargarAduanasNacional()">Actualizar</button>
             <button class="btn btn-outline btn-sm" onclick="exportarAduanasNacional()">⬇ Excel</button>
             <button class="btn btn-outline btn-sm" id="btn-informe-aduanas" onclick="generarInformeAduanas()">🤖 Generar informe (Word)</button>
+            <label style="display:flex;align-items:center;gap:.3rem;font-size:.72rem;color:var(--muted);cursor:pointer" title="Por default, pedir el mismo informe (mismo año/DIRA/umbral) dentro de las últimas 24hs devuelve el ya generado, sin volver a llamar a la IA. Tildar esto lo salta.">
+              <input type="checkbox" id="aduanas-informe-forzar"> Forzar regeneración
+            </label>
           </div>
 
           <div id="aduanas-informe-log" class="log-box"></div>
@@ -645,8 +648,8 @@ input:checked+.slider::before{transform:translateX(18px)}
                   <th>Demora media (h/m/s)</th><th>En alerta (pendiente)</th><th>En alerta (salió tarde)</th>
                 </tr>
                 <tr>
-                  <th style="padding:.3rem"><input type="text" id="fcol-aduana" oninput="_renderAduanasTabla()" placeholder="Filtrar..." style="width:100%;font-size:.72rem;padding:.25rem .4rem"></th>
-                  <th style="padding:.3rem"><input type="text" id="fcol-dira" oninput="_renderAduanasTabla()" placeholder="Filtrar..." style="width:100%;font-size:.72rem;padding:.25rem .4rem"></th>
+                  <th style="padding:.3rem"><select id="fcol-aduana" onchange="_renderAduanasTabla()" style="width:100%;font-size:.72rem;padding:.25rem .4rem"><option value="">Todas</option></select></th>
+                  <th style="padding:.3rem"><select id="fcol-dira" onchange="_renderAduanasTabla()" style="width:100%;font-size:.72rem;padding:.25rem .4rem"><option value="">Todas</option></select></th>
                   <th style="padding:.3rem"><input type="number" min="0" id="fcol-operaciones" oninput="_renderAduanasTabla()" placeholder="mín." style="width:100%;font-size:.72rem;padding:.25rem .4rem"></th>
                   <th style="padding:.3rem"><input type="number" min="0" id="fcol-salieron" oninput="_renderAduanasTabla()" placeholder="mín." style="width:100%;font-size:.72rem;padding:.25rem .4rem"></th>
                   <th style="padding:.3rem"><input type="number" min="0" id="fcol-demora-horas" oninput="_renderAduanasTabla()" placeholder="mín. hs" style="width:100%;font-size:.72rem;padding:.25rem .4rem"></th>
@@ -1148,6 +1151,7 @@ async function cargarAduanasNacional() {
     _renderAduanasEvolChart(d.evolucion_mensual || []);
 
     _aduanasRowsRaw = d.rows || [];
+    _poblarCombosFiltroAduanas();
     _renderAduanasTabla();
 
     loading.style.display = 'none';
@@ -1161,12 +1165,26 @@ async function cargarAduanasNacional() {
 
 let _aduanasRowsRaw = [];
 
+function _poblarCombosFiltroAduanas() {
+  const llenarCombo = (id, valores) => {
+    const sel = document.getElementById(id);
+    const actual = sel.value;
+    sel.innerHTML = '<option value="">Todas</option>' +
+      valores.map(v => `<option value="${escHtml(v)}">${escHtml(v)}</option>`).join('');
+    if (valores.includes(actual)) sel.value = actual;  // preservar selección si sigue siendo válida
+  };
+  const aduanas = [...new Set(_aduanasRowsRaw.map(a => a.aduana_nombre))].sort((a, b) => a.localeCompare(b, 'es'));
+  const diras = [...new Set(_aduanasRowsRaw.map(a => a.dira_nombre))].sort((a, b) => a.localeCompare(b, 'es'));
+  llenarCombo('fcol-aduana', aduanas);
+  llenarCombo('fcol-dira', diras);
+}
+
 function _renderAduanasTabla() {
   const body = document.getElementById('aduanas-body');
   const info = document.getElementById('aduanas-filtro-info');
 
-  const fAduana = (document.getElementById('fcol-aduana')?.value || '').trim().toLowerCase();
-  const fDira = (document.getElementById('fcol-dira')?.value || '').trim().toLowerCase();
+  const fAduana = document.getElementById('fcol-aduana')?.value || '';
+  const fDira = document.getElementById('fcol-dira')?.value || '';
   const fOperaciones = parseFloat(document.getElementById('fcol-operaciones')?.value);
   const fSalieron = parseFloat(document.getElementById('fcol-salieron')?.value);
   const fDemoraHoras = parseFloat(document.getElementById('fcol-demora-horas')?.value);
@@ -1175,8 +1193,8 @@ function _renderAduanasTabla() {
   const orden = document.getElementById('aduanas-orden')?.value || 'alfabetico';
 
   let filas = _aduanasRowsRaw.filter(a => {
-    if (fAduana && !a.aduana_nombre.toLowerCase().includes(fAduana)) return false;
-    if (fDira && !a.dira_nombre.toLowerCase().includes(fDira)) return false;
+    if (fAduana && a.aduana_nombre !== fAduana) return false;
+    if (fDira && a.dira_nombre !== fDira) return false;
     if (!isNaN(fOperaciones) && a.total_operaciones < fOperaciones) return false;
     if (!isNaN(fSalieron) && a.total_sali < fSalieron) return false;
     if (!isNaN(fDemoraHoras)) {
@@ -1231,6 +1249,7 @@ function generarInformeAduanas() {
   const anio = document.getElementById('aduanas-anio').value || new Date().getFullYear();
   const dira = document.getElementById('aduanas-dira').value;
   const umbral = document.getElementById('aduanas-umbral').value || 10;
+  const forzar = document.getElementById('aduanas-informe-forzar').checked;
 
   const logBox = document.getElementById('aduanas-informe-log');
   const dlArea = document.getElementById('aduanas-informe-descarga');
@@ -1243,7 +1262,7 @@ function generarInformeAduanas() {
 
   fetch('/api/sintia/aduanas_nacional/informe', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ anio, dira, umbral_dias: umbral })
+    body: JSON.stringify({ anio, dira, umbral_dias: umbral, forzar })
   }).then(r => r.json()).then(data => {
     if (!data.ok) { addLog(logBox, '✗ ' + data.error, 'err'); _resetBtnInforme(btn); return; }
     _pollJobInformeAduanas(data.job_id, logBox, dlArea, btn);
