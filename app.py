@@ -2902,12 +2902,21 @@ def _grafico_evolucion_aduana(nombre_aduana, meses_cols, valores_dias, valores_o
     ax.set_xticks(x); ax.set_xticklabels(labels, fontsize=8)
     ax.set_ylabel("Horas (demora)", fontsize=9, color="#2563eb")
     ax.tick_params(axis="y", labelsize=8, labelcolor="#2563eb")
-    ax.set_title(f"Evolución mensual — {nombre_aduana}", fontsize=10, fontweight="bold")
+    ax.set_title(f"Evolución mensual — {nombre_aduana}", fontsize=10, fontweight="bold", pad=12)
     ax.yaxis.grid(True, alpha=0.3); ax.set_axisbelow(True)
     ax.spines["top"].set_visible(False)
     if valores_operaciones:
         ax.spines["right"].set_visible(False)
-        fig.legend(loc="upper left", bbox_to_anchor=(0.13, 0.98), fontsize=7.5, frameon=False, ncol=2)
+        # Leyenda combinada (demora + operaciones) DEBAJO del gráfico, no
+        # arriba -- ahí arriba estaba pisando el título (reportado en la
+        # práctica: "el título con la descripción de las líneas quedó
+        # solapado"). bbox_to_anchor con y negativo la saca del área de
+        # ejes, fig_to_bytes ya recorta con bbox_inches='tight' así que no
+        # queda espacio en blanco de más.
+        handles1, labels1 = ax.get_legend_handles_labels()
+        handles2, labels2 = ax2.get_legend_handles_labels()
+        ax.legend(handles1 + handles2, labels1 + labels2,
+                  loc="upper center", bbox_to_anchor=(0.5, -0.22), fontsize=7.5, frameon=False, ncol=2)
     else:
         ax.spines["right"].set_visible(False)
     if ax.get_ylim()[1] < 1:
