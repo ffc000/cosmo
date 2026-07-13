@@ -2405,6 +2405,17 @@ def _mes_label_corto(clave_yyyy_mm):
         return clave_yyyy_mm
 
 
+# Se sube a mano cada vez que cambia algo en cómo se arma el informe de
+# Aduanas del País (Word/Excel) -- entra en la clave de caché de 24hs
+# (_buscar_informe_aduanas_cacheado) para que un deploy nuevo invalide sola
+# la caché vieja, y se imprime en el propio Word para poder confirmar de un
+# vistazo con qué versión del generador se armó un archivo dado (encontrado
+# en la práctica: sin esto, pedir "el mismo informe" después de actualizar
+# el código devolvía el archivo cacheado de la versión anterior, sin
+# ninguna señal de que el código sí se había actualizado).
+_INFORME_ADUANAS_VERSION = "v3-2026-07-13"
+
+
 def _formatear_demora(dias):
     """Convierte una demora en días (float, con fracción) a un texto legible
     en horas/minutos/segundos -- 0.75 días no dice nada de un vistazo, pero
@@ -2960,6 +2971,7 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
         ("Año (datos PAD):", str(anio)),
         ("Alcance:", dira_nombre),
         ("Umbral de alerta:", f"{umbral_alerta_dias} días"),
+        ("Versión del generador:", _INFORME_ADUANAS_VERSION),
     ]:
         p = doc.add_paragraph()
         r1 = p.add_run(f"{label} "); r1.bold = True; r1.font.size = Pt(10)
@@ -3101,10 +3113,11 @@ def _job_informe_aduanas_nacional(job_id, anio, dira_filtro, umbral_alerta_dias,
         hist_id = str(uuid.uuid4())[:8]
         # El campo 'pais' no aplica acá (es de la época en que 'historial'
         # solo tenía informes SINTIA por país vecino) -- se reusa para
-        # guardar la combinación dira+umbral, así _buscar_informe_aduanas_
-        # cacheado() puede encontrar una corrida previa con los mismos
-        # parámetros sin tener que agregar una columna nueva.
-        clave_cache = f"dira={dira_filtro or ''};umbral={umbral_alerta_dias}"
+        # guardar la combinación dira+umbral+versión, así _buscar_informe_
+        # aduanas_cacheado() puede encontrar una corrida previa con los
+        # mismos parámetros Y la misma versión del generador, sin tener que
+        # agregar una columna nueva.
+        clave_cache = f"dira={dira_filtro or ''};umbral={umbral_alerta_dias};v={_INFORME_ADUANAS_VERSION}"
         with get_db(HIST_DB) as con:
             con.execute("INSERT INTO historial VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (hist_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), username,
@@ -3125,12 +3138,15 @@ def _job_informe_aduanas_nacional(job_id, anio, dira_filtro, umbral_alerta_dias,
 
 def _buscar_informe_aduanas_cacheado(anio, dira_filtro, umbral_alerta_dias, ttl_horas=24):
     """Si ya se generó un informe con exactamente los mismos parámetros
-    (año/DIRA/umbral) dentro de las últimas ttl_horas, y el archivo todavía
-    existe en disco, lo devuelve -- evita recalcular todo y volver a pagar
-    una llamada a la IA por algo que ya se generó hoy. Mismo criterio de
+    (año/DIRA/umbral) Y la misma versión del generador (_INFORME_ADUANAS_
+    VERSION) dentro de las últimas ttl_horas, y el archivo todavía existe en
+    disco, lo devuelve -- evita recalcular todo y volver a pagar una
+    llamada a la IA por algo que ya se generó hoy. Mismo criterio de
     frescura que se usó para los combos de filtro: los datos de PAD no
-    cambian más seguido que una vez por semana, 24hs de caché es conservador."""
-    clave_cache = f"dira={dira_filtro or ''};umbral={umbral_alerta_dias}"
+    cambian más seguido que una vez por semana, 24hs de caché es
+    conservador. Incluir la versión evita el problema real que apareció:
+    un deploy de código nuevo servía igual el archivo viejo cacheado."""
+    clave_cache = f"dira={dira_filtro or ''};umbral={umbral_alerta_dias};v={_INFORME_ADUANAS_VERSION}"
     limite = (datetime.now() - timedelta(hours=ttl_horas)).strftime("%Y-%m-%d %H:%M:%S")
     with get_db(HIST_DB, row_factory=True) as con:
         fila = con.execute(
@@ -3151,9 +3167,10 @@ def sintia_aduanas_nacional_informe():
     anio = data.get("anio", str(date.today().year))
     dira_filtro = (data.get("dira") or "").strip() or None
     umbral_alerta_dias = int(data.get("umbral_dias", 10))
+    forzar = bool(data.get("forzar"))
     username = session.get("username", "?")
 
-    cacheado = _buscar_informe_aduanas_cacheado(anio, dira_filtro, umbral_alerta_dias)
+    cacheado = None if forzar else _buscar_informe_aduanas_cacheado(anio, dira_filtro, umbral_alerta_dias)
     if cacheado:
         job_id = str(uuid.uuid4())[:8]
         job_create(job_id, "", username=username)
