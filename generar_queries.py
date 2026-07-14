@@ -2,6 +2,7 @@
 generar_queries.py — Extracción de datos SQL para el informe SINTIA.
 Extraído de generar.py (Fase 3 de profesionalización).
 """
+import re
 from db_utils import get_db
 from generar_utils import CAT_LIKE, n, fmt, mes_label_largo
 
@@ -46,6 +47,8 @@ def _sql_case_categorias(campo="mensaje"):
 
 # ── Helpers ─────────────────────────────────────────────────────────────────────
 def correr_queries(ruta_db, pais, anio, mes_d, mes_h, log_fn):
+    if not re.match(r'^\d{4}$', str(anio)):
+        raise ValueError(f"Año inválido: {anio!r}")
     tabla = f"DAT_{anio}"
     desde = f"{anio}-{mes_d}"; hasta = f"{anio}-{mes_h}"; like = f"%{pais}%"
     # per_ult = último mes del período seleccionado (mes_h), no el último mes del sistema
