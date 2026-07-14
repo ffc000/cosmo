@@ -241,17 +241,36 @@ def senasa_acuerdos_list():
 @senasa_bp.route("/api/senasa/acuerdos", methods=["POST"])
 @login_required
 @modulo_required("senasa")
+def _validar_fecha_compromiso(valor):
+    """Devuelve (ok, valor_normalizado_o_mensaje_de_error).
+    Vacío es válido (compromiso sin fecha límite), igual que 'A definir'
+    (mismo sentinel que usa vua_cronologia). Cualquier otro valor debe ser
+    una fecha real -- se acepta dd/mm/aaaa y las variantes que ya soporta
+    _normalizar_fecha_a_ddmmaaaa (aaaa-mm-dd, dd-mm-aaaa). Antes esto se
+    guardaba tal cual sin validar, y _chequear_acuerdos_vencidos lo
+    ignoraba en silencio si no matcheaba dd/mm/aaaa exacto."""
+    valor = (valor or "").strip()
+    if not valor or valor == "A definir":
+        return True, valor
+    normalizada = _normalizar_fecha_a_ddmmaaaa(valor)
+    if normalizada == "A definir":
+        return False, f"Fecha de compromiso inválida: '{valor}'. Formato esperado: dd/mm/aaaa."
+    return True, normalizada
+
+
 def senasa_acuerdos_add():
     data = request.json or {}
     ok, err = validar_enum(data.get("estado"), ESTADOS_TAREA, "estado")
     if not ok: return jsonify({"ok": False, "error": err}), 400
+    ok, fecha_o_err = _validar_fecha_compromiso(data.get("fecha_compromiso", ""))
+    if not ok: return jsonify({"ok": False, "error": fecha_o_err}), 400
     with get_db(HIST_DB) as con:
         cur = con.cursor()
         cur.execute("SELECT MAX(orden) FROM senasa_acuerdos")
         max_o = cur.fetchone()[0] or 0
         cur.execute("INSERT INTO senasa_acuerdos (descripcion,responsable,fecha_compromiso,estado,orden) VALUES (?,?,?,?,?)",
             (data.get("descripcion",""), data.get("responsable",""),
-             data.get("fecha_compromiso",""), data.get("estado","Pendiente"), max_o+1))
+             fecha_o_err, data.get("estado","Pendiente"), max_o+1))
         new_id = cur.lastrowid
     return jsonify({"ok": True, "id": new_id})
 
@@ -262,16 +281,18 @@ def senasa_acuerdos_update(iid):
     data = request.json or {}
     ok, err = validar_enum(data.get("estado"), ESTADOS_TAREA, "estado")
     if not ok: return jsonify({"ok": False, "error": err}), 400
+    ok, fecha_o_err = _validar_fecha_compromiso(data.get("fecha_compromiso", ""))
+    if not ok: return jsonify({"ok": False, "error": fecha_o_err}), 400
     with get_db(HIST_DB) as con:
         # Si se reprograma la fecha de compromiso, permitir que se vuelva a
         # avisar si el nuevo vencimiento también queda en el pasado (evita
         # que quede silenciado para siempre por haberse avisado una vez).
         actual = con.execute("SELECT fecha_compromiso FROM senasa_acuerdos WHERE id=?", (iid,)).fetchone()
-        reset_alerta = actual and data.get("fecha_compromiso") and data.get("fecha_compromiso") != actual[0]
+        reset_alerta = actual and fecha_o_err and fecha_o_err != actual[0]
         con.execute("UPDATE senasa_acuerdos SET descripcion=?,responsable=?,fecha_compromiso=?,estado=?"
                     + (",alerta_vencido_enviada=0" if reset_alerta else "") + " WHERE id=?",
             (data.get("descripcion",""), data.get("responsable",""),
-             data.get("fecha_compromiso",""), data.get("estado","Pendiente"), iid))
+             fecha_o_err, data.get("estado","Pendiente"), iid))
     return jsonify({"ok": True})
 
 @senasa_bp.route("/api/senasa/acuerdos/<int:iid>", methods=["DELETE"])
