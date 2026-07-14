@@ -755,10 +755,11 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
     # 4. Operaciones por aduana
     doc.add_heading("4.  Operaciones por aduana", level=1)
     doc.add_paragraph(f"Se relevaron operaciones en {len(por_aduana)} aduana(s) durante el período.")
-    agregar_tabla_word(doc, ["ADUANA", "TOTAL", "IMPO", "EXPO", "CARGADO", "LASTRE"],
-        [[r["ADUANA"], fmt(r.get("TOTAL", 0)), fmt(r.get("IMPO", 0)), fmt(r.get("EXPO", 0)),
-          fmt(r.get("CARGADO", 0)), fmt(r.get("LASTRE", 0))] for r in por_aduana],
-        col_widths=[3, 2, 1.8, 1.8, 2, 1.8])
+    agregar_tabla_word(doc, ["ADUANA", "DIRA", "TOTAL", "IMPO", "EXPO", "CARGADO", "LASTRE"],
+        [[r.get("ADUANA_NOMBRE", r["ADUANA"]), r.get("DIRA_NOMBRE", "—"), fmt(r.get("TOTAL", 0)),
+          fmt(r.get("IMPO", 0)), fmt(r.get("EXPO", 0)), fmt(r.get("CARGADO", 0)), fmt(r.get("LASTRE", 0))]
+         for r in por_aduana],
+        col_widths=[3.5, 2.8, 1.6, 1.5, 1.5, 1.8, 1.6])
     if "aduana" in graficos: insertar_grafico(doc, graficos["aduana"])
     doc.add_page_break()
 
@@ -830,9 +831,10 @@ def _generar_excel_consolidado(fecha_d, fecha_h, version, totales, por_pais, por
     add_sheet("Por País", ["País", "Total", "Impo", "Expo", "Cargado", "Lastre"],
         [[PAISES_CONSOLIDADO.get(r["PAIS"], r["PAIS"]), n(r.get("TOTAL", 0)), n(r.get("IMPO", 0)),
           n(r.get("EXPO", 0)), n(r.get("CARGADO", 0)), n(r.get("LASTRE", 0))] for r in por_pais])
-    add_sheet("Por Aduana", ["Aduana", "Total", "Impo", "Expo", "Cargado", "Lastre"],
-        [[r["ADUANA"], n(r.get("TOTAL", 0)), n(r.get("IMPO", 0)),
-          n(r.get("EXPO", 0)), n(r.get("CARGADO", 0)), n(r.get("LASTRE", 0))] for r in por_aduana])
+    add_sheet("Por Aduana", ["Aduana", "DIRA", "Total", "Impo", "Expo", "Cargado", "Lastre"],
+        [[r.get("ADUANA_NOMBRE", r["ADUANA"]), r.get("DIRA_NOMBRE", "—"), n(r.get("TOTAL", 0)),
+          n(r.get("IMPO", 0)), n(r.get("EXPO", 0)), n(r.get("CARGADO", 0)), n(r.get("LASTRE", 0))]
+         for r in por_aduana])
     add_sheet("Por Variable de Control", ["Variable de Control", "Total", "%"],
         [[r["VAR_CONTROL"], n(r.get("TOTAL", 0)), pct(r.get("TOTAL", 0), total)] for r in por_var_control])
 

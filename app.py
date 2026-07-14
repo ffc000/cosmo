@@ -1761,7 +1761,7 @@ def run_job_consolidado(job_id, fecha_d, fecha_h, username):
         from generar import generar_informe_consolidado
         archivos = generar_informe_consolidado(
             ruta_db=DB_PATH, fecha_d=fecha_d, fecha_h=fecha_h,
-            carpeta=OUTPUT_FOLDER, log_fn=lambda msg: log.append(msg))
+            carpeta=OUTPUT_FOLDER, log_fn=lambda msg: log.append(msg), hist_db=HIST_DB)
         hist_id = str(uuid.uuid4())[:8]
         word  = next((a for a in archivos if a.endswith(".docx")), "")
         excel = next((a for a in archivos if a.endswith(".xlsx")), "")

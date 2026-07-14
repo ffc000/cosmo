@@ -184,7 +184,8 @@ def _grafico_barras_horiz_top(filas, campo_label, top, color, titulo):
 
 def grafico_consolidado_aduana(por_aduana, top=15):
     titulo = f"Operaciones por aduana (top {min(top, len(por_aduana))})"
-    return _grafico_barras_horiz_top(por_aduana, "ADUANA", top, C_TRANS, titulo)
+    filas = [dict(r, _LABEL=r.get("ADUANA_NOMBRE", r["ADUANA"])) for r in por_aduana]
+    return _grafico_barras_horiz_top(filas, "_LABEL", top, C_TRANS, titulo)
 
 def grafico_consolidado_var_control(por_var_control, top=15):
     titulo = f"Operaciones por variable de control (top {min(top, len(por_var_control))})"

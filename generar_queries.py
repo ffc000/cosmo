@@ -178,10 +178,30 @@ def _union_dat_rango(con, tablas, columnas):
         selects.append(f"SELECT {proyeccion} FROM {t}")
     return "(" + " UNION ALL ".join(selects) + ")"
 
-def correr_queries_consolidado(ruta_db, fecha_d, fecha_h, log_fn):
+def _catalogo_aduanas_dira(hist_db):
+    """Catálogo {cod: {nombre, indice_dira}} y {indice_dira: nombre} desde
+    ref_aduanas/ref_dira -- viven en HIST_DB (historial.db), no en la misma
+    base que DAT_<año> (pad.db), así que se cruza acá en Python, mismo
+    criterio que ya usa _aduanas_nacional_datos en app.py."""
+    if not hist_db:
+        return {}, {}
+    with get_db(hist_db, row_factory=True) as con:
+        cat_aduanas = {r["cod"]: dict(r) for r in con.execute(
+            "SELECT cod, nombre, indice_dira FROM ref_aduanas").fetchall()}
+        cat_diras = {r["indice"]: r["nombre"] for r in con.execute(
+            "SELECT indice, nombre FROM ref_dira").fetchall()}
+    return cat_aduanas, cat_diras
+
+
+def correr_queries_consolidado(ruta_db, fecha_d, fecha_h, log_fn, hist_db=None):
     """Informe consolidado: todas las operaciones de TODOS los países dentro
     de [fecha_d, fecha_h] (inclusive, YYYY-MM-DD), desglosadas por país,
     importación/exportación, aduana, cargado/lastre y variable de control.
+
+    hist_db: ruta a historial.db, opcional. Si se pasa, cada fila de
+    por_aduana se enriquece con ADUANA_NOMBRE y DIRA_NOMBRE (catálogo
+    ref_aduanas/ref_dira). Si no se pasa (ej. tests, o si esa base no está
+    disponible), por_aduana queda solo con el código -- no rompe.
 
     Devuelve (totales, por_pais, por_aduana, por_var_control):
       totales: dict con TOTAL, IMPO, EXPO, CARGADO, LASTRE (agregado general)
@@ -241,6 +261,17 @@ def correr_queries_consolidado(ruta_db, fecha_d, fecha_h, log_fn):
             FROM {origen} {where}
             GROUP BY COALESCE(NULLIF(TRIM(VAR_CONTROL),''),'SIN VARIABLE DE CONTROL') ORDER BY TOTAL DESC
         """, params)
+
+    cat_aduanas, cat_diras = _catalogo_aduanas_dira(hist_db)
+    for r in por_aduana:
+        cod = r["ADUANA"]
+        if cod == "SIN DATO":
+            r["ADUANA_NOMBRE"] = "SIN DATO"; r["DIRA_NOMBRE"] = "—"
+            continue
+        info = cat_aduanas.get(cod)
+        r["ADUANA_NOMBRE"] = info["nombre"] if info else f"{cod} (sin nombre en ref_aduanas)"
+        dira_indice = info["indice_dira"] if info else None
+        r["DIRA_NOMBRE"] = cat_diras.get(dira_indice, "Sin DIRA asignada") if dira_indice else "Sin DIRA asignada"
 
     log_fn("✓ Queries completadas")
     return totales, por_pais, por_aduana, por_var_control

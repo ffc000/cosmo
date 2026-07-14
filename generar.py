@@ -220,19 +220,23 @@ def generar_informe(ruta_db, pais, anio, mes_d, mes_h, usar_ia, api_key, carpeta
     log_fn(f"✓ Proceso completado \u2014 {len(archivos)} archivo(s) listos para descargar")
     return archivos
 
-def generar_informe_consolidado(ruta_db, fecha_d, fecha_h, carpeta, log_fn):
+def generar_informe_consolidado(ruta_db, fecha_d, fecha_h, carpeta, log_fn, hist_db=None):
     """Informe consolidado multi-país (Fase 7): todas las operaciones de
     todos los países dentro de [fecha_d, fecha_h] (YYYY-MM-DD), desglosadas
     por país, importación/exportación, aduana, cargado/lastre y variable de
     control. A diferencia de generar_informe(), no es por país/año/mes, no
     lleva narrativa/conclusión con IA (es un informe estadístico, no
     interpretativo), y admite un rango de fechas que puede cruzar años.
+
+    hist_db: ruta a historial.db, opcional -- si se pasa, la tabla "por
+    aduana" se enriquece con nombre y DIRA (ver correr_queries_consolidado).
     """
     nombre_base = f"Informe_SINTIA_Consolidado_{fecha_d}_{fecha_h}"
     version = 1
     while os.path.exists(os.path.join(carpeta, f"{nombre_base}_v{version}.docx")): version += 1
 
-    totales, por_pais, por_aduana, por_var_control = correr_queries_consolidado(ruta_db, fecha_d, fecha_h, log_fn)
+    totales, por_pais, por_aduana, por_var_control = correr_queries_consolidado(
+        ruta_db, fecha_d, fecha_h, log_fn, hist_db=hist_db)
 
     log_fn("Generando archivos...")
     archivos = []
