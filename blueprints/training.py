@@ -26,7 +26,7 @@ from datetime import datetime, date, timedelta
 
 from flask import Blueprint, request, jsonify, render_template, session, redirect, url_for, send_file
 
-from core import HIST_DB, login_required, modulo_required, limiter, app, get_db
+from core import HIST_DB, login_required, modulo_required, limiter, app, get_db, notificar_telegram
 import garmin_auth
 
 training_bp = Blueprint("training", __name__)
@@ -113,6 +113,41 @@ def init_garmin_db():
         )""")
 
 init_garmin_db()
+
+# ── Alerta de sincronización atrasada (Fase 6: alertas proactivas) ───────────
+DIAS_SIN_SYNC_ALERTA = 3  # umbral fijo a propósito: no hay UI de config todavía
+
+def _chequear_sync_atrasado():
+    """Avisa por Telegram si pasaron DIAS_SIN_SYNC_ALERTA o más desde la
+    última actividad registrada. Un aviso por día como máximo (clave
+    'ultimo_aviso_sync_fecha' en garmin_config, mismo patrón que el
+    recordatorio de servicios de finanzas en app.py)."""
+    while True:
+        try:
+            hoy = date.today()
+            with get_db(HIST_DB, row_factory=True) as con:
+                ultima = con.execute(
+                    "SELECT MAX(fecha) as f FROM garmin_actividades").fetchone()
+                fecha_ultima = (ultima["f"] or "")[:10] if ultima else ""
+                if fecha_ultima:
+                    dias = (hoy - datetime.strptime(fecha_ultima, "%Y-%m-%d").date()).days
+                    if dias >= DIAS_SIN_SYNC_ALERTA:
+                        row = con.execute(
+                            "SELECT valor FROM garmin_config WHERE clave='ultimo_aviso_sync_fecha'").fetchone()
+                        if not (row and row["valor"] == hoy.isoformat()):
+                            notificar_telegram(
+                                f"🏃 Sin sincronizar Garmin hace {dias} día(s) "
+                                f"(última actividad: {fecha_ultima}).")
+                            con.execute(
+                                "INSERT INTO garmin_config (clave,valor,modificado) VALUES "
+                                "('ultimo_aviso_sync_fecha',?,datetime('now')) "
+                                "ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor, modificado=excluded.modificado",
+                                (hoy.isoformat(),))
+        except Exception:
+            logging.exception("Error en chequeo de sincronización Garmin atrasada")
+        threading.Event().wait(21600)  # revisa cada 6 horas — no necesita más frecuencia
+
+threading.Thread(target=_chequear_sync_atrasado, daemon=True).start()
 
 # ── Helpers BD ────────────────────────────────────────────────────────────────
 def get_actividades(limit=50, tipo=None, desde=None, hasta=None):

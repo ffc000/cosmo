@@ -13,6 +13,7 @@ import json
 import uuid
 import logging
 import sqlite3
+import threading
 from datetime import datetime, date, timedelta
 
 from flask import Blueprint, request, jsonify, render_template, session, send_file
@@ -34,6 +35,42 @@ from extracto_parser import parse_santander, parse_galicia, extraer_total_declar
 from recibo_sueldo_parser import parse_recibo_sueldo
 
 fin.init_finanzas_db(HIST_DB)
+
+# ── Alerta de presupuesto por rubro (Fase 6: alertas proactivas) ─────────────
+UMBRALES_PRESUPUESTO = (80, 100)  # % del presupuesto_mensual del rubro
+
+def _chequear_presupuesto_rubros():
+    """Avisa por Telegram cuando un rubro supera el 80% o el 100% de su
+    presupuesto_mensual, antes de fin de mes (a diferencia del recordatorio
+    de servicios, que solo corre el día 2). Cada combinación
+    (mes, categoria, umbral) se avisa una sola vez — tabla
+    fin_presupuesto_alertas, migración 003. Rubros con presupuesto_mensual=0
+    se ignoran (sin presupuesto fijado, no hay contra qué comparar)."""
+    while True:
+        try:
+            mes = date.today().strftime("%Y-%m")
+            with get_db(HIST_DB, row_factory=True) as con:
+                rubros = fin.gasto_por_categoria(HIST_DB, mes)
+                ya_avisados = {(r["categoria_id"], r["umbral"]) for r in con.execute(
+                    "SELECT categoria_id, umbral FROM fin_presupuesto_alertas WHERE mes=?", (mes,)).fetchall()}
+                for r in rubros:
+                    presupuesto = r.get("presupuesto_mensual") or 0
+                    if presupuesto <= 0:
+                        continue
+                    pct = (r["gastado"] / presupuesto) * 100
+                    for umbral in UMBRALES_PRESUPUESTO:
+                        if pct >= umbral and (r["id"], umbral) not in ya_avisados:
+                            notificar_telegram(
+                                f"💰 Presupuesto '{r['nombre']}' al {pct:.0f}% "
+                                f"(${r['gastado']:,.0f} de ${presupuesto:,.0f}) — {mes}")
+                            con.execute(
+                                "INSERT OR IGNORE INTO fin_presupuesto_alertas (mes,categoria_id,umbral) VALUES (?,?,?)",
+                                (mes, r["id"], umbral))
+        except Exception:
+            logging.exception("Error en chequeo de presupuesto por rubro")
+        threading.Event().wait(21600)  # revisa cada 6 horas
+
+threading.Thread(target=_chequear_presupuesto_rubros, daemon=True).start()
 
 
 def _extraer_paginas_pdf(file_storage):

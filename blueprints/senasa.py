@@ -263,7 +263,13 @@ def senasa_acuerdos_update(iid):
     ok, err = validar_enum(data.get("estado"), ESTADOS_TAREA, "estado")
     if not ok: return jsonify({"ok": False, "error": err}), 400
     with get_db(HIST_DB) as con:
-        con.execute("UPDATE senasa_acuerdos SET descripcion=?,responsable=?,fecha_compromiso=?,estado=? WHERE id=?",
+        # Si se reprograma la fecha de compromiso, permitir que se vuelva a
+        # avisar si el nuevo vencimiento también queda en el pasado (evita
+        # que quede silenciado para siempre por haberse avisado una vez).
+        actual = con.execute("SELECT fecha_compromiso FROM senasa_acuerdos WHERE id=?", (iid,)).fetchone()
+        reset_alerta = actual and data.get("fecha_compromiso") and data.get("fecha_compromiso") != actual[0]
+        con.execute("UPDATE senasa_acuerdos SET descripcion=?,responsable=?,fecha_compromiso=?,estado=?"
+                    + (",alerta_vencido_enviada=0" if reset_alerta else "") + " WHERE id=?",
             (data.get("descripcion",""), data.get("responsable",""),
              data.get("fecha_compromiso",""), data.get("estado","Pendiente"), iid))
     return jsonify({"ok": True})
@@ -275,6 +281,43 @@ def senasa_acuerdos_delete(iid):
     with get_db(HIST_DB) as con:
         con.execute("DELETE FROM senasa_acuerdos WHERE id=?", (iid,))
     return jsonify({"ok": True})
+
+
+# ── Alerta de compromisos vencidos (Fase 6: alertas proactivas) ──────────────
+def _chequear_acuerdos_vencidos():
+    """Avisa por Telegram los compromisos SENASA cuyo fecha_compromiso ya
+    pasó y siguen sin estado 'Completado'. Cada acuerdo se avisa una sola
+    vez (columna alerta_vencido_enviada, ver migración 003) — si se
+    reprograma la fecha, senasa_acuerdos_update resetea el flag."""
+    while True:
+        try:
+            hoy = date.today()
+            with get_db(HIST_DB, row_factory=True) as con:
+                rows = con.execute(
+                    "SELECT id, descripcion, responsable, fecha_compromiso FROM senasa_acuerdos "
+                    "WHERE estado != 'Completado' AND COALESCE(alerta_vencido_enviada,0)=0 "
+                    "AND fecha_compromiso IS NOT NULL AND fecha_compromiso != ''").fetchall()
+                vencidos = []
+                for r in rows:
+                    try:
+                        fc = datetime.strptime(r["fecha_compromiso"], "%d/%m/%Y").date()
+                    except ValueError:
+                        continue  # fecha_compromiso es texto libre — si no matchea dd/mm/aaaa, se ignora
+                    if fc < hoy:
+                        vencidos.append(r)
+                if vencidos:
+                    lineas = "\n".join(
+                        f"• {r['descripcion']} ({r['responsable'] or 's/d'}) — vencía {r['fecha_compromiso']}"
+                        for r in vencidos[:15])
+                    extra = f"\n… y {len(vencidos) - 15} más" if len(vencidos) > 15 else ""
+                    notificar_telegram(f"⏰ SENASA — {len(vencidos)} compromiso(s) vencido(s):\n\n{lineas}{extra}")
+                    con.executemany("UPDATE senasa_acuerdos SET alerta_vencido_enviada=1 WHERE id=?",
+                                     [(r["id"],) for r in vencidos])
+        except Exception:
+            logging.exception("Error en chequeo de compromisos SENASA vencidos")
+        threading.Event().wait(3600)  # revisa cada hora
+
+threading.Thread(target=_chequear_acuerdos_vencidos, daemon=True).start()
 
 # ── Informe SENASA (async) ────────────────────────────────────────────────────
 @senasa_bp.route("/api/senasa/informe")

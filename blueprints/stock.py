@@ -15,7 +15,7 @@ from datetime import datetime, date, timedelta
 
 from flask import Blueprint, request, jsonify, render_template, session, Response, send_file
 
-from core import HIST_DB, STOCK_REPORTS_DIR, login_required, modulo_required, get_db
+from core import HIST_DB, STOCK_REPORTS_DIR, login_required, modulo_required, get_db, notificar_telegram
 
 stock_bp = Blueprint("stock", __name__)
 
@@ -146,6 +146,42 @@ def _guardar_reporte_bd(reporte_id, fecha_corte, dias_tol, usuario, registros, f
     return conteo, total
 
 # ── Rutas ──────────────────────────────────────────────────────────────────────
+
+def _alertar_cambios_semaforo(reporte_id, fecha_iso, registros):
+    """Notifica por Telegram los LOTs que pasan a ROJO/NEGRO respecto del
+    reporte anterior. No avisa si el LOT ya venía en ese estado (evita
+    repetir el mismo aviso cada vez que se regenera el reporte del día).
+    Nunca debe cortar la generación del reporte si falla — igual criterio
+    que notificar_telegram en general."""
+    candidatos = [r for r in registros if len(r) > 5 and r[5] in ("ROJO", "NEGRO")]
+    if not candidatos:
+        return
+    try:
+        nuevos = []
+        with get_db(HIST_DB) as con:
+            for r in candidatos:
+                codadu, codlot, semaforo = r[0], r[1], r[5]
+                razon_social = r[6] if len(r) > 6 else ""
+                prev = con.execute("""
+                    SELECT rg.semaforo FROM stock_registros rg
+                    JOIN stock_reportes rp ON rg.reporte_id = rp.id
+                    WHERE rg.codadu=? AND rg.codlot=? AND rp.fecha_corte < ? AND rg.reporte_id != ?
+                    ORDER BY rp.fecha_corte DESC LIMIT 1
+                """, (codadu, codlot, fecha_iso, reporte_id)).fetchone()
+                semaforo_prev = prev[0] if prev else None
+                if semaforo_prev != semaforo:
+                    nuevos.append((codadu, codlot, razon_social, semaforo_prev, semaforo))
+        if not nuevos:
+            return
+        lineas = "\n".join(
+            f"• {codadu}-{codlot} ({razon_social}): {sp or 'sin dato previo'} → {s}"
+            for codadu, codlot, razon_social, sp, s in nuevos[:15])
+        extra = f"\n… y {len(nuevos) - 15} más" if len(nuevos) > 15 else ""
+        notificar_telegram(
+            f"🔴 Stock — {len(nuevos)} depósito(s) pasaron a ROJO/NEGRO ({fecha_iso}):\n\n{lineas}{extra}")
+    except Exception:
+        logging.exception("STOCK ALERTA SEMAFORO | error al detectar/notificar cambios")
+
 
 @stock_bp.route("/stock")
 @login_required
@@ -294,6 +330,8 @@ def api_stock_generar():
             reporte_id, fecha_iso, dias_tol,
             session.get("username", "?"), registros, file_path
         )
+
+        _alertar_cambios_semaforo(reporte_id, fecha_iso, registros)
 
         # Cachear HTML en memoria (para descarga inmediata)
         _stock_jobs[reporte_id] = {
