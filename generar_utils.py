@@ -11,6 +11,15 @@ from datetime import datetime
 
 # ── Constantes ─────────────────────────────────────────────────────────────────
 PAISES = {"BO":"Bolivia","PY":"Paraguay","BR":"Brasil","CL":"Chile","UY":"Uruguay"}
+# Solo para el informe consolidado (Fase 7): ahí sí interesa contar las
+# operaciones cuyo MIC corresponde a Argentina. En el resto de SINTIA (el
+# informe por país, el selector de "país emisor", etc.) no tiene sentido
+# -- ese circuito es específicamente entre un país limítrofe y Argentina,
+# nunca "Argentina" como emisor -- por eso queda en un dict aparte y no se
+# agrega a PAISES directamente. AR va al final a propósito: si un MIC ya
+# matcheó BO/PY/BR/CL/UY, ese resultado tiene prioridad (mismo criterio que
+# ya usaba el resto del CASE, no cambia comportamiento existente).
+PAISES_CONSOLIDADO = dict(PAISES, AR="Argentina")
 MESES  = {"01":"Enero","02":"Febrero","03":"Marzo","04":"Abril","05":"Mayo","06":"Junio",
            "07":"Julio","08":"Agosto","09":"Septiembre","10":"Octubre","11":"Noviembre","12":"Diciembre"}
 C_TRANS="#1F7DC4"; C_NO_TRANS="#C0392B"; C_TARDIO="#E67E22"

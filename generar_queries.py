@@ -4,7 +4,7 @@ Extraído de generar.py (Fase 3 de profesionalización).
 """
 import re
 from db_utils import get_db
-from generar_utils import CAT_LIKE, PAISES, n, fmt, mes_label_largo
+from generar_utils import CAT_LIKE, PAISES, PAISES_CONSOLIDADO, n, fmt, mes_label_largo
 
 def _sql_case_categorias(campo="mensaje"):
     """CASE WHEN reutilizable para categorización de rechazos."""
@@ -208,7 +208,7 @@ def correr_queries_consolidado(ruta_db, fecha_d, fecha_h, log_fn):
         log_fn("Corriendo queries...")
         # El país se deduce del MIC igual que en correr_queries() (MIC LIKE
         # '%XX%'), no hay columna de país propia en DAT_<año>.
-        casos_pais = " ".join(f"WHEN MIC LIKE '%{cod}%' THEN '{cod}'" for cod in PAISES)
+        casos_pais = " ".join(f"WHEN MIC LIKE '%{cod}%' THEN '{cod}'" for cod in PAISES_CONSOLIDADO)
         expr_pais = f"CASE {casos_pais} ELSE 'OTRO/SIN DATO' END"
 
         agregados_sql = """

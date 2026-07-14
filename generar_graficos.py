@@ -11,7 +11,7 @@ try:
 except ImportError:
     MPL_OK = False
 
-from generar_utils import C_TRANS, C_NO_TRANS, C_TARDIO, C_CARGADO, C_LASTRE, PAISES, fmt, n, pct_f, mes_label, mes_label_largo
+from generar_utils import C_TRANS, C_NO_TRANS, C_TARDIO, C_CARGADO, C_LASTRE, PAISES_CONSOLIDADO, fmt, n, pct_f, mes_label, mes_label_largo
 
 def fig_to_bytes(fig):
     buf = io.BytesIO()
@@ -130,7 +130,7 @@ def grafico_consolidado_pais(por_pais):
     """Barras horizontales: total de operaciones por país."""
     if not por_pais: return None
     filas = list(reversed(por_pais))
-    labels = [PAISES.get(r["PAIS"], r["PAIS"]) for r in filas]
+    labels = [PAISES_CONSOLIDADO.get(r["PAIS"], r["PAIS"]) for r in filas]
     valores = [n(r.get("TOTAL", 0)) for r in filas]
     fig, ax = plt.subplots(figsize=(7, max(3, len(filas) * 0.5 + 1)), facecolor='white')
     bars = ax.barh(labels, valores, color=C_TRANS, edgecolor='white', linewidth=0.5)

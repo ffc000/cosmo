@@ -27,7 +27,7 @@ try:
 except ImportError:
     XLSX_OK = False
 
-from generar_utils import PAISES, fmt, pct, pct_f, n, periodo_texto, mes_label, mes_label_largo, color_semaforo
+from generar_utils import PAISES, PAISES_CONSOLIDADO, fmt, pct, pct_f, n, periodo_texto, mes_label, mes_label_largo, color_semaforo
 from generar_graficos import (grafico_torta, grafico_barras_apiladas, grafico_lineas_pct,
     grafico_rechazos_cat, grafico_rechazos_mes, grafico_comparativo_meses, MPL_OK,
     grafico_consolidado_pais, grafico_consolidado_impoexpo, grafico_consolidado_cargado_lastre,
@@ -734,7 +734,7 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
     doc.add_paragraph(f"Durante el período se registraron {fmt(total)} operaciones distribuidas entre "
                        f"{len(por_pais)} país(es)/agrupación(es).")
     agregar_tabla_word(doc, ["PAÍS", "TOTAL", "IMPO", "EXPO", "CARGADO", "LASTRE"],
-        [[PAISES.get(r["PAIS"], r["PAIS"]), fmt(r.get("TOTAL", 0)), fmt(r.get("IMPO", 0)),
+        [[PAISES_CONSOLIDADO.get(r["PAIS"], r["PAIS"]), fmt(r.get("TOTAL", 0)), fmt(r.get("IMPO", 0)),
           fmt(r.get("EXPO", 0)), fmt(r.get("CARGADO", 0)), fmt(r.get("LASTRE", 0))] for r in por_pais],
         col_widths=[3.5, 2, 1.8, 1.8, 2, 1.8])
     if "pais" in graficos: insertar_grafico(doc, graficos["pais"])
@@ -828,7 +828,7 @@ def _generar_excel_consolidado(fecha_d, fecha_h, version, totales, por_pais, por
         ["Lastre", n(totales.get("LASTRE", 0)), pct(totales.get("LASTRE", 0), total)],
     ])
     add_sheet("Por País", ["País", "Total", "Impo", "Expo", "Cargado", "Lastre"],
-        [[PAISES.get(r["PAIS"], r["PAIS"]), n(r.get("TOTAL", 0)), n(r.get("IMPO", 0)),
+        [[PAISES_CONSOLIDADO.get(r["PAIS"], r["PAIS"]), n(r.get("TOTAL", 0)), n(r.get("IMPO", 0)),
           n(r.get("EXPO", 0)), n(r.get("CARGADO", 0)), n(r.get("LASTRE", 0))] for r in por_pais])
     add_sheet("Por Aduana", ["Aduana", "Total", "Impo", "Expo", "Cargado", "Lastre"],
         [[r["ADUANA"], n(r.get("TOTAL", 0)), n(r.get("IMPO", 0)),
