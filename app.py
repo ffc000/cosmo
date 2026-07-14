@@ -1089,30 +1089,20 @@ def index():
         username=session.get("username",""), pendientes=pendientes)
 
 # ── DB Status ──────────────────────────────────────────────────────────────────
-def _tablas_con_conteo(ruta_db):
-    info = {}
-    with get_db(ruta_db) as con:
-        cur = con.cursor()
-        cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        for (t,) in cur.fetchall():
-            try: cur.execute('SELECT COUNT(*) FROM "' + t.replace('"', '""') + '"'); info[t] = cur.fetchone()[0]
-            except: pass
-    return info
-
 @app.route("/api/db-status")
 @login_required
 def db_status():
     if not os.path.exists(DB_PATH): return jsonify({"exists":False})
     try:
-        tables = {}
-        for t, c in _tablas_con_conteo(DB_PATH).items():
-            tables[t] = {"registros": c, "origen": "pad.db"}
-        if os.path.exists(HIST_DB):
-            for t, c in _tablas_con_conteo(HIST_DB).items():
-                tables[t] = {"registros": c, "origen": "historial.db"}
-        size_gb = round((os.path.getsize(DB_PATH) +
-                         (os.path.getsize(HIST_DB) if os.path.exists(HIST_DB) else 0)) / (1024**3), 2)
-        return jsonify({"exists":True,"tables":tables,"size_gb":size_gb})
+        with get_db(DB_PATH) as con:
+            cur = con.cursor()
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = [r[0] for r in cur.fetchall()]
+            info = {}
+            for t in tables:
+                try: cur.execute('SELECT COUNT(*) FROM "' + t.replace('"', '""') + '"'); info[t] = cur.fetchone()[0]
+                except: pass
+        return jsonify({"exists":True,"tables":info,"size_gb":round(os.path.getsize(DB_PATH)/(1024**3),2)})
     except Exception as e:
         return jsonify({"exists":True,"error":str(e)})
 
@@ -1131,23 +1121,20 @@ def db_tablas_detalle():
     if not os.path.exists(DB_PATH):
         return jsonify({"ok": False, "error": "BD no cargada."})
     try:
-        detalle = []
-        for ruta_db, origen in ((DB_PATH, "pad.db"), (HIST_DB, "historial.db")):
-            if not os.path.exists(ruta_db):
-                continue
-            with get_db(ruta_db, row_factory=True) as con:
-                tablas = [r["name"] for r in con.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()]
-                for t in tablas:
-                    try:
-                        filas = con.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]
-                    except Exception:
-                        filas = None
-                    columnas = [
-                        {"nombre": c["name"], "tipo": c["type"] or "TEXT"}
-                        for c in con.execute(f'PRAGMA table_info("{t}")').fetchall()
-                    ]
-                    detalle.append({"tabla": t, "origen": origen, "filas": filas, "columnas": columnas})
+        with get_db(DB_PATH, row_factory=True) as con:
+            tablas = [r["name"] for r in con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()]
+            detalle = []
+            for t in tablas:
+                try:
+                    filas = con.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]
+                except Exception:
+                    filas = None
+                columnas = [
+                    {"nombre": c["name"], "tipo": c["type"] or "TEXT"}
+                    for c in con.execute(f'PRAGMA table_info("{t}")').fetchall()
+                ]
+                detalle.append({"tabla": t, "filas": filas, "columnas": columnas})
 
         with get_db(HIST_DB, row_factory=True) as con:
             metadata = {r["tabla"]: dict(r) for r in con.execute(
@@ -1705,12 +1692,19 @@ def _procesar_csv(tmp_path, tabla, log, modo="reemplazar", username="?"):
 def run_job(job_id, pais, anio, mes_d, mes_h, usar_ia, username):
     log = job_status[job_id]["log"]
     inicio = time.time()
+    def _log_fn(msg):
+        log.append(msg)
+        # Fase 6: las anomalías de correr_queries (transmisiones > ingresos
+        # del mes) antes solo quedaban en el log del informe, donde nadie
+        # las veía hasta abrir el Word. Se reenvían también por Telegram.
+        if "Anomalía" in msg:
+            notificar_telegram(f"⚠️ SINTIA {pais} {mes_d}-{mes_h}/{anio}: {msg.strip()}")
     try:
         from generar import generar_informe
         archivos = generar_informe(
             ruta_db=DB_PATH, pais=pais, anio=anio, mes_d=mes_d, mes_h=mes_h,
             usar_ia=usar_ia, api_key=get_api_key(), carpeta=OUTPUT_FOLDER,
-            log_fn=lambda msg: log.append(msg), contexto_extra=contexto_repositorio("sintia"))
+            log_fn=_log_fn, contexto_extra=contexto_repositorio("sintia"))
         # Guardar en historial
         hist_id = str(uuid.uuid4())[:8]
         word  = next((a for a in archivos if a.endswith(".docx")),"")
@@ -1742,13 +1736,9 @@ def api_generar():
         return jsonify({"ok":False,"error":"La BD no está cargada"})
     data = request.json or {}
     pais    = data.get("pais","").upper()
-    anio    = str(data.get("anio", datetime.today().year)).strip()
-    if not re.match(r'^\d{4}$', anio) or not (2000 <= int(anio) <= 2100):
-        return jsonify({"ok": False, "error": "Año inválido."}), 400
+    anio    = data.get("anio", str(datetime.today().year))
     mes_d   = str(data.get("mes_d","01")).zfill(2)
     mes_h   = str(data.get("mes_h","12")).zfill(2)
-    if mes_d not in [f"{i:02d}" for i in range(1,13)] or mes_h not in [f"{i:02d}" for i in range(1,13)]:
-        return jsonify({"ok": False, "error": "Mes inválido."}), 400
     usar_ia = data.get("usar_ia",True) and bool(get_api_key())
     username = session.get("username","?")
     job_id  = str(uuid.uuid4())[:8]
