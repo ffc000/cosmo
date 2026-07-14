@@ -4,7 +4,7 @@ Extraído de generar.py (Fase 3 de profesionalización).
 """
 import re
 from db_utils import get_db
-from generar_utils import CAT_LIKE, n, fmt, mes_label_largo
+from generar_utils import CAT_LIKE, PAISES, n, fmt, mes_label_largo
 
 def _sql_case_categorias(campo="mensaje"):
     """CASE WHEN reutilizable para categorización de rechazos."""
@@ -140,3 +140,107 @@ def calcular_totales(totales):
     lT=n(r.get("LASTRE_TRANS",0));  lN=n(r.get("LASTRE_NO_TRANS",0));  lTd=n(r.get("LASTRE_TARDIO",0))
     cTot=cT+cN+cTd; lTot=lT+lN+lTd
     return (cT,cN,cTd,cTot),(lT,lN,lTd,lTot),(cT+lT,cN+lN,cTd+lTd,cTot+lTot)
+
+# ── Informe consolidado multi-país (Fase 7) ──────────────────────────────────
+# A diferencia de correr_queries() -- que es por país + año + rango de meses
+# dentro de ese año --, este informe no filtra por país y acepta un rango de
+# fechas arbitrario (puede cruzar años calendario), por eso arma un UNION ALL
+# de las tablas DAT_<año> involucradas en vez de operar sobre una sola tabla.
+
+_COLUMNAS_CONSOLIDADO = ["MIC", "FECHA_INGRESO_ISO", "CARGADO", "TIPO_REGISTRO", "ADUANA", "VAR_CONTROL"]
+
+def _tablas_dat_en_rango(con, fecha_d, fecha_h):
+    """Nombres de tabla DAT_<año> que intersectan [fecha_d, fecha_h]
+    (fechas en formato YYYY-MM-DD). Solo incluye las que existen en la BD --
+    si falta algún año intermedio, simplemente no aporta datos, no rompe."""
+    anio_d, anio_h = int(fecha_d[:4]), int(fecha_h[:4])
+    tablas = []
+    for a in range(anio_d, anio_h + 1):
+        nombre = f"DAT_{a}"
+        existe = con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (nombre,)).fetchone()
+        if existe:
+            tablas.append(nombre)
+    return tablas
+
+def _columnas_tabla(con, tabla):
+    return {r[1] for r in con.execute(f"PRAGMA table_info({tabla})").fetchall()}
+
+def _union_dat_rango(con, tablas, columnas):
+    """UNION ALL de las tablas DAT_<año> dadas, proyectando solo `columnas`.
+    Si a alguna tabla le falta una columna (años viejos con schema distinto
+    -- VAR_CONTROL no siempre existió, ver _calcular_opciones_dat en
+    app.py), se completa con NULL en esa columna en vez de romper la query."""
+    selects = []
+    for t in tablas:
+        cols_t = _columnas_tabla(con, t)
+        proyeccion = ", ".join(c if c in cols_t else f"NULL AS {c}" for c in columnas)
+        selects.append(f"SELECT {proyeccion} FROM {t}")
+    return "(" + " UNION ALL ".join(selects) + ")"
+
+def correr_queries_consolidado(ruta_db, fecha_d, fecha_h, log_fn):
+    """Informe consolidado: todas las operaciones de TODOS los países dentro
+    de [fecha_d, fecha_h] (inclusive, YYYY-MM-DD), desglosadas por país,
+    importación/exportación, aduana, cargado/lastre y variable de control.
+
+    Devuelve (totales, por_pais, por_aduana, por_var_control):
+      totales: dict con TOTAL, IMPO, EXPO, CARGADO, LASTRE (agregado general)
+      por_pais / por_aduana / por_var_control: listas de dicts, mismo shape
+      que totales pero agrupadas (por_var_control solo trae TOTAL, no tiene
+      sentido desglosar impo/expo/cargado/lastre otra vez ahí).
+    """
+    if not re.match(r'^\d{4}-\d{2}-\d{2}$', fecha_d) or not re.match(r'^\d{4}-\d{2}-\d{2}$', fecha_h):
+        raise ValueError(f"Fechas inválidas: '{fecha_d}' a '{fecha_h}'. Formato esperado: YYYY-MM-DD.")
+    if fecha_d > fecha_h:
+        raise ValueError(f"El rango de fechas es inválido: '{fecha_d}' es posterior a '{fecha_h}'.")
+
+    log_fn("Conectando a la BD...")
+    with get_db(ruta_db, row_factory=True) as con:
+        tablas = _tablas_dat_en_rango(con, fecha_d, fecha_h)
+        if not tablas:
+            raise ValueError(f"No hay datos cargados para el rango {fecha_d} a {fecha_h}.")
+        origen = _union_dat_rango(con, tablas, _COLUMNAS_CONSOLIDADO)
+
+        def q(sql, params=()):
+            cur = con.cursor(); cur.execute(sql, params)
+            return [dict(r) for r in cur.fetchall()]
+
+        log_fn("Corriendo queries...")
+        # El país se deduce del MIC igual que en correr_queries() (MIC LIKE
+        # '%XX%'), no hay columna de país propia en DAT_<año>.
+        casos_pais = " ".join(f"WHEN MIC LIKE '%{cod}%' THEN '{cod}'" for cod in PAISES)
+        expr_pais = f"CASE {casos_pais} ELSE 'OTRO/SIN DATO' END"
+
+        agregados_sql = """
+            COUNT(*) AS TOTAL,
+            SUM(CASE WHEN TIPO_REGISTRO='I' THEN 1 ELSE 0 END) AS IMPO,
+            SUM(CASE WHEN TIPO_REGISTRO='E' THEN 1 ELSE 0 END) AS EXPO,
+            SUM(CASE WHEN CARGADO='SI' THEN 1 ELSE 0 END) AS CARGADO,
+            SUM(CASE WHEN CARGADO='NO' THEN 1 ELSE 0 END) AS LASTRE
+        """
+        where = "WHERE FECHA_INGRESO_ISO BETWEEN ? AND ?"
+        params = (fecha_d, fecha_h)
+
+        totales_rows = q(f"SELECT {agregados_sql} FROM {origen} {where}", params)
+        totales = totales_rows[0] if totales_rows else {}
+
+        por_pais = q(f"""
+            SELECT {expr_pais} AS PAIS, {agregados_sql}
+            FROM {origen} {where} GROUP BY PAIS ORDER BY TOTAL DESC
+        """, params)
+
+        por_aduana = q(f"""
+            SELECT COALESCE(NULLIF(TRIM(ADUANA),''),'SIN DATO') AS ADUANA, {agregados_sql}
+            FROM {origen} {where}
+            GROUP BY COALESCE(NULLIF(TRIM(ADUANA),''),'SIN DATO') ORDER BY TOTAL DESC
+        """, params)
+
+        por_var_control = q(f"""
+            SELECT COALESCE(NULLIF(TRIM(VAR_CONTROL),''),'SIN VARIABLE DE CONTROL') AS VAR_CONTROL,
+                COUNT(*) AS TOTAL
+            FROM {origen} {where}
+            GROUP BY COALESCE(NULLIF(TRIM(VAR_CONTROL),''),'SIN VARIABLE DE CONTROL') ORDER BY TOTAL DESC
+        """, params)
+
+    log_fn("✓ Queries completadas")
+    return totales, por_pais, por_aduana, por_var_control

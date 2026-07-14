@@ -1736,9 +1736,13 @@ def api_generar():
         return jsonify({"ok":False,"error":"La BD no está cargada"})
     data = request.json or {}
     pais    = data.get("pais","").upper()
-    anio    = data.get("anio", str(datetime.today().year))
+    anio    = str(data.get("anio", datetime.today().year)).strip()
+    if not re.match(r'^\d{4}$', anio) or not (2000 <= int(anio) <= 2100):
+        return jsonify({"ok": False, "error": "Año inválido."}), 400
     mes_d   = str(data.get("mes_d","01")).zfill(2)
     mes_h   = str(data.get("mes_h","12")).zfill(2)
+    if mes_d not in [f"{i:02d}" for i in range(1,13)] or mes_h not in [f"{i:02d}" for i in range(1,13)]:
+        return jsonify({"ok": False, "error": "Mes inválido."}), 400
     usar_ia = data.get("usar_ia",True) and bool(get_api_key())
     username = session.get("username","?")
     job_id  = str(uuid.uuid4())[:8]
@@ -1746,6 +1750,65 @@ def api_generar():
     t = threading.Thread(target=run_job, args=(job_id, pais, anio, mes_d, mes_h, usar_ia, username))
     t.start()
     return jsonify({"ok":True,"job_id":job_id})
+
+
+def run_job_consolidado(job_id, fecha_d, fecha_h, username):
+    """Igual a run_job() pero para el informe consolidado multi-país
+    (Fase 7): sin país/año/mes ni IA, con rango de fechas libre."""
+    log = job_status[job_id]["log"]
+    inicio = time.time()
+    try:
+        from generar import generar_informe_consolidado
+        archivos = generar_informe_consolidado(
+            ruta_db=DB_PATH, fecha_d=fecha_d, fecha_h=fecha_h,
+            carpeta=OUTPUT_FOLDER, log_fn=lambda msg: log.append(msg))
+        hist_id = str(uuid.uuid4())[:8]
+        word  = next((a for a in archivos if a.endswith(".docx")), "")
+        excel = next((a for a in archivos if a.endswith(".xlsx")), "")
+        with get_db(HIST_DB) as con:
+            con.execute("INSERT INTO historial VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (hist_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), username,
+                 "TODOS", "", fecha_d, fecha_h, 0, word, excel, 0, 'sintia_consolidado',
+                 f"Consolidado {fecha_d} a {fecha_h}"))
+        logging.info(f"INFORME CONSOLIDADO OK | user={username} | {fecha_d} a {fecha_h}")
+        job_status[job_id]["status"] = "done"
+        job_status[job_id]["files"]  = archivos
+        _job_persist(job_id)
+        duracion = round((time.time() - inicio) / 60, 1)
+        if duracion >= 2:
+            notificar_telegram(f"✓ Informe SINTIA Consolidado {fecha_d} a {fecha_h} listo "
+                                f"({duracion} min) — {username}")
+    except Exception as e:
+        log.append(f"✗ Error: {e}")
+        job_status[job_id]["status"] = "error"
+        _job_persist(job_id)
+        notificar_telegram(f"⚠️ Informe SINTIA Consolidado {fecha_d} a {fecha_h} falló ({username}): {e}")
+
+
+@app.route("/api/generar_consolidado", methods=["POST"])
+@login_required
+@modulo_required("sintia")
+def api_generar_consolidado():
+    """Informe consolidado multi-país (Fase 7): todas las operaciones de
+    todos los países en un rango de fechas libre, con desglose por país,
+    importación/exportación, aduana, cargado/lastre y variable de control.
+    A diferencia de /api/generar, no toma país/año/mes sino fecha_d/fecha_h
+    directamente (YYYY-MM-DD)."""
+    if not os.path.exists(DB_PATH):
+        return jsonify({"ok": False, "error": "La BD no está cargada"})
+    data = request.json or {}
+    fecha_d = str(data.get("fecha_d", "")).strip()
+    fecha_h = str(data.get("fecha_h", "")).strip()
+    if not re.match(r'^\d{4}-\d{2}-\d{2}$', fecha_d) or not re.match(r'^\d{4}-\d{2}-\d{2}$', fecha_h):
+        return jsonify({"ok": False, "error": "Fechas inválidas. Formato esperado: YYYY-MM-DD."}), 400
+    if fecha_d > fecha_h:
+        return jsonify({"ok": False, "error": "La fecha 'desde' no puede ser posterior a la fecha 'hasta'."}), 400
+    username = session.get("username", "?")
+    job_id = str(uuid.uuid4())[:8]
+    job_create(job_id, "Iniciando generación...", username=username)
+    t = threading.Thread(target=run_job_consolidado, args=(job_id, fecha_d, fecha_h, username))
+    t.start()
+    return jsonify({"ok": True, "job_id": job_id})
 
 def _job_autorizado(info):
     """El dueño del job o un superadmin pueden verlo/descargarlo."""
@@ -1846,6 +1909,17 @@ def historial_completo():
             if desde:   where.append("fecha>=?"); params.append(desde)
             if hasta:   where.append("fecha<=?"); params.append(hasta)
             q = ("SELECT id, fecha, usuario, 'aduanas_pais' as tipo, descripcion, "
+                 "archivo_word, archivo_excel, revisado FROM historial "
+                 f"WHERE {' AND '.join(where)} ORDER BY fecha DESC LIMIT ? OFFSET ?")
+            rows += [dict(r) for r in con.execute(q, params+[limit, offset]).fetchall()]
+
+        if tipo in ("todos", "sintia_consolidado"):
+            where = ["tipo='sintia_consolidado'"]
+            params = []
+            if usuario: where.append("usuario=?"); params.append(usuario)
+            if desde:   where.append("fecha>=?"); params.append(desde)
+            if hasta:   where.append("fecha<=?"); params.append(hasta)
+            q = ("SELECT id, fecha, usuario, 'sintia_consolidado' as tipo, descripcion, "
                  "archivo_word, archivo_excel, revisado FROM historial "
                  f"WHERE {' AND '.join(where)} ORDER BY fecha DESC LIMIT ? OFFSET ?")
             rows += [dict(r) for r in con.execute(q, params+[limit, offset]).fetchall()]

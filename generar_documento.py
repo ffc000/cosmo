@@ -28,7 +28,9 @@ except ImportError:
 
 from generar_utils import PAISES, fmt, pct, pct_f, n, periodo_texto, mes_label, mes_label_largo, color_semaforo
 from generar_graficos import (grafico_torta, grafico_barras_apiladas, grafico_lineas_pct,
-    grafico_rechazos_cat, grafico_rechazos_mes, grafico_comparativo_meses, MPL_OK)
+    grafico_rechazos_cat, grafico_rechazos_mes, grafico_comparativo_meses, MPL_OK,
+    grafico_consolidado_pais, grafico_consolidado_impoexpo, grafico_consolidado_cargado_lastre,
+    grafico_consolidado_aduana, grafico_consolidado_var_control)
 from generar_ia import calcular_frases, limpiar_salida_ia
 from generar_queries import calcular_totales
 
@@ -658,3 +660,181 @@ def _generar_excel(pais, anio, mes_d, mes_h, version,
     return ruta
 
 # ── Punto de entrada principal ─────────────────────────────────────────────────
+
+# ── Informe consolidado multi-país (Fase 7) ──────────────────────────────────
+def _periodo_texto_fechas(fecha_d, fecha_h):
+    d = datetime.strptime(fecha_d, "%Y-%m-%d").strftime("%d/%m/%Y")
+    h = datetime.strptime(fecha_h, "%Y-%m-%d").strftime("%d/%m/%Y")
+    return f"{d} a {h}" if d != h else d
+
+def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_aduana,
+                               por_var_control, carpeta, log_fn):
+    periodo = _periodo_texto_fechas(fecha_d, fecha_h)
+    total = n(totales.get("TOTAL", 0)); impo = n(totales.get("IMPO", 0)); expo = n(totales.get("EXPO", 0))
+    cargado = n(totales.get("CARGADO", 0)); lastre = n(totales.get("LASTRE", 0))
+
+    graficos = {}
+    if MPL_OK:
+        log_fn("Generando gr\u00e1ficos...")
+        for nombre, fn in [
+            ("pais",       lambda: grafico_consolidado_pais(por_pais)),
+            ("impoexpo",   lambda: grafico_consolidado_impoexpo(impo, expo)),
+            ("cargalast",  lambda: grafico_consolidado_cargado_lastre(cargado, lastre)),
+            ("aduana",     lambda: grafico_consolidado_aduana(por_aduana)),
+            ("varcontrol", lambda: grafico_consolidado_var_control(por_var_control)),
+        ]:
+            try: graficos[nombre] = fn()
+            except Exception as e: log_fn(f"  Gr\u00e1fico {nombre}: {e}")
+        log_fn("✓ Gr\u00e1ficos generados")
+
+    doc = Document()
+    for section in doc.sections:
+        section.top_margin = Cm(2.5); section.bottom_margin = Cm(2.5)
+        section.left_margin = Cm(3); section.right_margin = Cm(2.5)
+    _agregar_encabezado(doc, "ARCA — Dirección de Reingeniería de Procesos Aduaneros")
+    _agregar_pie_pagina(doc)
+
+    # Portada
+    titulo = doc.add_heading("INFORME CONSOLIDADO SINTIA — TODOS LOS PAÍSES", 0)
+    titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    for txt, sz in [("Dirección de Reingeniería de Procesos Aduaneros (DG ADUA)", 12),
+                     (f"Período: {periodo}", 11)]:
+        p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = p.add_run(txt); run.font.size = Pt(sz); run.font.color.rgb = RGBColor(0x40, 0x40, 0x40)
+    doc.add_paragraph()
+    meta = doc.add_paragraph(); meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    meta.add_run("Versión: ").bold = True; meta.add_run(f"{version}   ")
+    meta.add_run("Última modificación: ").bold = True; meta.add_run(datetime.today().strftime("%d/%m/%Y"))
+    dest = doc.add_paragraph(); dest.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    dest.add_run("Destinatario: ").bold = True; dest.add_run("Sección Simplificación de Procesos Operativos — DI REPA")
+    clas = doc.add_paragraph(); clas.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r_clas = clas.add_run("USO INTERNO"); r_clas.bold = True; r_clas.font.size = Pt(9); r_clas.font.color.rgb = RGBColor(0xA0, 0x30, 0x30)
+    doc.add_page_break()
+
+    _insertar_toc(doc)
+
+    # Resumen ejecutivo
+    doc.add_heading("Resumen Ejecutivo", level=1)
+    doc.add_paragraph(
+        f"El presente informe consolida la totalidad de las operaciones registradas en SINTIA para "
+        f"todos los países del circuito durante el período {periodo}, sin discriminar por país "
+        f"emisor, a diferencia del informe SINTIA estándar (que se genera por país y período).")
+    kpi_box(doc, [
+        ("TOTAL OPERACIONES", fmt(total),   periodo),
+        ("IMPORTACIÓN",       fmt(impo),    pct(impo, total)),
+        ("EXPORTACIÓN",       fmt(expo),    pct(expo, total)),
+        ("CARGADO",           fmt(cargado), pct(cargado, total)),
+        ("LASTRE",            fmt(lastre),  pct(lastre, total)),
+    ])
+    doc.add_page_break()
+
+    # 1. Operaciones por país
+    doc.add_heading("1.  Operaciones por país", level=1)
+    doc.add_paragraph(f"Durante el período se registraron {fmt(total)} operaciones distribuidas entre "
+                       f"{len(por_pais)} país(es)/agrupación(es).")
+    agregar_tabla_word(doc, ["PAÍS", "TOTAL", "IMPO", "EXPO", "CARGADO", "LASTRE"],
+        [[PAISES.get(r["PAIS"], r["PAIS"]), fmt(r.get("TOTAL", 0)), fmt(r.get("IMPO", 0)),
+          fmt(r.get("EXPO", 0)), fmt(r.get("CARGADO", 0)), fmt(r.get("LASTRE", 0))] for r in por_pais],
+        col_widths=[3.5, 2, 1.8, 1.8, 2, 1.8])
+    if "pais" in graficos: insertar_grafico(doc, graficos["pais"])
+
+    # 2. Importación vs. Exportación
+    doc.add_heading("2.  Importación vs. Exportación", level=1)
+    doc.add_paragraph(f"Del total de operaciones, {fmt(impo)} ({pct(impo, total)}) corresponden a "
+                       f"importación y {fmt(expo)} ({pct(expo, total)}) a exportación.")
+    if "impoexpo" in graficos: insertar_grafico(doc, graficos["impoexpo"], width_cm=11)
+
+    # 3. Cargado vs. Lastre
+    doc.add_heading("3.  Cargado vs. Lastre", level=1)
+    doc.add_paragraph(f"{fmt(cargado)} ({pct(cargado, total)}) operaciones fueron con mercadería "
+                       f"cargada y {fmt(lastre)} ({pct(lastre, total)}) en lastre (vacío).")
+    if "cargalast" in graficos: insertar_grafico(doc, graficos["cargalast"], width_cm=11)
+    doc.add_page_break()
+
+    # 4. Operaciones por aduana
+    doc.add_heading("4.  Operaciones por aduana", level=1)
+    doc.add_paragraph(f"Se relevaron operaciones en {len(por_aduana)} aduana(s) durante el período.")
+    agregar_tabla_word(doc, ["ADUANA", "TOTAL", "IMPO", "EXPO", "CARGADO", "LASTRE"],
+        [[r["ADUANA"], fmt(r.get("TOTAL", 0)), fmt(r.get("IMPO", 0)), fmt(r.get("EXPO", 0)),
+          fmt(r.get("CARGADO", 0)), fmt(r.get("LASTRE", 0))] for r in por_aduana],
+        col_widths=[3, 2, 1.8, 1.8, 2, 1.8])
+    if "aduana" in graficos: insertar_grafico(doc, graficos["aduana"])
+    doc.add_page_break()
+
+    # 5. Variables de control
+    doc.add_heading("5.  Operaciones por variable de control", level=1)
+    sin_dato = next((n(r.get("TOTAL", 0)) for r in por_var_control if r["VAR_CONTROL"] == "SIN VARIABLE DE CONTROL"), 0)
+    doc.add_paragraph(
+        f"Se identificaron {len(por_var_control)} variable(s) de control distintas en el período."
+        + (f" {fmt(sin_dato)} operación(es) ({pct(sin_dato, total)}) no tienen variable de control "
+           f"registrada." if sin_dato else ""))
+    agregar_tabla_word(doc, ["VARIABLE DE CONTROL", "TOTAL", "%"],
+        [[r["VAR_CONTROL"], fmt(r.get("TOTAL", 0)), pct(r.get("TOTAL", 0), total)] for r in por_var_control],
+        col_widths=[7, 2.5, 2])
+    if "varcontrol" in graficos: insertar_grafico(doc, graficos["varcontrol"])
+
+    # Anexo — Glosario (mismo que el informe SINTIA estándar)
+    doc.add_page_break()
+    doc.add_heading("Anexo — Glosario de siglas", level=1)
+    glosario_items = [
+        ("SINTIA", "Sistema de Información Aduanera — registro y control de la operatoria del circuito."),
+        ("PAD", "Portal Aduanero — sistema central de registro de ingreso/egreso terrestre."),
+        ("MIC", "Manifiesto Internacional de Cargas."),
+        ("MIC-DTA", "Manifiesto Internacional de Cargas - Declaración de Tránsito Aduanero."),
+        ("Cargado", "Camión con mercadería declarada en el MIC-DTA."),
+        ("Lastre", "Camión sin carga (vacío) en el circuito."),
+        ("Variable de control", "Criterio/regla de selectividad aplicado a la operación en SINTIA."),
+    ]
+    for sigla, desc in glosario_items:
+        gp = doc.add_paragraph()
+        gp.add_run(f"{sigla}: ").bold = True
+        gp.add_run(desc)
+
+    nombre = f"Informe_SINTIA_Consolidado_{fecha_d}_{fecha_h}_v{version}.docx"
+    ruta = os.path.join(carpeta, nombre); doc.save(ruta); log_fn("✓ Informe Word generado")
+    return ruta
+
+
+def _generar_excel_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_aduana,
+                                por_var_control, carpeta, log_fn):
+    wb = openpyxl.Workbook(); wb.remove(wb.active)
+    HDR_FILL = PatternFill("solid", fgColor="1F3864"); HDR_FONT = Font(bold=True, color="FFFFFF", size=10)
+    ALT_FILL = PatternFill("solid", fgColor="EEF2F7"); NORM_FONT = Font(size=10)
+    CENTER = Alignment(horizontal="center", vertical="center"); LEFT = Alignment(horizontal="left", vertical="center")
+    bs = Side(style="thin", color="CCCCCC"); BORDER = Border(left=bs, right=bs, top=bs, bottom=bs)
+
+    def add_sheet(name, headers, rows):
+        ws = wb.create_sheet(name); ws.append(headers)
+        for ci, h in enumerate(headers, 1):
+            cell = ws.cell(1, ci); cell.fill = HDR_FILL; cell.font = HDR_FONT; cell.alignment = CENTER; cell.border = BORDER
+        for ri, row in enumerate(rows, 2):
+            for ci, val in enumerate(row, 1):
+                cell = ws.cell(ri, ci, val); cell.font = NORM_FONT; cell.border = BORDER
+                cell.fill = ALT_FILL if ri % 2 == 0 else PatternFill(); cell.alignment = LEFT
+        for ci in range(1, len(headers) + 1):
+            col = get_column_letter(ci)
+            ws.column_dimensions[col].width = max(
+                len(str(headers[ci - 1])),
+                max((len(str(r[ci - 1] if ci - 1 < len(r) else "")) for r in rows), default=0)) + 3
+        return ws
+
+    total = n(totales.get("TOTAL", 0))
+    add_sheet("Resumen General", ["Indicador", "Valor", "%"], [
+        ["Total operaciones", total, "100,0%"],
+        ["Importación", n(totales.get("IMPO", 0)), pct(totales.get("IMPO", 0), total)],
+        ["Exportación", n(totales.get("EXPO", 0)), pct(totales.get("EXPO", 0), total)],
+        ["Cargado", n(totales.get("CARGADO", 0)), pct(totales.get("CARGADO", 0), total)],
+        ["Lastre", n(totales.get("LASTRE", 0)), pct(totales.get("LASTRE", 0), total)],
+    ])
+    add_sheet("Por País", ["País", "Total", "Impo", "Expo", "Cargado", "Lastre"],
+        [[PAISES.get(r["PAIS"], r["PAIS"]), n(r.get("TOTAL", 0)), n(r.get("IMPO", 0)),
+          n(r.get("EXPO", 0)), n(r.get("CARGADO", 0)), n(r.get("LASTRE", 0))] for r in por_pais])
+    add_sheet("Por Aduana", ["Aduana", "Total", "Impo", "Expo", "Cargado", "Lastre"],
+        [[r["ADUANA"], n(r.get("TOTAL", 0)), n(r.get("IMPO", 0)),
+          n(r.get("EXPO", 0)), n(r.get("CARGADO", 0)), n(r.get("LASTRE", 0))] for r in por_aduana])
+    add_sheet("Por Variable de Control", ["Variable de Control", "Total", "%"],
+        [[r["VAR_CONTROL"], n(r.get("TOTAL", 0)), pct(r.get("TOTAL", 0), total)] for r in por_var_control])
+
+    nombre = f"Informe_SINTIA_Consolidado_{fecha_d}_{fecha_h}_v{version}.xlsx"
+    ruta = os.path.join(carpeta, nombre); wb.save(ruta); log_fn("✓ Planilla Excel generada")
+    return ruta

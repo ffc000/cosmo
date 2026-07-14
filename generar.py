@@ -23,13 +23,13 @@ import os
 # antes del split (ej. generar.fmt, generar.PAISES, generar.DOCX_OK...).
 from generar_utils import *  # noqa: F401,F403
 from generar_utils import PAISES, MESES  # nombres usados explícitamente acá abajo
-from generar_queries import _sql_case_categorias, correr_queries, calcular_totales
+from generar_queries import _sql_case_categorias, correr_queries, calcular_totales, correr_queries_consolidado
 from generar_graficos import *  # noqa: F401,F403
 from generar_graficos import MPL_OK
 from generar_ia import *  # noqa: F401,F403
 from generar_ia import ANT_OK
 from generar_documento import *  # noqa: F401,F403
-from generar_documento import DOCX_OK, XLSX_OK, _generar_word, _generar_excel
+from generar_documento import DOCX_OK, XLSX_OK, _generar_word, _generar_excel, _generar_word_consolidado, _generar_excel_consolidado
 
 def generar_informe(ruta_db, pais, anio, mes_d, mes_h, usar_ia, api_key, carpeta, log_fn, contexto_extra=""):
     nombre_base=f"Informe_SINTIA_{pais}_{anio}_{mes_d}-{mes_h}"
@@ -218,4 +218,31 @@ def generar_informe(ruta_db, pais, anio, mes_d, mes_h, usar_ia, api_key, carpeta
             per_ult,per_ant,anio_ant,carpeta,log_fn)
         archivos.append(ruta)
     log_fn(f"✓ Proceso completado \u2014 {len(archivos)} archivo(s) listos para descargar")
+    return archivos
+
+def generar_informe_consolidado(ruta_db, fecha_d, fecha_h, carpeta, log_fn):
+    """Informe consolidado multi-país (Fase 7): todas las operaciones de
+    todos los países dentro de [fecha_d, fecha_h] (YYYY-MM-DD), desglosadas
+    por país, importación/exportación, aduana, cargado/lastre y variable de
+    control. A diferencia de generar_informe(), no es por país/año/mes, no
+    lleva narrativa/conclusión con IA (es un informe estadístico, no
+    interpretativo), y admite un rango de fechas que puede cruzar años.
+    """
+    nombre_base = f"Informe_SINTIA_Consolidado_{fecha_d}_{fecha_h}"
+    version = 1
+    while os.path.exists(os.path.join(carpeta, f"{nombre_base}_v{version}.docx")): version += 1
+
+    totales, por_pais, por_aduana, por_var_control = correr_queries_consolidado(ruta_db, fecha_d, fecha_h, log_fn)
+
+    log_fn("Generando archivos...")
+    archivos = []
+    if DOCX_OK:
+        ruta = _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_aduana,
+                                          por_var_control, carpeta, log_fn)
+        archivos.append(ruta)
+    if XLSX_OK:
+        ruta = _generar_excel_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_aduana,
+                                           por_var_control, carpeta, log_fn)
+        archivos.append(ruta)
+    log_fn(f"✓ Proceso completado — {len(archivos)} archivo(s) listos para descargar")
     return archivos

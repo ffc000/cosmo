@@ -11,7 +11,7 @@ try:
 except ImportError:
     MPL_OK = False
 
-from generar_utils import C_TRANS, C_NO_TRANS, C_TARDIO, C_CARGADO, C_LASTRE, fmt, n, pct_f, mes_label, mes_label_largo
+from generar_utils import C_TRANS, C_NO_TRANS, C_TARDIO, C_CARGADO, C_LASTRE, PAISES, fmt, n, pct_f, mes_label, mes_label_largo
 
 def fig_to_bytes(fig):
     buf = io.BytesIO()
@@ -124,3 +124,68 @@ def grafico_comparativo_meses(datos_ult, datos_ant, per_ult, per_ant):
         v=int(bar.get_height())
         if v>0: ax.text(bar.get_x()+bar.get_width()/2,v+v*0.02,fmt(v),ha='center',va='bottom',fontsize=8)
     fig.tight_layout(); return fig_to_bytes(fig)
+
+# ── Gráficos del informe consolidado multi-país (Fase 7) ─────────────────────
+def grafico_consolidado_pais(por_pais):
+    """Barras horizontales: total de operaciones por país."""
+    if not por_pais: return None
+    filas = list(reversed(por_pais))
+    labels = [PAISES.get(r["PAIS"], r["PAIS"]) for r in filas]
+    valores = [n(r.get("TOTAL", 0)) for r in filas]
+    fig, ax = plt.subplots(figsize=(7, max(3, len(filas) * 0.5 + 1)), facecolor='white')
+    bars = ax.barh(labels, valores, color=C_TRANS, edgecolor='white', linewidth=0.5)
+    for bar, val in zip(bars, valores):
+        ax.text(bar.get_width() + bar.get_width() * 0.01, bar.get_y() + bar.get_height() / 2,
+                fmt(val), va='center', fontsize=9, fontweight='bold')
+    ax.set_xlabel("Operaciones", fontsize=9)
+    ax.set_title("Operaciones por país", fontsize=11, fontweight='bold')
+    ax.xaxis.grid(True, alpha=0.3); ax.set_axisbelow(True)
+    ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+    fig.tight_layout(); return fig_to_bytes(fig)
+
+def _grafico_torta_dos(valor_a, etiqueta_a, valor_b, etiqueta_b, color_a, color_b, titulo):
+    fig, ax = plt.subplots(figsize=(6, 4), facecolor='white')
+    valores = [valor_a, valor_b]; total = valor_a + valor_b
+    labels = [f'{etiqueta_a}\n{fmt(valor_a)}', f'{etiqueta_b}\n{fmt(valor_b)}']
+    colors = [color_a, color_b]
+    idx = [i for i, v in enumerate(valores) if v > 0]
+    valores = [valores[i] for i in idx]; labels = [labels[i] for i in idx]; colors = [colors[i] for i in idx]
+    if not valores: return None
+    ax.pie(valores, labels=labels, colors=colors,
+        autopct=lambda v: f"{v:.1f}%".replace(".", ",") if total > 0 else "",
+        startangle=90, pctdistance=0.75, wedgeprops=dict(edgecolor='white', linewidth=2))
+    ax.set_title(titulo, fontsize=11, fontweight='bold', pad=12)
+    fig.tight_layout(); return fig_to_bytes(fig)
+
+def grafico_consolidado_impoexpo(impo, expo):
+    return _grafico_torta_dos(impo, "Importación", expo, "Exportación", C_TRANS, C_TARDIO,
+                               "Importación vs. Exportación")
+
+def grafico_consolidado_cargado_lastre(cargado, lastre):
+    return _grafico_torta_dos(cargado, "Cargado", lastre, "Lastre", C_CARGADO, C_LASTRE,
+                               "Cargado vs. Lastre")
+
+def _grafico_barras_horiz_top(filas, campo_label, top, color, titulo):
+    if not filas: return None
+    filas = list(reversed(filas[:top]))
+    labels = [str(r[campo_label]) for r in filas]
+    valores = [n(r.get("TOTAL", 0)) for r in filas]
+    fig, ax = plt.subplots(figsize=(7, max(3, len(filas) * 0.4 + 1)), facecolor='white')
+    bars = ax.barh(labels, valores, color=color, edgecolor='white', linewidth=0.5)
+    for bar, val in zip(bars, valores):
+        ax.text(bar.get_width() + bar.get_width() * 0.01, bar.get_y() + bar.get_height() / 2,
+                fmt(val), va='center', fontsize=8, fontweight='bold')
+    ax.set_xlabel("Operaciones", fontsize=9)
+    ax.set_title(titulo, fontsize=11, fontweight='bold')
+    ax.xaxis.grid(True, alpha=0.3); ax.set_axisbelow(True)
+    ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+    ax.tick_params(axis='y', labelsize=8)
+    fig.tight_layout(); return fig_to_bytes(fig)
+
+def grafico_consolidado_aduana(por_aduana, top=15):
+    titulo = f"Operaciones por aduana (top {min(top, len(por_aduana))})"
+    return _grafico_barras_horiz_top(por_aduana, "ADUANA", top, C_TRANS, titulo)
+
+def grafico_consolidado_var_control(por_var_control, top=15):
+    titulo = f"Operaciones por variable de control (top {min(top, len(por_var_control))})"
+    return _grafico_barras_horiz_top(por_var_control, "VAR_CONTROL", top, C_TARDIO, titulo)
