@@ -228,7 +228,9 @@ def vua_bpmn():
     archivo = request.files["archivo"]
     circuito = request.form.get("circuito","AUTO")
     try:
-        xml_content = archivo.read().decode("utf-8")
+        xml_content = archivo.read(6_000_000).decode("utf-8")
+        if re.search(r'<!(DOCTYPE|ENTITY)', xml_content, re.IGNORECASE):
+            return jsonify({"ok":False,"error":"XML no permitido: contiene DOCTYPE/ENTITY."})
         ET.fromstring(xml_content)
     except Exception as e:
         return jsonify({"ok":False,"error":f"XML inválido: {e}"})
