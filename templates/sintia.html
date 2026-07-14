@@ -300,6 +300,21 @@ input:checked+.slider::before{transform:translateX(18px)}
         </div>
         <div class="log-box" id="log-box"></div>
         <div class="download-area" id="download-area"></div>
+
+        <div class="card" style="margin-top:1rem">
+          <div class="card-title">Informe consolidado — todos los países</div>
+          <p style="color:var(--muted);font-size:.82rem;margin:.2rem 0 .8rem">
+            Todas las operaciones de todos los países en un rango de fechas, desglosadas por
+            país, importación/exportación, aduana, cargado/lastre y variable de control.
+          </p>
+          <div class="form-row cols2">
+            <div><label>Fecha desde</label><input type="date" id="consolidado-fecha-d"></div>
+            <div><label>Fecha hasta</label><input type="date" id="consolidado-fecha-h"></div>
+          </div>
+          <button class="btn btn-primary btn-full" id="btn-generar-consolidado" {% if not db_exists %}disabled{% endif %}>Generar informe consolidado</button>
+        </div>
+        <div class="log-box" id="consolidado-log-box"></div>
+        <div class="download-area" id="consolidado-download-area"></div>
       </div>
 
       <!-- ── PANEL: CONSULTA DAT_2026 ── -->
@@ -718,6 +733,12 @@ async function _poblarSelectorAnio(selectId, incluirTodos) {
   } catch (e) { /* si falla, el select queda con lo que ya tenía (el año actual server-rendered) */ }
 }
 showPanel('dashboard');
+(function(){
+  const d=new Date(); const iso=x=>x.toISOString().slice(0,10);
+  const fd=document.getElementById('consolidado-fecha-d'), fh=document.getElementById('consolidado-fecha-h');
+  if(fd && !fd.value) fd.value = iso(new Date(d.getFullYear(), d.getMonth(), 1));
+  if(fh && !fh.value) fh.value = iso(d);
+})();
 
 // ── Generar informe ──
 document.getElementById('btn-generar').addEventListener('click',()=>{
@@ -753,6 +774,36 @@ function pollJob(jobId,logBox,dlArea,btn){
 }
 function addLog(box,msg,cls){const div=document.createElement('div');div.className='log-line'+(cls?' '+cls:msg.includes('✓')?' ok':msg.includes('✗')||msg.includes('Error')?' err':'');div.textContent=msg;box.appendChild(div);box.scrollTop=box.scrollHeight}
 function resetBtn(btn){btn.disabled=false;btn.innerHTML='Generar informe'}
+
+// ── Generar informe consolidado (todos los países) ──
+document.getElementById('btn-generar-consolidado').addEventListener('click',()=>{
+  const fecha_d=document.getElementById('consolidado-fecha-d').value;
+  const fecha_h=document.getElementById('consolidado-fecha-h').value;
+  const logBox=document.getElementById('consolidado-log-box'),dlArea=document.getElementById('consolidado-download-area');
+  if(!fecha_d||!fecha_h){addLog(logBox,'✗ Completá ambas fechas.','err');logBox.classList.add('visible');return}
+  logBox.classList.add('visible');logBox.innerHTML='';dlArea.classList.remove('visible');dlArea.innerHTML='';
+  const btn=document.getElementById('btn-generar-consolidado');btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Generando...';
+  addLog(logBox,'Iniciando generación...');
+  fetch('/api/generar_consolidado',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fecha_d,fecha_h})})
+    .then(r=>r.json()).then(data=>{
+      if(!data.ok){addLog(logBox,'✗ '+data.error,'err');_resetBtnConsolidado(btn);return}
+      _pollJobConsolidado(data.job_id,logBox,dlArea,btn);
+    });
+});
+function _resetBtnConsolidado(btn){btn.disabled=false;btn.innerHTML='Generar informe consolidado'}
+function _pollJobConsolidado(jobId,logBox,dlArea,btn){
+  let lastLen=0;
+  const iv=setInterval(()=>{
+    fetch('/api/job/'+jobId).then(r=>r.json()).then(data=>{
+      (data.log||[]).slice(lastLen).forEach(l=>addLog(logBox,l));lastLen=(data.log||[]).length;
+      if(data.status==='done'){
+        clearInterval(iv);_resetBtnConsolidado(btn);
+        (data.files||[]).forEach((f,i)=>{const a=document.createElement('a');a.href=`/api/download/${jobId}/${i}`;a.className='download-btn';a.textContent=f.endsWith('.docx')?'📄 Descargar Word':'📊 Descargar Excel';dlArea.appendChild(a)});
+        dlArea.classList.add('visible');
+      }else if(data.status==='error'){clearInterval(iv);_resetBtnConsolidado(btn)}
+    });
+  },1200);
+}
 
 // ── Fecha actual YYYYMMDD ──
 function hoy(){const d=new Date();return d.getFullYear().toString()+(d.getMonth()+1).toString().padStart(2,'0')+d.getDate().toString().padStart(2,'0');}

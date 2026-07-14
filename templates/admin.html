@@ -286,6 +286,7 @@ select option{background:var(--surface)}
               <button class="btn btn-outline btn-sm" id="fil-sintia" onclick="filtrarHist('sintia')">📊 SINTIA</button>
               <button class="btn btn-outline btn-sm" id="fil-minuta" onclick="filtrarHist('minuta')">📋 Minutas</button>
               <button class="btn btn-outline btn-sm" id="fil-aduanas_pais" onclick="filtrarHist('aduanas_pais')">🌎 Aduanas del país</button>
+              <button class="btn btn-outline btn-sm" id="fil-sintia_consolidado" onclick="filtrarHist('sintia_consolidado')">🌐 Consolidado</button>
             </div>
           </div>
           <div id="hist-content"><div style="color:var(--muted);font-size:.82rem">Cargando...</div></div>
@@ -599,8 +600,8 @@ function loadDbStatus(){
     const filas = Object.entries(data.tables||{}).sort((a,b)=>a[0].localeCompare(b[0],'es'));
     let html=`<div class="alert alert-ok">✓ BD cargada — ${data.size_gb} GB — ${filas.length} tabla(s)</div>`;
     if(filas.length){
-      html+='<table class="data-table" style="margin-top:.6rem"><thead><tr><th>Tabla</th><th>Origen</th><th>Registros</th></tr></thead><tbody>';
-      filas.forEach(([t,info])=>{html+=`<tr><td style="font-family:var(--mono)">${escHtml(t)}</td><td style="font-size:.75rem;color:var(--muted)">${escHtml(info.origen)}</td><td style="font-family:var(--mono)">${info.registros.toLocaleString('es-AR')}</td></tr>`});
+      html+='<table class="data-table" style="margin-top:.6rem"><thead><tr><th>Tabla</th><th>Registros</th></tr></thead><tbody>';
+      filas.forEach(([t,c])=>{html+=`<tr><td style="font-family:var(--mono)">${escHtml(t)}</td><td style="font-family:var(--mono)">${c.toLocaleString('es-AR')}</td></tr>`});
       html+='</tbody></table>';
     }
     el.innerHTML=html;
@@ -616,7 +617,7 @@ function loadTablasDetalle(){
   fetch('/api/db-tablas-detalle').then(r=>r.json()).then(data=>{
     if(!data.ok){el.innerHTML=`<div class="alert alert-warn">${escHtml(data.error||'No se pudo cargar.')}</div>`;return}
     if(!data.tablas.length){el.innerHTML='<div style="color:var(--muted);font-size:.82rem">Sin tablas.</div>';return}
-    let html='<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Tabla</th><th>Origen</th><th>Filas</th><th>Última modificación</th><th>Por</th><th></th></tr></thead><tbody>';
+    let html='<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Tabla</th><th>Filas</th><th>Última modificación</th><th>Por</th><th></th></tr></thead><tbody>';
     data.tablas.forEach((t,i)=>{
       const filas = t.filas != null ? t.filas.toLocaleString('es-AR') : '—';
       const fecha = t.ultima_modificacion
@@ -624,13 +625,12 @@ function loadTablasDetalle(){
         : '<span style="color:var(--muted)">Desconocida</span>';
       html+=`<tr>
         <td style="font-family:var(--mono)">${escHtml(t.tabla)}</td>
-        <td style="font-size:.75rem;color:var(--muted)">${escHtml(t.origen||'')}</td>
         <td style="font-family:var(--mono)">${filas}</td>
         <td style="font-size:.78rem">${fecha}</td>
         <td style="font-size:.78rem;color:var(--muted)">${escHtml(t.modificado_por||'—')}</td>
         <td><button class="btn btn-outline btn-sm" onclick="_toggleSchemaTabla(${i})">Ver schema</button></td>
       </tr>
-      <tr id="schema-row-${i}" style="display:none"><td colspan="6" style="background:var(--bg)">
+      <tr id="schema-row-${i}" style="display:none"><td colspan="5" style="background:var(--bg)">
         <table class="data-table" style="margin:.4rem 0"><thead><tr><th>Columna</th><th>Tipo</th></tr></thead><tbody>
           ${t.columnas.map(c=>`<tr><td style="font-family:var(--mono)">${escHtml(c.nombre)}</td><td style="font-family:var(--mono);color:var(--muted)">${escHtml(c.tipo)}</td></tr>`).join('')}
         </tbody></table>
@@ -658,6 +658,7 @@ function renderHistorial(){
       minuta: '<span class="tag tag-minuta">📋 Minuta</span>',
       vua: '<span class="tag tag-minuta">✈️ VUA</span>',
       aduanas_pais: '<span class="tag tag-aduanas">🌎 Aduanas del país</span>',
+      sintia_consolidado: '<span class="tag tag-sintia">🌐 Consolidado</span>',
     };
     const tipo = TAGS[r.tipo] || '<span class="tag tag-sintia">📊 SINTIA</span>';
     const dl=r.tipo==='minuta'?`<a href="/api/vua/minutas/${r.id}/download" class="download-btn" style="padding:.25rem .6rem;font-size:.65rem">📥</a>`:`${r.archivo_word?`<a href="/api/historial/${r.id}/download/word" class="download-btn" style="padding:.25rem .6rem;font-size:.65rem">📄</a>`:''} ${r.archivo_excel?`<a href="/api/historial/${r.id}/download/excel" class="download-btn" style="padding:.25rem .6rem;font-size:.65rem">📊</a>`:''}`;
