@@ -297,7 +297,7 @@ fetch('/api/db-status').then(r=>r.json()).then(data=>{
   if(!data.exists)return;
   const dat=data.tables||{};
   const datKey=Object.keys(dat).find(k=>k.startsWith('DAT_'))||'';
-  const datCount=datKey?dat[datKey]:0,rechCount=dat['RECHAZOS']||0;
+  const datCount=datKey?(dat[datKey].registros??dat[datKey]):0,rechCount=dat['RECHAZOS']?(dat['RECHAZOS'].registros??dat['RECHAZOS']):0;
   const sd=document.getElementById('stat-dat'),sr=document.getElementById('stat-rech'),sds=document.getElementById('s-dat-sub');
   if(sd)sd.innerHTML=`DAT: <span>${datCount.toLocaleString('es-AR')}</span>`;
   if(sr)sr.innerHTML=`Rechazos: <span>${rechCount.toLocaleString('es-AR')}</span>`;
