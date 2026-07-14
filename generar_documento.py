@@ -5,6 +5,7 @@ conclusión generadas por IA). Extraído de generar.py (Fase 3 de
 profesionalización).
 """
 import os
+import re
 from datetime import datetime
 
 try:
