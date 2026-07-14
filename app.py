@@ -3345,45 +3345,25 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
     análisis IA, evolución mensual, y detalle por aduana. No reusa
     actas.generar_acta_word() -- esa está pensada para minutas de reunión
     (participantes/secciones con viñetas), estructura distinta a un informe
-    con tablas de indicadores."""
+    con tablas de indicadores. Sí reusa los helpers de generar_documento.py
+    (agregar_tabla_word, encabezado/pie, TOC) para que el estilo sea el
+    mismo que el resto de los informes SINTIA -- antes tenía su propia
+    implementación de tablas (_tabla_simple/_set_cell_color) con un color
+    de header y márgenes ligeramente distintos, sin encabezado/pie/índice."""
     from docx import Document
     from docx.shared import Pt, RGBColor, Cm
     from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.oxml.ns import qn
-    from docx.oxml import OxmlElement
-
-    def _set_cell_color(cell, hex_color):
-        tc = cell._tc; tcPr = tc.get_or_add_tcPr(); shd = OxmlElement("w:shd")
-        shd.set(qn("w:val"), "clear"); shd.set(qn("w:color"), "auto"); shd.set(qn("w:fill"), hex_color)
-        tcPr.append(shd)
-
-    def _tabla_simple(doc, headers, filas_datos):
-        table = doc.add_table(rows=1, cols=len(headers))
-        table.style = "Table Grid"
-        for i, h in enumerate(headers):
-            c = table.rows[0].cells[i]
-            c.text = h
-            c.paragraphs[0].runs[0].bold = True
-            c.paragraphs[0].runs[0].font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-            c.paragraphs[0].runs[0].font.size = Pt(9)
-            _set_cell_color(c, "242D4F")
-        for fila in filas_datos:
-            row = table.add_row()
-            for i, val in enumerate(fila):
-                row.cells[i].text = str(val) if val is not None else "—"
-                for p in row.cells[i].paragraphs:
-                    for r in p.runs:
-                        r.font.size = Pt(9)
-        return table
+    from generar_documento import agregar_tabla_word, _agregar_encabezado, _agregar_pie_pagina, _insertar_toc
 
     doc = Document()
     for section in doc.sections:
-        section.top_margin = Cm(2.2); section.bottom_margin = Cm(2.2)
-        section.left_margin = Cm(2.5); section.right_margin = Cm(2.2)
+        section.top_margin = Cm(2.5); section.bottom_margin = Cm(2.5)
+        section.left_margin = Cm(3); section.right_margin = Cm(2.5)
+    _agregar_encabezado(doc, "ARCA — Dirección de Reingeniería de Procesos Aduaneros")
+    _agregar_pie_pagina(doc)
 
-    titulo = doc.add_paragraph(); titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = titulo.add_run("INFORME — ADUANAS DEL PAÍS")
-    run.bold = True; run.font.size = Pt(16); run.font.color.rgb = RGBColor(0x24, 0x2D, 0x4F)
+    titulo = doc.add_heading("INFORME — ADUANAS DEL PAÍS", 0)
+    titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
     sub = doc.add_paragraph(); sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
     sub_run = sub.add_run("SINTIA — Tiempos de desaduanamiento (PAD)")
     sub_run.font.size = Pt(11); sub_run.font.color.rgb = RGBColor(0x60, 0x60, 0x60)
@@ -3410,21 +3390,22 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
         "SENASA ni con ningún otro organismo)."
     )
     nota_run.italic = True; nota_run.font.size = Pt(8.5); nota_run.font.color.rgb = RGBColor(0x60, 0x60, 0x60)
+    doc.add_page_break()
 
-    doc.add_paragraph()
-    doc.add_paragraph().add_run("Indicadores").bold = True
-    _tabla_simple(doc, ["Indicador", "Valor"], [
-        ("Operaciones totales", indicadores["total_operaciones"]),
-        ("Salieron (SAL)", indicadores["total_sali"]),
-        ("Salieron dentro del umbral", indicadores["sali_dentro_umbral"]),
-        ("Demora media", indicadores["demora_media_fmt"] or "—"),
-        ("En alerta — pendiente", indicadores["en_alerta_bandeja"]),
-        ("En alerta — salió tarde", indicadores["en_alerta_demora_larga"]),
-        ("En alerta total", indicadores["en_alerta_total"]),
-    ])
+    _insertar_toc(doc)
 
-    doc.add_paragraph()
-    doc.add_paragraph().add_run("Análisis").bold = True
+    doc.add_heading("1.  Indicadores", level=1)
+    agregar_tabla_word(doc, ["Indicador", "Valor"], [
+        ["Operaciones totales", str(indicadores["total_operaciones"])],
+        ["Salieron (SAL)", str(indicadores["total_sali"])],
+        ["Salieron dentro del umbral", str(indicadores["sali_dentro_umbral"])],
+        ["Demora media", indicadores["demora_media_fmt"] or "—"],
+        ["En alerta — pendiente", str(indicadores["en_alerta_bandeja"])],
+        ["En alerta — salió tarde", str(indicadores["en_alerta_demora_larga"])],
+        ["En alerta total", str(indicadores["en_alerta_total"])],
+    ], col_widths=[10, 5.5])
+
+    doc.add_heading("2.  Análisis", level=1)
     for parrafo in narrativa.split("\n"):
         if parrafo.strip():
             p = doc.add_paragraph(parrafo.strip())
@@ -3432,22 +3413,25 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
                 r.font.size = Pt(10.5)
 
     if evolucion:
-        doc.add_paragraph()
-        doc.add_paragraph().add_run("Evolución mensual").bold = True
-        _tabla_simple(doc, ["Mes", "Demora media"],
-                      [(_mes_label_corto(p["mes"]), p["demora_media_fmt"] or "—") for p in evolucion])
+        doc.add_heading("3.  Evolución mensual", level=1)
+        agregar_tabla_word(doc, ["Mes", "Demora media"],
+            [[_mes_label_corto(p["mes"]), p["demora_media_fmt"] or "—"] for p in evolucion],
+            col_widths=[8, 7.5])
 
     if filas:
-        doc.add_paragraph()
-        doc.add_paragraph().add_run("Detalle por aduana").bold = True
-        _tabla_simple(doc, ["Aduana", "DIRA", "Operaciones", "Demora media", "En alerta"],
-                      [(f["aduana_nombre"], f["dira_nombre"], f["total_operaciones"],
-                        f["demora_media_fmt"] or "—", f["en_alerta_total"]) for f in filas])
+        doc.add_heading("4.  Detalle por aduana", level=1)
+        agregar_tabla_word(doc, ["Aduana", "DIRA", "Operaciones", "Demora media", "En alerta"],
+            [[f["aduana_nombre"], f["dira_nombre"], str(f["total_operaciones"]),
+              f["demora_media_fmt"] or "—", str(f["en_alerta_total"])] for f in filas],
+            col_widths=[4, 3.5, 2.7, 2.7, 2.6])
 
     # ── Evolución mensual de cada aduana en alerta (tabla + gráfico) ──────
     # Al final del documento, a propósito: es el detalle más fino de todos
     # (una sección completa por aduana), así que va después de todo lo
-    # demás, no compitiendo por atención con el resumen ejecutivo.
+    # demás, no compitiendo por atención con el resumen ejecutivo. No lleva
+    # heading nivel 1/2 (queda fuera del índice a propósito): es una lista
+    # de largo variable según cuántas aduanas estén en alerta, y meterla en
+    # el TOC lo haría crecer sin límite en vez de quedar como referencia.
     #
     # Orden: de más alertas a menos (a pedido -- distinto del orden
     # alfabético/por DIRA que usa la tabla "Detalle por aduana" de arriba).
@@ -3481,10 +3465,10 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
             valores_mes = [datos_aduana.get(m) or {"demora": None, "operaciones": 0} for m in meses_cols]
             valores_dias = [v["demora"] for v in valores_mes]
             valores_ops = [v["operaciones"] for v in valores_mes]
-            _tabla_simple(doc, ["Mes", "Demora media", "Operaciones"], [
-                (_mes_label_corto(m), _formatear_demora(v["demora"]) or "—", v["operaciones"])
+            agregar_tabla_word(doc, ["Mes", "Demora media", "Operaciones"], [
+                [_mes_label_corto(m), _formatear_demora(v["demora"]) or "—", str(v["operaciones"])]
                 for m, v in zip(meses_cols, valores_mes)
-            ])
+            ], col_widths=[5.5, 5, 5])
 
             img = _grafico_evolucion_aduana(f["aduana_nombre"], meses_cols, valores_dias, valores_ops)
             if img:

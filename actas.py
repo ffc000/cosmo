@@ -17,23 +17,19 @@ visible en los próximos Acta de SENASA que se generen (no en las ya
 guardadas), a propósito: el objetivo de unificar es quedarse con la mejor
 versión de las dos, no con el promedio.
 
-Sin dependencia de Flask — solo necesita python-docx.
+Reusa header/pie de página y el estilo de tabla de generar_documento.py (Fase
+8 de profesionalización -- unificar el diseño de los 3 generadores de Word
+que había: SINTIA/consolidado, informe de Aduanas del país, y este). No lleva
+índice (TOC): las actas son de 1-2 páginas, un índice ahí sería ruido, no
+ayuda -- a diferencia de los informes largos donde sí aporta.
+
+Sin dependencia de Flask -- generar_documento tampoco la tiene (solo
+docx/openpyxl/matplotlib), así que sigue sin arrastrar Flask acá.
 """
 from docx import Document
 from docx.shared import Pt, RGBColor, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.oxml.ns import qn
-from docx.oxml import OxmlElement
-
-
-def _set_cell_color(cell, hex_color):
-    tc = cell._tc
-    tcPr = tc.get_or_add_tcPr()
-    shd = OxmlElement("w:shd")
-    shd.set(qn("w:val"), "clear")
-    shd.set(qn("w:color"), "auto")
-    shd.set(qn("w:fill"), hex_color)
-    tcPr.append(shd)
+from generar_documento import agregar_tabla_word, _agregar_encabezado, _agregar_pie_pagina
 
 
 def generar_acta_word(titulo_doc, fecha, asunto, lugar, participantes, secciones,
@@ -59,6 +55,8 @@ def generar_acta_word(titulo_doc, fecha, asunto, lugar, participantes, secciones
         section.bottom_margin = Cm(2.5)
         section.left_margin = Cm(3)
         section.right_margin = Cm(2.5)
+    _agregar_encabezado(doc, "ARCA — Dirección de Reingeniería de Procesos Aduaneros")
+    _agregar_pie_pagina(doc)
 
     titulo = doc.add_paragraph()
     titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -79,14 +77,7 @@ def generar_acta_word(titulo_doc, fecha, asunto, lugar, participantes, secciones
 
     if participantes:
         doc.add_paragraph().add_run("Participantes").bold = True
-        table = doc.add_table(rows=1, cols=3)
-        table.style = "Table Grid"
-        hdr = table.rows[0]
-        for i, txt in enumerate(["Nombre", "Cargo", "Organismo"]):
-            hdr.cells[i].text = txt
-            hdr.cells[i].paragraphs[0].runs[0].bold = True
-            hdr.cells[i].paragraphs[0].runs[0].font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-            _set_cell_color(hdr.cells[i], "242D4F")
+        filas = []
         for p in participantes:
             if isinstance(p, dict):
                 nombre = p.get("nombre", "")
@@ -96,10 +87,8 @@ def generar_acta_word(titulo_doc, fecha, asunto, lugar, participantes, secciones
                 nombre = str(p)
                 cargo = roles_predefinidos.get(nombre, "")
                 organismo = ""
-            row = table.add_row()
-            row.cells[0].text = nombre
-            row.cells[1].text = cargo
-            row.cells[2].text = organismo
+            filas.append([nombre, cargo, organismo])
+        agregar_tabla_word(doc, ["Nombre", "Cargo", "Organismo"], filas, col_widths=[5, 5, 5.5])
 
     for nombre_seccion, items in secciones:
         if not items:
