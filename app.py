@@ -3365,16 +3365,16 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
     titulo = doc.add_heading("INFORME — ADUANAS DEL PAÍS", 0)
     titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
     sub = doc.add_paragraph(); sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    sub_run = sub.add_run("SINTIA — Tiempos de desaduanamiento (PAD)")
+    sub_run = sub.add_run("Tiempos de desaduanamiento (PAD)")
     sub_run.font.size = Pt(11); sub_run.font.color.rgb = RGBColor(0x60, 0x60, 0x60)
     doc.add_paragraph()
 
     for label, valor in [
-        ("Generado:", datetime.now().strftime("%d/%m/%Y %H:%M")),
+        ("Generado:", datetime.now().strftime("%d/%m/%Y")),
         ("Año (datos PAD):", str(anio)),
         ("Alcance:", dira_nombre),
         ("Umbral de alerta:", f"{umbral_alerta_dias} días"),
-        ("Versión del generador:", _INFORME_ADUANAS_VERSION),
+        ("Versión:", _INFORME_ADUANAS_VERSION),
     ]:
         p = doc.add_paragraph()
         r1 = p.add_run(f"{label} "); r1.bold = True; r1.font.size = Pt(10)

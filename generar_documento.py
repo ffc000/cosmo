@@ -176,9 +176,7 @@ def _generar_word(pais, anio, mes_d, mes_h, version,
     meta.add_run("Versi\u00f3n: ").bold=True; meta.add_run(f"{version}   ")
     meta.add_run("\u00daltima modificaci\u00f3n: ").bold=True; meta.add_run(datetime.today().strftime("%d/%m/%Y"))
     dest=doc.add_paragraph(); dest.alignment=WD_ALIGN_PARAGRAPH.CENTER
-    dest.add_run("Destinatario: ").bold=True; dest.add_run("Secci\u00f3n Simplificaci\u00f3n de Procesos Operativos — DI REPA")
-    clas=doc.add_paragraph(); clas.alignment=WD_ALIGN_PARAGRAPH.CENTER
-    r_clas=clas.add_run("USO INTERNO"); r_clas.bold=True; r_clas.font.size=Pt(9); r_clas.font.color.rgb=RGBColor(0xA0,0x30,0x30)
+    dest.add_run("Elaborado por: ").bold=True; dest.add_run("Secci\u00f3n Simplificaci\u00f3n de Procesos Operativos — DI REPA")
     doc.add_page_break()
 
     # Índice (se completa al abrir el documento en Word / actualizar campo)
@@ -696,7 +694,7 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
     _agregar_pie_pagina(doc)
 
     # Portada
-    titulo = doc.add_heading("INFORME CONSOLIDADO SINTIA — TODOS LOS PAÍSES", 0)
+    titulo = doc.add_heading("INFORME CONSOLIDADO DE OPERACIONES FRONTERIZAS TERRESTRES", 0)
     titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
     for txt, sz in [("Dirección de Reingeniería de Procesos Aduaneros (DG ADUA)", 12),
                      (f"Período: {periodo}", 11)]:
@@ -707,9 +705,7 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
     meta.add_run("Versión: ").bold = True; meta.add_run(f"{version}   ")
     meta.add_run("Última modificación: ").bold = True; meta.add_run(datetime.today().strftime("%d/%m/%Y"))
     dest = doc.add_paragraph(); dest.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    dest.add_run("Destinatario: ").bold = True; dest.add_run("Sección Simplificación de Procesos Operativos — DI REPA")
-    clas = doc.add_paragraph(); clas.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r_clas = clas.add_run("USO INTERNO"); r_clas.bold = True; r_clas.font.size = Pt(9); r_clas.font.color.rgb = RGBColor(0xA0, 0x30, 0x30)
+    dest.add_run("Elaborado por: ").bold = True; dest.add_run("Sección Simplificación de Procesos Operativos — DI REPA")
     doc.add_page_break()
 
     _insertar_toc(doc)
