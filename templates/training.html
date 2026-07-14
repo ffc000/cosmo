@@ -1638,7 +1638,11 @@ function renderCalSemana() {
 // Stub para que Claude chat siga funcionando
 async function cargarSemanas() { cargarCalendario(); }
 
-function esc(s) { return (s||'').replace(/'/g,"\\'").replace(/\n/g,' '); }
+function esc(s) {
+  return String(s ?? '')
+    .replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,' ')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 // escHtml() ahora vive en common.js (compartida entre todas las plantillas).
 
 function editarSesion(id, desc, notas, dia, turno, fechaInicio) {

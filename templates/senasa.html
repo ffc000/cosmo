@@ -547,7 +547,11 @@ async function cargarCronologia() {
   });
 }
 
-function esc(s) { return (s||'').replace(/'/g,"\\'").replace(/\n/g,' '); }
+function esc(s) {
+  return String(s ?? '')
+    .replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,' ')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 
 function abrirModalCrono() {
   document.getElementById('crono-edit-id').value = '';
