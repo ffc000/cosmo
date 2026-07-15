@@ -610,7 +610,7 @@ input:checked+.slider::before{transform:translateX(18px)}
             eso se cuentan aparte, como alerta, sin ensuciar el promedio.
           </p>
 
-          <div class="form-row" style="margin-bottom:1rem;align-items:flex-end">
+          <div class="form-row" style="margin-bottom:.6rem;align-items:flex-end">
             <div>
               <label>Año</label>
               <select id="aduanas-anio" style="width:140px"></select>
@@ -625,12 +625,19 @@ input:checked+.slider::before{transform:translateX(18px)}
             </div>
             <button class="btn btn-primary btn-sm" onclick="cargarAduanasNacional()">Actualizar</button>
             <button class="btn btn-outline btn-sm" onclick="exportarAduanasNacional()">⬇ Excel</button>
-            <button class="btn btn-outline btn-sm" id="btn-informe-aduanas" onclick="generarInformeAduanas()">🤖 Generar informe (Word)</button>
+          </div>
+          <div class="form-row cols3" style="margin-bottom:.4rem;align-items:center;max-width:340px">
+            <label style="display:flex;align-items:center;gap:.35rem;font-size:.82rem;font-weight:400;cursor:pointer">
+              <input type="checkbox" id="aduanas-fmt-word" checked> Word
+            </label>
+            <label style="display:flex;align-items:center;gap:.35rem;font-size:.82rem;font-weight:400;cursor:pointer">
+              <input type="checkbox" id="aduanas-fmt-pdf"> PDF
+            </label>
+          </div>
+          <div class="form-row" style="margin-bottom:1rem;align-items:center">
+            <button class="btn btn-outline btn-sm" id="btn-informe-aduanas" onclick="generarInformeAduanas()">🤖 Generar informe</button>
             <label style="display:flex;align-items:center;gap:.3rem;font-size:.72rem;color:var(--muted);cursor:pointer" title="Por default, pedir el mismo informe (mismo año/DIRA/umbral) dentro de las últimas 24hs devuelve el ya generado, sin volver a llamar a la IA. Tildar esto lo salta.">
               <input type="checkbox" id="aduanas-informe-forzar"> Forzar regeneración
-            </label>
-            <label style="display:flex;align-items:center;gap:.3rem;font-size:.72rem;color:var(--muted);cursor:pointer">
-              <input type="checkbox" id="aduanas-informe-pdf"> También PDF
             </label>
           </div>
 
@@ -774,7 +781,7 @@ document.getElementById('btn-generar').addEventListener('click',()=>{
         quiere_excel=document.getElementById('fmt-excel').checked,
         quiere_pdf=document.getElementById('fmt-pdf').checked;
   const logBox=document.getElementById('log-box'),dlArea=document.getElementById('download-area');
-  if(!quiere_word && !quiere_excel){addLog(logBox,'✗ Elegí al menos un formato: Word o Excel.','err');logBox.classList.add('visible');return}
+  if(!quiere_word && !quiere_excel && !quiere_pdf){addLog(logBox,'✗ Elegí al menos un formato: Word, Excel o PDF.','err');logBox.classList.add('visible');return}
   const progOuter=document.getElementById('progress-outer'),progInner=document.getElementById('progress-inner');
   logBox.classList.add('visible');logBox.innerHTML='';dlArea.classList.remove('visible');dlArea.innerHTML='';
   progOuter.style.display='block';progInner.style.width='0%';
@@ -819,7 +826,7 @@ document.getElementById('btn-generar-consolidado').addEventListener('click',()=>
         quiere_pdf=document.getElementById('fmt-pdf-c').checked;
   const logBox=document.getElementById('consolidado-log-box'),dlArea=document.getElementById('consolidado-download-area');
   if(!fecha_d||!fecha_h){addLog(logBox,'✗ Completá ambas fechas.','err');logBox.classList.add('visible');return}
-  if(!quiere_word && !quiere_excel){addLog(logBox,'✗ Elegí al menos un formato: Word o Excel.','err');logBox.classList.add('visible');return}
+  if(!quiere_word && !quiere_excel && !quiere_pdf){addLog(logBox,'✗ Elegí al menos un formato: Word, Excel o PDF.','err');logBox.classList.add('visible');return}
   logBox.classList.add('visible');logBox.innerHTML='';dlArea.classList.remove('visible');dlArea.innerHTML='';
   const btn=document.getElementById('btn-generar-consolidado');btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Generando...';
   addLog(logBox,'Iniciando generación...');
@@ -1365,7 +1372,8 @@ function generarInformeAduanas() {
   const dira = document.getElementById('aduanas-dira').value;
   const umbral = document.getElementById('aduanas-umbral').value || 10;
   const forzar = document.getElementById('aduanas-informe-forzar').checked;
-  const quiere_pdf = document.getElementById('aduanas-informe-pdf').checked;
+  const quiere_word = document.getElementById('aduanas-fmt-word').checked;
+  const quiere_pdf = document.getElementById('aduanas-fmt-pdf').checked;
 
   const logBox = document.getElementById('aduanas-informe-log');
   const dlArea = document.getElementById('aduanas-informe-descarga');
@@ -1373,12 +1381,13 @@ function generarInformeAduanas() {
 
   logBox.classList.add('visible'); logBox.innerHTML = '';
   dlArea.classList.remove('visible'); dlArea.style.display = 'none'; dlArea.innerHTML = '';
+  if (!quiere_word && !quiere_pdf) { addLog(logBox, '✗ Elegí al menos un formato: Word o PDF.', 'err'); return; }
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Generando...';
   addLog(logBox, 'Iniciando informe...');
 
   fetch('/api/sintia/aduanas_nacional/informe', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ anio, dira, umbral_dias: umbral, forzar, quiere_pdf })
+    body: JSON.stringify({ anio, dira, umbral_dias: umbral, forzar, quiere_word, quiere_pdf })
   }).then(r => r.json()).then(data => {
     if (!data.ok) { addLog(logBox, '✗ ' + data.error, 'err'); _resetBtnInforme(btn); return; }
     _pollJobInformeAduanas(data.job_id, logBox, dlArea, btn);
@@ -1386,7 +1395,7 @@ function generarInformeAduanas() {
 }
 
 function _resetBtnInforme(btn) {
-  btn.disabled = false; btn.innerHTML = '🤖 Generar informe (Word)';
+  btn.disabled = false; btn.innerHTML = '🤖 Generar informe';
 }
 
 function _pollJobInformeAduanas(jobId, logBox, dlArea, btn) {
