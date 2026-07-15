@@ -1689,7 +1689,7 @@ def _procesar_csv(tmp_path, tabla, log, modo="reemplazar", username="?"):
         except: pass
 
 # ── Generar informe (async) ────────────────────────────────────────────────────
-def run_job(job_id, pais, anio, mes_d, mes_h, usar_ia, username):
+def run_job(job_id, pais, anio, mes_d, mes_h, usar_ia, username, quiere_word=True, quiere_excel=True, quiere_pdf=False):
     log = job_status[job_id]["log"]
     inicio = time.time()
     def _log_fn(msg):
@@ -1704,7 +1704,16 @@ def run_job(job_id, pais, anio, mes_d, mes_h, usar_ia, username):
         archivos = generar_informe(
             ruta_db=DB_PATH, pais=pais, anio=anio, mes_d=mes_d, mes_h=mes_h,
             usar_ia=usar_ia, api_key=get_api_key(), carpeta=OUTPUT_FOLDER,
-            log_fn=_log_fn, contexto_extra=contexto_repositorio("sintia"))
+            log_fn=_log_fn, contexto_extra=contexto_repositorio("sintia"),
+            generar_word=quiere_word, generar_excel=quiere_excel)
+        if quiere_pdf:
+            # Convierte el Word si existe; si no, el Excel -- lo que se haya generado.
+            fuente = next((a for a in archivos if a.endswith(".docx")),
+                          next((a for a in archivos if a.endswith(".xlsx")), None))
+            if fuente:
+                ruta_pdf, error = _convertir_a_pdf(fuente, log_fn=_log_fn)
+                if ruta_pdf: archivos.append(ruta_pdf)
+                else: _log_fn(f"  PDF no disponible: {error}")
         # Guardar en historial
         hist_id = str(uuid.uuid4())[:8]
         word  = next((a for a in archivos if a.endswith(".docx")),"")
@@ -1744,24 +1753,39 @@ def api_generar():
     if mes_d not in [f"{i:02d}" for i in range(1,13)] or mes_h not in [f"{i:02d}" for i in range(1,13)]:
         return jsonify({"ok": False, "error": "Mes inválido."}), 400
     usar_ia = data.get("usar_ia",True) and bool(get_api_key())
+    quiere_word  = bool(data.get("quiere_word", True))
+    quiere_excel = bool(data.get("quiere_excel", True))
+    quiere_pdf   = bool(data.get("quiere_pdf", False))
+    if not quiere_word and not quiere_excel:
+        return jsonify({"ok": False, "error": "Elegí al menos un formato: Word o Excel."}), 400
     username = session.get("username","?")
     job_id  = str(uuid.uuid4())[:8]
     job_create(job_id, "Iniciando generación...", username=username)
-    t = threading.Thread(target=run_job, args=(job_id, pais, anio, mes_d, mes_h, usar_ia, username))
+    t = threading.Thread(target=run_job, args=(job_id, pais, anio, mes_d, mes_h, usar_ia, username,
+                                                quiere_word, quiere_excel, quiere_pdf))
     t.start()
     return jsonify({"ok":True,"job_id":job_id})
 
 
-def run_job_consolidado(job_id, fecha_d, fecha_h, username):
+def run_job_consolidado(job_id, fecha_d, fecha_h, username, quiere_word=True, quiere_excel=True, quiere_pdf=False):
     """Igual a run_job() pero para el informe consolidado multi-país
     (Fase 7): sin país/año/mes ni IA, con rango de fechas libre."""
     log = job_status[job_id]["log"]
     inicio = time.time()
+    def _log_fn(msg): log.append(msg)
     try:
         from generar import generar_informe_consolidado
         archivos = generar_informe_consolidado(
             ruta_db=DB_PATH, fecha_d=fecha_d, fecha_h=fecha_h,
-            carpeta=OUTPUT_FOLDER, log_fn=lambda msg: log.append(msg), hist_db=HIST_DB)
+            carpeta=OUTPUT_FOLDER, log_fn=_log_fn, hist_db=HIST_DB,
+            generar_word=quiere_word, generar_excel=quiere_excel)
+        if quiere_pdf:
+            fuente = next((a for a in archivos if a.endswith(".docx")),
+                          next((a for a in archivos if a.endswith(".xlsx")), None))
+            if fuente:
+                ruta_pdf, error = _convertir_a_pdf(fuente, log_fn=_log_fn)
+                if ruta_pdf: archivos.append(ruta_pdf)
+                else: _log_fn(f"  PDF no disponible: {error}")
         hist_id = str(uuid.uuid4())[:8]
         word  = next((a for a in archivos if a.endswith(".docx")), "")
         excel = next((a for a in archivos if a.endswith(".xlsx")), "")
@@ -1803,10 +1827,16 @@ def api_generar_consolidado():
         return jsonify({"ok": False, "error": "Fechas inválidas. Formato esperado: YYYY-MM-DD."}), 400
     if fecha_d > fecha_h:
         return jsonify({"ok": False, "error": "La fecha 'desde' no puede ser posterior a la fecha 'hasta'."}), 400
+    quiere_word  = bool(data.get("quiere_word", True))
+    quiere_excel = bool(data.get("quiere_excel", True))
+    quiere_pdf   = bool(data.get("quiere_pdf", False))
+    if not quiere_word and not quiere_excel:
+        return jsonify({"ok": False, "error": "Elegí al menos un formato: Word o Excel."}), 400
     username = session.get("username", "?")
     job_id = str(uuid.uuid4())[:8]
     job_create(job_id, "Iniciando generación...", username=username)
-    t = threading.Thread(target=run_job_consolidado, args=(job_id, fecha_d, fecha_h, username))
+    t = threading.Thread(target=run_job_consolidado, args=(job_id, fecha_d, fecha_h, username,
+                                                            quiere_word, quiere_excel, quiere_pdf))
     t.start()
     return jsonify({"ok": True, "job_id": job_id})
 
@@ -1836,6 +1866,69 @@ def download_file(job_id, idx):
     path = files[idx]
     if not os.path.exists(path): return "Archivo no encontrado",404
     return send_file(path, as_attachment=True, download_name=os.path.basename(path))
+
+
+_pdf_conversion_lock = threading.Lock()
+
+def _convertir_a_pdf(path, log_fn=None):
+    """Convierte un .docx/.xlsx ya generado a PDF vía LibreOffice headless,
+    cacheando el resultado (mismo nombre, .pdf) y con un lock global para no
+    apilar conversiones simultáneas (droplet de 1 vCPU/1GB, LibreOffice
+    headless es pesado). Devuelve (ruta_pdf, None) si salió bien, o
+    (None, mensaje_de_error) si falló -- nunca levanta excepción, para que
+    tanto el endpoint de descarga como run_job/run_job_consolidado puedan
+    usarla sin try/except propio."""
+    if not path.lower().endswith((".docx", ".xlsx")):
+        return None, "Solo se puede convertir a PDF un Word o Excel generado por el sistema."
+    ruta_pdf = os.path.splitext(path)[0] + ".pdf"
+    if os.path.exists(ruta_pdf):
+        return ruta_pdf, None
+    if not _pdf_conversion_lock.acquire(timeout=90):
+        return None, "El servidor está convirtiendo otro archivo a PDF, probá de nuevo en un momento."
+    try:
+        if os.path.exists(ruta_pdf):  # pudo generarse mientras esperábamos el lock
+            return ruta_pdf, None
+        if log_fn: log_fn(f"Convirtiendo {os.path.basename(path)} a PDF...")
+        carpeta = os.path.dirname(path)
+        resultado = subprocess.run(
+            ["soffice", "--headless", "--convert-to", "pdf", "--outdir", carpeta, path],
+            capture_output=True, timeout=90)
+        if resultado.returncode != 0 or not os.path.exists(ruta_pdf):
+            logging.error("PDF CONVERSION | fall\u00f3 para %s: %s",
+                          path, resultado.stderr.decode(errors="replace")[:500])
+            return None, "No se pudo convertir a PDF. Descargá el Word/Excel directamente."
+        if log_fn: log_fn(f"✓ PDF generado: {os.path.basename(ruta_pdf)}")
+        return ruta_pdf, None
+    except FileNotFoundError:
+        logging.error("PDF CONVERSION | LibreOffice (soffice) no est\u00e1 instalado en el servidor")
+        return None, "La conversión a PDF no está disponible en el servidor (falta LibreOffice)."
+    except subprocess.TimeoutExpired:
+        return None, "La conversión a PDF tardó demasiado, probá de nuevo."
+    finally:
+        _pdf_conversion_lock.release()
+
+
+@app.route("/api/download/<job_id>/<int:idx>/pdf")
+@login_required
+def download_file_pdf(job_id, idx):
+    """Convierte a PDF bajo demanda el Word/Excel de un informe ya generado
+    (para poder revisar que se vea bien sin tener que abrir Word/Excel) --
+    no reemplaza esas descargas, se suma como una tercera opción."""
+    info = job_get(job_id) or {}
+    if not _job_autorizado(info):
+        return "Sin permiso", 403
+    files = info.get("files", [])
+    if idx >= len(files):
+        return "Archivo no encontrado", 404
+    path = files[idx]
+    if not os.path.exists(path):
+        return "Archivo no encontrado", 404
+
+    ruta_pdf, error = _convertir_a_pdf(path)
+    if error:
+        return error, 500
+
+    return send_file(ruta_pdf, as_attachment=True, download_name=os.path.basename(ruta_pdf))
 
 # ── Historial ──────────────────────────────────────────────────────────────────
 @app.route("/api/historial")
@@ -3494,7 +3587,7 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
     return doc
 
 
-def _job_informe_aduanas_nacional(job_id, anio, dira_filtro, umbral_alerta_dias, username):
+def _job_informe_aduanas_nacional(job_id, anio, dira_filtro, umbral_alerta_dias, username, quiere_pdf=False):
     log = job_status[job_id]["log"]
     try:
         log.append("Calculando indicadores...")
@@ -3526,6 +3619,12 @@ def _job_informe_aduanas_nacional(job_id, anio, dira_filtro, umbral_alerta_dias,
         fname = f"Informe_Aduanas_Pais_{anio}_{job_id}.docx"
         ruta = os.path.join(OUTPUT_FOLDER, fname)
         doc.save(ruta)
+        archivos = [ruta]
+
+        if quiere_pdf:
+            ruta_pdf, error = _convertir_a_pdf(ruta, log_fn=log.append)
+            if ruta_pdf: archivos.append(ruta_pdf)
+            else: log.append(f"  PDF no disponible: {error}")
 
         # Registrar en 'historial' -- SIN esto, _limpiar_archivos_huerfanos()
         # (que corre una vez por día y borra todo lo que haya en OUTPUT_FOLDER
@@ -3547,7 +3646,7 @@ def _job_informe_aduanas_nacional(job_id, anio, dira_filtro, umbral_alerta_dias,
                  clave_cache, anio, "", "", 1, ruta, "", 0, "aduanas_pais",
                  f"Aduanas del país — {dira_nombre} ({anio})"))
 
-        job_status[job_id]["files"] = [ruta]
+        job_status[job_id]["files"] = archivos
         job_status[job_id]["status"] = "done"
         _job_persist(job_id)
         log.append(f"✓ Informe generado: {fname}")
@@ -3591,6 +3690,7 @@ def sintia_aduanas_nacional_informe():
     dira_filtro = (data.get("dira") or "").strip() or None
     umbral_alerta_dias = int(data.get("umbral_dias", 10))
     forzar = bool(data.get("forzar"))
+    quiere_pdf = bool(data.get("quiere_pdf", False))
     username = session.get("username", "?")
 
     cacheado = None if forzar else _buscar_informe_aduanas_cacheado(anio, dira_filtro, umbral_alerta_dias)
@@ -3600,7 +3700,12 @@ def sintia_aduanas_nacional_informe():
         job_status[job_id]["log"].append(
             f"✓ Ya existe un informe con estos mismos parámetros, generado el {cacheado['fecha']} "
             f"(dentro de las últimas 24hs) — se reutiliza en vez de volver a llamar a la IA.")
-        job_status[job_id]["files"] = [cacheado["archivo_word"]]
+        archivos = [cacheado["archivo_word"]]
+        if quiere_pdf:
+            ruta_pdf, error = _convertir_a_pdf(cacheado["archivo_word"], log_fn=job_status[job_id]["log"].append)
+            if ruta_pdf: archivos.append(ruta_pdf)
+            else: job_status[job_id]["log"].append(f"  PDF no disponible: {error}")
+        job_status[job_id]["files"] = archivos
         job_status[job_id]["status"] = "done"
         _job_persist(job_id)
         return jsonify({"ok": True, "job_id": job_id, "cached": True})
@@ -3608,7 +3713,7 @@ def sintia_aduanas_nacional_informe():
     job_id = str(uuid.uuid4())[:8]
     job_create(job_id, "Iniciando informe de Aduanas del País...", username=username)
     t = threading.Thread(target=_job_informe_aduanas_nacional,
-                         args=(job_id, anio, dira_filtro, umbral_alerta_dias, username))
+                         args=(job_id, anio, dira_filtro, umbral_alerta_dias, username, quiere_pdf))
     t.start()
     return jsonify({"ok": True, "job_id": job_id, "cached": False})
 

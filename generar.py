@@ -31,7 +31,8 @@ from generar_ia import ANT_OK
 from generar_documento import *  # noqa: F401,F403
 from generar_documento import DOCX_OK, XLSX_OK, _generar_word, _generar_excel, _generar_word_consolidado, _generar_excel_consolidado
 
-def generar_informe(ruta_db, pais, anio, mes_d, mes_h, usar_ia, api_key, carpeta, log_fn, contexto_extra=""):
+def generar_informe(ruta_db, pais, anio, mes_d, mes_h, usar_ia, api_key, carpeta, log_fn, contexto_extra="",
+                     generar_word=True, generar_excel=True):
     nombre_base=f"Informe_SINTIA_{pais}_{anio}_{mes_d}-{mes_h}"
     version=1
     while os.path.exists(os.path.join(carpeta,f"{nombre_base}_v{version}.docx")): version+=1
@@ -206,13 +207,13 @@ def generar_informe(ruta_db, pais, anio, mes_d, mes_h, usar_ia, api_key, carpeta
 
     log_fn("Generando archivos...")
     archivos=[]
-    if DOCX_OK:
+    if DOCX_OK and generar_word:
         ruta=_generar_word(pais,anio,mes_d,mes_h,version,totales,ev_total,ev_trans,ev_tardio,ev_no_trans,
             rechazos_mes,rechazos_cat,rechazos_ej,datos_ult,datos_ant,datos_interanual,
             per_ult,per_ant,anio_ant,impoexpo_ult,rechazos_ult_cat,total_rech_ant,
             narrativa_ia,conclusion_ia,carpeta,log_fn)
         archivos.append(ruta)
-    if XLSX_OK:
+    if XLSX_OK and generar_excel:
         ruta=_generar_excel(pais,anio,mes_d,mes_h,version,totales,ev_total,ev_trans,ev_tardio,ev_no_trans,
             rechazos_mes,rechazos_cat,rechazos_ej,datos_ult,datos_ant,datos_interanual,
             per_ult,per_ant,anio_ant,carpeta,log_fn)
@@ -220,7 +221,8 @@ def generar_informe(ruta_db, pais, anio, mes_d, mes_h, usar_ia, api_key, carpeta
     log_fn(f"✓ Proceso completado \u2014 {len(archivos)} archivo(s) listos para descargar")
     return archivos
 
-def generar_informe_consolidado(ruta_db, fecha_d, fecha_h, carpeta, log_fn, hist_db=None):
+def generar_informe_consolidado(ruta_db, fecha_d, fecha_h, carpeta, log_fn, hist_db=None,
+                                 generar_word=True, generar_excel=True):
     """Informe consolidado multi-país (Fase 7): todas las operaciones de
     todos los países dentro de [fecha_d, fecha_h] (YYYY-MM-DD), desglosadas
     por país, importación/exportación, aduana, cargado/lastre y variable de
@@ -240,11 +242,11 @@ def generar_informe_consolidado(ruta_db, fecha_d, fecha_h, carpeta, log_fn, hist
 
     log_fn("Generando archivos...")
     archivos = []
-    if DOCX_OK:
+    if DOCX_OK and generar_word:
         ruta = _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_aduana,
                                           por_var_control, carpeta, log_fn)
         archivos.append(ruta)
-    if XLSX_OK:
+    if XLSX_OK and generar_excel:
         ruta = _generar_excel_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_aduana,
                                            por_var_control, carpeta, log_fn)
         archivos.append(ruta)
