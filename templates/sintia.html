@@ -610,7 +610,7 @@ input:checked+.slider::before{transform:translateX(18px)}
             eso se cuentan aparte, como alerta, sin ensuciar el promedio.
           </p>
 
-          <div class="form-row" style="margin-bottom:.6rem;align-items:flex-end">
+          <div class="form-row" style="margin-bottom:1.25rem;align-items:flex-end">
             <div>
               <label>Año</label>
               <select id="aduanas-anio" style="width:140px"></select>
@@ -624,25 +624,29 @@ input:checked+.slider::before{transform:translateX(18px)}
               <input type="number" id="aduanas-umbral" value="10" style="width:90px">
             </div>
             <button class="btn btn-primary btn-sm" onclick="cargarAduanasNacional()">Actualizar</button>
-            <button class="btn btn-outline btn-sm" onclick="exportarAduanasNacional()">⬇ Excel</button>
-          </div>
-          <div class="form-row cols3" style="margin-bottom:.4rem;align-items:center;max-width:340px">
-            <label style="display:flex;align-items:center;gap:.35rem;font-size:.82rem;font-weight:400;cursor:pointer">
-              <input type="checkbox" id="aduanas-fmt-word" checked> Word
-            </label>
-            <label style="display:flex;align-items:center;gap:.35rem;font-size:.82rem;font-weight:400;cursor:pointer">
-              <input type="checkbox" id="aduanas-fmt-pdf"> PDF
-            </label>
-          </div>
-          <div class="form-row" style="margin-bottom:1rem;align-items:center">
-            <button class="btn btn-outline btn-sm" id="btn-informe-aduanas" onclick="generarInformeAduanas()">🤖 Generar informe</button>
-            <label style="display:flex;align-items:center;gap:.3rem;font-size:.72rem;color:var(--muted);cursor:pointer" title="Por default, pedir el mismo informe (mismo año/DIRA/umbral) dentro de las últimas 24hs devuelve el ya generado, sin volver a llamar a la IA. Tildar esto lo salta.">
-              <input type="checkbox" id="aduanas-informe-forzar"> Forzar regeneración
-            </label>
+            <button class="btn btn-outline btn-sm" onclick="exportarAduanasNacional()">⬇ Excel (tabla)</button>
           </div>
 
-          <div id="aduanas-informe-log" class="log-box"></div>
-          <div id="aduanas-informe-descarga" style="display:none;margin-bottom:1rem"></div>
+          <div class="card" style="padding:1rem 1.25rem">
+            <div class="card-title" style="margin-bottom:.7rem">Informe con análisis IA</div>
+            <div class="form-row cols3" style="margin-bottom:.6rem;align-items:center;max-width:340px">
+              <label style="display:flex;align-items:center;gap:.35rem;font-size:.82rem;font-weight:400;cursor:pointer">
+                <input type="checkbox" id="aduanas-fmt-word" checked> Word
+              </label>
+              <label style="display:flex;align-items:center;gap:.35rem;font-size:.82rem;font-weight:400;cursor:pointer">
+                <input type="checkbox" id="aduanas-fmt-pdf"> PDF
+              </label>
+            </div>
+            <div class="form-row" style="margin-bottom:0;align-items:center">
+              <button class="btn btn-outline btn-sm" id="btn-informe-aduanas" onclick="generarInformeAduanas()">🤖 Generar informe</button>
+              <label style="display:flex;align-items:center;gap:.3rem;font-size:.72rem;color:var(--muted);cursor:pointer" title="Por default, pedir el mismo informe (mismo año/DIRA/umbral) dentro de las últimas 24hs devuelve el ya generado, sin volver a llamar a la IA. Tildar esto lo salta.">
+                <input type="checkbox" id="aduanas-informe-forzar"> Forzar regeneración
+              </label>
+            </div>
+            <div id="aduanas-informe-log" class="log-box"></div>
+            <div id="aduanas-informe-descarga" style="display:none;margin-bottom:0"></div>
+          </div>
+
 
           <!-- Indicadores nacionales -->
           <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:.9rem;margin-bottom:1.25rem">
@@ -752,7 +756,7 @@ async function _poblarSelectorAnio(selectId, incluirTodos) {
     }
     const anios = _aniosDisponiblesCache;
     const actual = sel.value;
-    let opciones = anios.map(a => `<option value="${a}">DAT_${a}</option>`).join('');
+    let opciones = anios.map(a => `<option value="${a}">${a}</option>`).join('');
     if (incluirTodos && anios.length > 1) {
       opciones += `<option value="todos">Todos los años (${anios.join('+')})</option>`;
     }
