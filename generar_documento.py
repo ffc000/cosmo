@@ -96,28 +96,84 @@ def _insertar_toc(doc):
     except Exception:
         pass
     doc.add_page_break()
-def _agregar_pie_pagina(doc, clasificacion="Uso interno — ARCA / DI REPA"):
-    """Pie de página con clasificación y 'Página X de Y', repetido en cada hoja."""
+_ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+_LOGO_PATH = os.path.join(_ASSETS_DIR, "logo_arca.png")
+_AZUL_HEADER = RGBColor(0x1F, 0x4E, 0x79)   # color exacto tomado del template oficial ARCA
+_GRIS_FOOTER = RGBColor(0x32, 0x3E, 0x4F)   # ídem
+
+
+def _borde_tabla_lado(tabla, lado, color_hex="1F4E79", size=6):
+    """Agrega un borde a UN lado de una tabla completa (línea horizontal de
+    ancho completo) -- a diferencia de un borde de párrafo, que solo abarca
+    la celda en la que está, esto cruza las 2 columnas de header/footer.
+    python-docx no tiene esto nativo, se arma vía OXML."""
+    tblPr = tabla._tbl.tblPr
+    tblBorders = tblPr.find(qn('w:tblBorders'))
+    if tblBorders is None:
+        tblBorders = OxmlElement('w:tblBorders')
+        tblPr.append(tblBorders)
+    borde = OxmlElement(f'w:{lado}')
+    borde.set(qn('w:val'), 'single'); borde.set(qn('w:sz'), str(size))
+    borde.set(qn('w:space'), '4'); borde.set(qn('w:color'), color_hex)
+    tblBorders.append(borde)
+
+
+def _agregar_pie_pagina(doc, nombre_archivo="", codigo_area="DIREPA"):
+    """Pie de página institucional (Fase 8: tomado del template oficial de
+    ARCA -- Instructivo de Acceso Remoto SAR, Dirección de Seguridad de la
+    Información). Nombre de archivo a la izquierda, código de área + página
+    a la derecha, línea divisoria arriba."""
     section = doc.sections[0]
     footer = section.footer
     footer.is_linked_to_previous = False
-    p = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r0 = p.add_run(f"{clasificacion}   •   Página ")
-    r0.font.size = Pt(8); r0.font.color.rgb = RGBColor(0x80,0x80,0x80)
-    _campo_word(p, "PAGE")
-    r1 = p.add_run(" de ")
-    r1.font.size = Pt(8); r1.font.color.rgb = RGBColor(0x80,0x80,0x80)
-    _campo_word(p, "NUMPAGES")
-def _agregar_encabezado(doc, texto):
-    """Encabezado repetido en cada hoja (a falta de logo, texto de membrete)."""
+    for p in footer.paragraphs:
+        p.text = ""
+
+    tabla = footer.add_table(rows=1, cols=2, width=Cm(16))
+    tabla.autofit = False
+    celda_izq, celda_der = tabla.rows[0].cells
+    celda_izq.width = Cm(10); celda_der.width = Cm(6)
+
+    r0 = celda_izq.paragraphs[0].add_run(nombre_archivo)
+    r0.font.size = Pt(8); r0.font.color.rgb = _GRIS_FOOTER
+
+    p2 = celda_der.paragraphs[0]; p2.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    prefijo = f"[{codigo_area}]    " if codigo_area else ""
+    r1 = p2.add_run(f"{prefijo}Pág. ")
+    r1.font.size = Pt(8); r1.font.color.rgb = _GRIS_FOOTER
+    _campo_word(p2, "PAGE")
+
+    _borde_tabla_lado(tabla, "top", "1F4E79", 6)
+
+
+def _agregar_encabezado(doc, direccion):
+    """Encabezado institucional (Fase 8, mismo template oficial): nombre de
+    la dirección a la izquierda, logo ARCA real a la derecha (assets/
+    logo_arca.png, extraído en alta resolución del PDF oficial), línea
+    divisoria abajo. Sin "Información Reservada Uso Interno" -- estaba en
+    el original pero se decidió no incluirlo."""
     section = doc.sections[0]
     header = section.header
     header.is_linked_to_previous = False
-    p = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    r = p.add_run(texto)
-    r.font.size = Pt(8); r.font.color.rgb = RGBColor(0x80,0x80,0x80)
+    for p in header.paragraphs:
+        p.text = ""
+
+    tabla = header.add_table(rows=1, cols=2, width=Cm(16))
+    tabla.autofit = False
+    celda_izq, celda_der = tabla.rows[0].cells
+    celda_izq.width = Cm(10); celda_der.width = Cm(6)
+
+    r0 = celda_izq.paragraphs[0].add_run(direccion.upper())
+    r0.font.size = Pt(9); r0.font.color.rgb = _AZUL_HEADER
+
+    p1 = celda_der.paragraphs[0]; p1.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    if os.path.exists(_LOGO_PATH):
+        p1.add_run().add_picture(_LOGO_PATH, width=Cm(4.3))
+    else:
+        r1 = p1.add_run("ARCA")
+        r1.bold = True; r1.font.size = Pt(14); r1.font.color.rgb = _AZUL_HEADER
+
+    _borde_tabla_lado(tabla, "bottom", "1F4E79", 6)
 def kpi_box(doc, kpis):
     table=doc.add_table(rows=1,cols=len(kpis)); table.alignment=WD_TABLE_ALIGNMENT.CENTER
     for i,(label,valor,sub) in enumerate(kpis):
@@ -137,6 +193,7 @@ def _generar_word(pais, anio, mes_d, mes_h, version,
                   narrativa_ia, conclusion_ia, carpeta, log_fn):
 
     pais_nombre=PAISES.get(pais,pais)
+    nombre_archivo = f"Informe_SINTIA_{pais}_{anio}_{mes_d}-{mes_h}_v{version}.docx"
     # Usar el último mes con datos reales, no el mes_h declarado
     mes_h_real = per_ult[-2:] if per_ult else mes_h
     periodo=periodo_texto(anio,mes_d,mes_h_real)
@@ -162,8 +219,8 @@ def _generar_word(pais, anio, mes_d, mes_h, version,
     for section in doc.sections:
         section.top_margin=Cm(2.5); section.bottom_margin=Cm(2.5)
         section.left_margin=Cm(3); section.right_margin=Cm(2.5)
-    _agregar_encabezado(doc, "ARCA — Dirección de Reingeniería de Procesos Aduaneros")
-    _agregar_pie_pagina(doc)
+    _agregar_encabezado(doc, "Dirección de Reingeniería de Procesos Aduaneros")
+    _agregar_pie_pagina(doc, nombre_archivo)
 
     # Portada
     titulo=doc.add_heading(f"ESTADO DE SITUACI\u00d3N SINTIA {anio} {pais}-AR",0)
@@ -669,6 +726,7 @@ def _periodo_texto_fechas(fecha_d, fecha_h):
 def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_aduana,
                                por_var_control, carpeta, log_fn):
     periodo = _periodo_texto_fechas(fecha_d, fecha_h)
+    nombre_archivo = f"Informe_SINTIA_Consolidado_{fecha_d}_{fecha_h}_v{version}.docx"
     total = n(totales.get("TOTAL", 0)); impo = n(totales.get("IMPO", 0)); expo = n(totales.get("EXPO", 0))
     cargado = n(totales.get("CARGADO", 0)); lastre = n(totales.get("LASTRE", 0))
 
@@ -690,8 +748,8 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
     for section in doc.sections:
         section.top_margin = Cm(2.5); section.bottom_margin = Cm(2.5)
         section.left_margin = Cm(3); section.right_margin = Cm(2.5)
-    _agregar_encabezado(doc, "ARCA — Dirección de Reingeniería de Procesos Aduaneros")
-    _agregar_pie_pagina(doc)
+    _agregar_encabezado(doc, "Dirección de Reingeniería de Procesos Aduaneros")
+    _agregar_pie_pagina(doc, nombre_archivo)
 
     # Portada
     titulo = doc.add_heading("INFORME CONSOLIDADO DE OPERACIONES FRONTERIZAS TERRESTRES", 0)

@@ -3340,7 +3340,7 @@ def _grafico_evolucion_aduana(nombre_aduana, meses_cols, valores_dias, valores_o
 
 
 def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicadores, filas, evolucion,
-                                   narrativa, evolucion_por_aduana=None, meses_cols=None):
+                                   narrativa, evolucion_por_aduana=None, meses_cols=None, job_id=""):
     """Arma el Word del informe de Aduanas del País: filtros, indicadores,
     análisis IA, evolución mensual, y detalle por aduana. No reusa
     actas.generar_acta_word() -- esa está pensada para minutas de reunión
@@ -3349,18 +3349,23 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
     (agregar_tabla_word, encabezado/pie, TOC) para que el estilo sea el
     mismo que el resto de los informes SINTIA -- antes tenía su propia
     implementación de tablas (_tabla_simple/_set_cell_color) con un color
-    de header y márgenes ligeramente distintos, sin encabezado/pie/índice."""
+    de header y márgenes ligeramente distintos, sin encabezado/pie/índice.
+
+    job_id: solo para el pie de página (nombre de archivo) -- tiene que
+    coincidir con fname = f"Informe_Aduanas_Pais_{anio}_{job_id}.docx" que
+    arma el caller al guardar. Si no se pasa, el pie queda sin nombre."""
     from docx import Document
     from docx.shared import Pt, RGBColor, Cm
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from generar_documento import agregar_tabla_word, _agregar_encabezado, _agregar_pie_pagina, _insertar_toc
 
+    nombre_archivo = f"Informe_Aduanas_Pais_{anio}_{job_id}.docx" if job_id else ""
     doc = Document()
     for section in doc.sections:
         section.top_margin = Cm(2.5); section.bottom_margin = Cm(2.5)
         section.left_margin = Cm(3); section.right_margin = Cm(2.5)
-    _agregar_encabezado(doc, "ARCA — Dirección de Reingeniería de Procesos Aduaneros")
-    _agregar_pie_pagina(doc)
+    _agregar_encabezado(doc, "Dirección de Reingeniería de Procesos Aduaneros")
+    _agregar_pie_pagina(doc, nombre_archivo)
 
     titulo = doc.add_heading("INFORME — ADUANAS DEL PAÍS", 0)
     titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -3505,7 +3510,7 @@ def _job_informe_aduanas_nacional(job_id, anio, dira_filtro, umbral_alerta_dias,
         log.append("Armando Word...")
         doc = _generar_word_informe_aduanas(
             anio, dira_nombre, umbral_alerta_dias, indicadores, filas, evolucion, narrativa,
-            evolucion_por_aduana, meses_cols)
+            evolucion_por_aduana, meses_cols, job_id=job_id)
         os.makedirs(OUTPUT_FOLDER, exist_ok=True)
         fname = f"Informe_Aduanas_Pais_{anio}_{job_id}.docx"
         ruta = os.path.join(OUTPUT_FOLDER, fname)
