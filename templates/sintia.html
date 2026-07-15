@@ -293,6 +293,17 @@ input:checked+.slider::before{transform:translateX(18px)}
             </label>
             <span class="toggle-label">Narrativa con IA{% if not api_key %} <span style="color:var(--warn);font-size:.72rem">(API key no configurada)</span>{% endif %}</span>
           </div>
+          <div class="form-row cols3" style="margin-top:.4rem;align-items:center">
+            <label style="display:flex;align-items:center;gap:.35rem;font-size:.82rem;font-weight:400;cursor:pointer">
+              <input type="checkbox" id="fmt-word" checked> Word
+            </label>
+            <label style="display:flex;align-items:center;gap:.35rem;font-size:.82rem;font-weight:400;cursor:pointer">
+              <input type="checkbox" id="fmt-excel" checked> Excel
+            </label>
+            <label style="display:flex;align-items:center;gap:.35rem;font-size:.82rem;font-weight:400;cursor:pointer">
+              <input type="checkbox" id="fmt-pdf"> PDF
+            </label>
+          </div>
           <button class="btn btn-primary btn-full" id="btn-generar" {% if not db_exists %}disabled{% endif %}>Generar informe</button>
         </div>
         <div class="progress-outer" id="progress-outer" style="display:none;height:6px;background:var(--border,#e2e8f0);border-radius:4px;overflow:hidden;margin:.5rem 0">
@@ -310,6 +321,17 @@ input:checked+.slider::before{transform:translateX(18px)}
           <div class="form-row cols2">
             <div><label>Fecha desde</label><input type="date" id="consolidado-fecha-d"></div>
             <div><label>Fecha hasta</label><input type="date" id="consolidado-fecha-h"></div>
+          </div>
+          <div class="form-row cols3" style="margin-top:.4rem;align-items:center">
+            <label style="display:flex;align-items:center;gap:.35rem;font-size:.82rem;font-weight:400;cursor:pointer">
+              <input type="checkbox" id="fmt-word-c" checked> Word
+            </label>
+            <label style="display:flex;align-items:center;gap:.35rem;font-size:.82rem;font-weight:400;cursor:pointer">
+              <input type="checkbox" id="fmt-excel-c" checked> Excel
+            </label>
+            <label style="display:flex;align-items:center;gap:.35rem;font-size:.82rem;font-weight:400;cursor:pointer">
+              <input type="checkbox" id="fmt-pdf-c"> PDF
+            </label>
           </div>
           <button class="btn btn-primary btn-full" id="btn-generar-consolidado" {% if not db_exists %}disabled{% endif %}>Generar informe consolidado</button>
         </div>
@@ -607,6 +629,9 @@ input:checked+.slider::before{transform:translateX(18px)}
             <label style="display:flex;align-items:center;gap:.3rem;font-size:.72rem;color:var(--muted);cursor:pointer" title="Por default, pedir el mismo informe (mismo año/DIRA/umbral) dentro de las últimas 24hs devuelve el ya generado, sin volver a llamar a la IA. Tildar esto lo salta.">
               <input type="checkbox" id="aduanas-informe-forzar"> Forzar regeneración
             </label>
+            <label style="display:flex;align-items:center;gap:.3rem;font-size:.72rem;color:var(--muted);cursor:pointer">
+              <input type="checkbox" id="aduanas-informe-pdf"> También PDF
+            </label>
           </div>
 
           <div id="aduanas-informe-log" class="log-box"></div>
@@ -745,18 +770,28 @@ document.getElementById('btn-generar').addEventListener('click',()=>{
   const pais=document.getElementById('pais').value,anio=document.getElementById('anio').value,
         mes_d=document.getElementById('mes_d').value,mes_h=document.getElementById('mes_h').value,
         usar_ia=document.getElementById('usar_ia').checked;
+  const quiere_word=document.getElementById('fmt-word').checked,
+        quiere_excel=document.getElementById('fmt-excel').checked,
+        quiere_pdf=document.getElementById('fmt-pdf').checked;
   const logBox=document.getElementById('log-box'),dlArea=document.getElementById('download-area');
+  if(!quiere_word && !quiere_excel){addLog(logBox,'✗ Elegí al menos un formato: Word o Excel.','err');logBox.classList.add('visible');return}
   const progOuter=document.getElementById('progress-outer'),progInner=document.getElementById('progress-inner');
   logBox.classList.add('visible');logBox.innerHTML='';dlArea.classList.remove('visible');dlArea.innerHTML='';
   progOuter.style.display='block';progInner.style.width='0%';
   const btn=document.getElementById('btn-generar');btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Generando...';
   addLog(logBox,'Iniciando generación...');
-  fetch('/api/generar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pais,anio,mes_d,mes_h,usar_ia})})
+  fetch('/api/generar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pais,anio,mes_d,mes_h,usar_ia,quiere_word,quiere_excel,quiere_pdf})})
     .then(r=>r.json()).then(data=>{
       if(!data.ok){addLog(logBox,'✗ '+data.error,'err');resetBtn(btn);return}
       pollJob(data.job_id,logBox,dlArea,btn);
     });
 });
+function _etiquetaDescarga(f){
+  if(f.endsWith('.docx')) return '📄 Descargar Word';
+  if(f.endsWith('.xlsx')) return '📊 Descargar Excel';
+  if(f.endsWith('.pdf'))  return '🧾 Descargar PDF';
+  return '⬇️ Descargar';
+}
 function pollJob(jobId,logBox,dlArea,btn){
   let lastLen=0;
   const progInner=document.getElementById('progress-inner');
@@ -766,7 +801,7 @@ function pollJob(jobId,logBox,dlArea,btn){
       if(progInner) progInner.style.width=(data.status==='done'?100:(data.progreso||0))+'%';
       if(data.status==='done'){
         clearInterval(iv);resetBtn(btn);
-        (data.files||[]).forEach((f,i)=>{const a=document.createElement('a');a.href=`/api/download/${jobId}/${i}`;a.className='download-btn';a.textContent=f.endsWith('.docx')?'📄 Descargar Word':'📊 Descargar Excel';dlArea.appendChild(a)});
+        (data.files||[]).forEach((f,i)=>{const a=document.createElement('a');a.href=`/api/download/${jobId}/${i}`;a.className='download-btn';a.textContent=_etiquetaDescarga(f);dlArea.appendChild(a)});
         dlArea.classList.add('visible');
       }else if(data.status==='error'){clearInterval(iv);resetBtn(btn)}
     });
@@ -779,12 +814,16 @@ function resetBtn(btn){btn.disabled=false;btn.innerHTML='Generar informe'}
 document.getElementById('btn-generar-consolidado').addEventListener('click',()=>{
   const fecha_d=document.getElementById('consolidado-fecha-d').value;
   const fecha_h=document.getElementById('consolidado-fecha-h').value;
+  const quiere_word=document.getElementById('fmt-word-c').checked,
+        quiere_excel=document.getElementById('fmt-excel-c').checked,
+        quiere_pdf=document.getElementById('fmt-pdf-c').checked;
   const logBox=document.getElementById('consolidado-log-box'),dlArea=document.getElementById('consolidado-download-area');
   if(!fecha_d||!fecha_h){addLog(logBox,'✗ Completá ambas fechas.','err');logBox.classList.add('visible');return}
+  if(!quiere_word && !quiere_excel){addLog(logBox,'✗ Elegí al menos un formato: Word o Excel.','err');logBox.classList.add('visible');return}
   logBox.classList.add('visible');logBox.innerHTML='';dlArea.classList.remove('visible');dlArea.innerHTML='';
   const btn=document.getElementById('btn-generar-consolidado');btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Generando...';
   addLog(logBox,'Iniciando generación...');
-  fetch('/api/generar_consolidado',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fecha_d,fecha_h})})
+  fetch('/api/generar_consolidado',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fecha_d,fecha_h,quiere_word,quiere_excel,quiere_pdf})})
     .then(r=>r.json()).then(data=>{
       if(!data.ok){addLog(logBox,'✗ '+data.error,'err');_resetBtnConsolidado(btn);return}
       _pollJobConsolidado(data.job_id,logBox,dlArea,btn);
@@ -798,7 +837,7 @@ function _pollJobConsolidado(jobId,logBox,dlArea,btn){
       (data.log||[]).slice(lastLen).forEach(l=>addLog(logBox,l));lastLen=(data.log||[]).length;
       if(data.status==='done'){
         clearInterval(iv);_resetBtnConsolidado(btn);
-        (data.files||[]).forEach((f,i)=>{const a=document.createElement('a');a.href=`/api/download/${jobId}/${i}`;a.className='download-btn';a.textContent=f.endsWith('.docx')?'📄 Descargar Word':'📊 Descargar Excel';dlArea.appendChild(a)});
+        (data.files||[]).forEach((f,i)=>{const a=document.createElement('a');a.href=`/api/download/${jobId}/${i}`;a.className='download-btn';a.textContent=_etiquetaDescarga(f);dlArea.appendChild(a)});
         dlArea.classList.add('visible');
       }else if(data.status==='error'){clearInterval(iv);_resetBtnConsolidado(btn)}
     });
@@ -1326,6 +1365,7 @@ function generarInformeAduanas() {
   const dira = document.getElementById('aduanas-dira').value;
   const umbral = document.getElementById('aduanas-umbral').value || 10;
   const forzar = document.getElementById('aduanas-informe-forzar').checked;
+  const quiere_pdf = document.getElementById('aduanas-informe-pdf').checked;
 
   const logBox = document.getElementById('aduanas-informe-log');
   const dlArea = document.getElementById('aduanas-informe-descarga');
@@ -1338,7 +1378,7 @@ function generarInformeAduanas() {
 
   fetch('/api/sintia/aduanas_nacional/informe', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ anio, dira, umbral_dias: umbral, forzar })
+    body: JSON.stringify({ anio, dira, umbral_dias: umbral, forzar, quiere_pdf })
   }).then(r => r.json()).then(data => {
     if (!data.ok) { addLog(logBox, '✗ ' + data.error, 'err'); _resetBtnInforme(btn); return; }
     _pollJobInformeAduanas(data.job_id, logBox, dlArea, btn);
@@ -1361,7 +1401,7 @@ function _pollJobInformeAduanas(jobId, logBox, dlArea, btn) {
           const a = document.createElement('a');
           a.href = `/api/download/${jobId}/${i}`;
           a.className = 'download-btn';
-          a.textContent = '📄 Descargar informe (Word)';
+          a.textContent = _etiquetaDescarga(f);
           dlArea.appendChild(a);
         });
         dlArea.style.display = 'block'; dlArea.classList.add('visible');
