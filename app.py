@@ -1701,23 +1701,35 @@ def run_job(job_id, pais, anio, mes_d, mes_h, usar_ia, username, quiere_word=Tru
             notificar_telegram(f"⚠️ SINTIA {pais} {mes_d}-{mes_h}/{anio}: {msg.strip()}")
     try:
         from generar import generar_informe
-        archivos = generar_informe(
+        # Si piden PDF pero no Word ni Excel, igual hay que generar algo como
+        # fuente para convertir -- por defecto Word (el formato "completo"),
+        # salvo que hayan pedido Excel explícitamente (ahí se usa ese). Ese
+        # archivo interno no se expone en la lista de descargas si no lo
+        # pidieron -- lo limpia solo el job diario de huérfanos, no hace
+        # falta borrarlo a mano acá.
+        generar_word_interno = quiere_word or (quiere_pdf and not quiere_excel)
+        archivos_todos = generar_informe(
             ruta_db=DB_PATH, pais=pais, anio=anio, mes_d=mes_d, mes_h=mes_h,
             usar_ia=usar_ia, api_key=get_api_key(), carpeta=OUTPUT_FOLDER,
             log_fn=_log_fn, contexto_extra=contexto_repositorio("sintia"),
-            generar_word=quiere_word, generar_excel=quiere_excel)
+            generar_word=generar_word_interno, generar_excel=quiere_excel)
+        word_path  = next((a for a in archivos_todos if a.endswith(".docx")), None)
+        excel_path = next((a for a in archivos_todos if a.endswith(".xlsx")), None)
+
+        archivos = []
+        if quiere_word and word_path:   archivos.append(word_path)
+        if quiere_excel and excel_path: archivos.append(excel_path)
         if quiere_pdf:
-            # Convierte el Word si existe; si no, el Excel -- lo que se haya generado.
-            fuente = next((a for a in archivos if a.endswith(".docx")),
-                          next((a for a in archivos if a.endswith(".xlsx")), None))
+            fuente = word_path or excel_path
             if fuente:
                 ruta_pdf, error = _convertir_a_pdf(fuente, log_fn=_log_fn)
                 if ruta_pdf: archivos.append(ruta_pdf)
                 else: _log_fn(f"  PDF no disponible: {error}")
+
         # Guardar en historial
         hist_id = str(uuid.uuid4())[:8]
-        word  = next((a for a in archivos if a.endswith(".docx")),"")
-        excel = next((a for a in archivos if a.endswith(".xlsx")),"")
+        word  = word_path if quiere_word else ""
+        excel = excel_path if quiere_excel else ""
         with get_db(HIST_DB) as con:
             con.execute("INSERT INTO historial VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (hist_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), username,
@@ -1756,8 +1768,8 @@ def api_generar():
     quiere_word  = bool(data.get("quiere_word", True))
     quiere_excel = bool(data.get("quiere_excel", True))
     quiere_pdf   = bool(data.get("quiere_pdf", False))
-    if not quiere_word and not quiere_excel:
-        return jsonify({"ok": False, "error": "Elegí al menos un formato: Word o Excel."}), 400
+    if not quiere_word and not quiere_excel and not quiere_pdf:
+        return jsonify({"ok": False, "error": "Elegí al menos un formato: Word, Excel o PDF."}), 400
     username = session.get("username","?")
     job_id  = str(uuid.uuid4())[:8]
     job_create(job_id, "Iniciando generación...", username=username)
@@ -1775,20 +1787,27 @@ def run_job_consolidado(job_id, fecha_d, fecha_h, username, quiere_word=True, qu
     def _log_fn(msg): log.append(msg)
     try:
         from generar import generar_informe_consolidado
-        archivos = generar_informe_consolidado(
+        generar_word_interno = quiere_word or (quiere_pdf and not quiere_excel)
+        archivos_todos = generar_informe_consolidado(
             ruta_db=DB_PATH, fecha_d=fecha_d, fecha_h=fecha_h,
             carpeta=OUTPUT_FOLDER, log_fn=_log_fn, hist_db=HIST_DB,
-            generar_word=quiere_word, generar_excel=quiere_excel)
+            generar_word=generar_word_interno, generar_excel=quiere_excel)
+        word_path  = next((a for a in archivos_todos if a.endswith(".docx")), None)
+        excel_path = next((a for a in archivos_todos if a.endswith(".xlsx")), None)
+
+        archivos = []
+        if quiere_word and word_path:   archivos.append(word_path)
+        if quiere_excel and excel_path: archivos.append(excel_path)
         if quiere_pdf:
-            fuente = next((a for a in archivos if a.endswith(".docx")),
-                          next((a for a in archivos if a.endswith(".xlsx")), None))
+            fuente = word_path or excel_path
             if fuente:
                 ruta_pdf, error = _convertir_a_pdf(fuente, log_fn=_log_fn)
                 if ruta_pdf: archivos.append(ruta_pdf)
                 else: _log_fn(f"  PDF no disponible: {error}")
+
         hist_id = str(uuid.uuid4())[:8]
-        word  = next((a for a in archivos if a.endswith(".docx")), "")
-        excel = next((a for a in archivos if a.endswith(".xlsx")), "")
+        word  = word_path if quiere_word else ""
+        excel = excel_path if quiere_excel else ""
         with get_db(HIST_DB) as con:
             con.execute("INSERT INTO historial VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (hist_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), username,
@@ -1830,8 +1849,8 @@ def api_generar_consolidado():
     quiere_word  = bool(data.get("quiere_word", True))
     quiere_excel = bool(data.get("quiere_excel", True))
     quiere_pdf   = bool(data.get("quiere_pdf", False))
-    if not quiere_word and not quiere_excel:
-        return jsonify({"ok": False, "error": "Elegí al menos un formato: Word o Excel."}), 400
+    if not quiere_word and not quiere_excel and not quiere_pdf:
+        return jsonify({"ok": False, "error": "Elegí al menos un formato: Word, Excel o PDF."}), 400
     username = session.get("username", "?")
     job_id = str(uuid.uuid4())[:8]
     job_create(job_id, "Iniciando generación...", username=username)
@@ -3451,7 +3470,7 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
     from docx.shared import Pt, RGBColor, Cm
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from generar_documento import (agregar_tabla_word, _agregar_encabezado, _agregar_pie_pagina,
-        _insertar_toc, _generar_portada_compuesta)
+        _insertar_indice, _heading_indexado, _generar_portada_compuesta)
 
     nombre_archivo = f"Informe_Aduanas_Pais_{anio}_{job_id}.docx" if job_id else ""
     doc = Document()
@@ -3459,7 +3478,7 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
         section.top_margin = Cm(2.5); section.bottom_margin = Cm(2.5)
         section.left_margin = Cm(3); section.right_margin = Cm(2.5)
     _agregar_encabezado(doc, "Dirección de Reingeniería de Procesos Aduaneros")
-    _agregar_pie_pagina(doc, nombre_archivo)
+    _agregar_pie_pagina(doc, "Informe — Aduanas del País")
 
     _imagen_portada = _generar_portada_compuesta(
         titulo="INFORME — ADUANAS DEL PAÍS",
@@ -3501,9 +3520,16 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
     nota_run.italic = True; nota_run.font.size = Pt(8.5); nota_run.font.color.rgb = RGBColor(0x60, 0x60, 0x60)
     doc.add_page_break()
 
-    _insertar_toc(doc)
+    secciones_aduanas = [(1, "1.  Indicadores"), (1, "2.  Análisis")]
+    idx_evol = idx_detalle = None
+    _idx_aduanas = 3
+    if evolucion:
+        idx_evol = _idx_aduanas; secciones_aduanas.append((1, "3.  Evolución mensual")); _idx_aduanas += 1
+    if filas:
+        idx_detalle = _idx_aduanas; secciones_aduanas.append((1, "4.  Detalle por aduana")); _idx_aduanas += 1
+    _insertar_indice(doc, secciones_aduanas)
 
-    doc.add_heading("1.  Indicadores", level=1)
+    _heading_indexado(doc, "1.  Indicadores", 1, 1)
     agregar_tabla_word(doc, ["Indicador", "Valor"], [
         ["Operaciones totales", str(indicadores["total_operaciones"])],
         ["Salieron (SAL)", str(indicadores["total_sali"])],
@@ -3514,7 +3540,7 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
         ["En alerta total", str(indicadores["en_alerta_total"])],
     ], col_widths=[10, 5.5])
 
-    doc.add_heading("2.  Análisis", level=1)
+    _heading_indexado(doc, "2.  Análisis", 1, 2)
     for parrafo in narrativa.split("\n"):
         if parrafo.strip():
             p = doc.add_paragraph(parrafo.strip())
@@ -3522,13 +3548,13 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
                 r.font.size = Pt(10.5)
 
     if evolucion:
-        doc.add_heading("3.  Evolución mensual", level=1)
+        _heading_indexado(doc, "3.  Evolución mensual", 1, idx_evol)
         agregar_tabla_word(doc, ["Mes", "Demora media"],
             [[_mes_label_corto(p["mes"]), p["demora_media_fmt"] or "—"] for p in evolucion],
             col_widths=[8, 7.5])
 
     if filas:
-        doc.add_heading("4.  Detalle por aduana", level=1)
+        _heading_indexado(doc, "4.  Detalle por aduana", 1, idx_detalle)
         agregar_tabla_word(doc, ["Aduana", "DIRA", "Operaciones", "Demora media", "En alerta"],
             [[f["aduana_nombre"], f["dira_nombre"], str(f["total_operaciones"]),
               f["demora_media_fmt"] or "—", str(f["en_alerta_total"])] for f in filas],
@@ -3587,7 +3613,8 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
     return doc
 
 
-def _job_informe_aduanas_nacional(job_id, anio, dira_filtro, umbral_alerta_dias, username, quiere_pdf=False):
+def _job_informe_aduanas_nacional(job_id, anio, dira_filtro, umbral_alerta_dias, username,
+                                   quiere_word=True, quiere_pdf=False):
     log = job_status[job_id]["log"]
     try:
         log.append("Calculando indicadores...")
@@ -3611,6 +3638,10 @@ def _job_informe_aduanas_nacional(job_id, anio, dira_filtro, umbral_alerta_dias,
         log.append("Calculando evolución por aduana...")
         evolucion_por_aduana, meses_cols = _evolucion_mensual_por_aduana(anio, dira_filtro, umbral_alerta_dias)
 
+        # Word se genera siempre -- es la única fuente posible para este
+        # informe (no hay versión Excel) y para el PDF (que se convierte a
+        # partir de este archivo). Si el usuario solo pidió PDF, igual se
+        # arma el Word acá adentro, pero no se expone en la descarga.
         log.append("Armando Word...")
         doc = _generar_word_informe_aduanas(
             anio, dira_nombre, umbral_alerta_dias, indicadores, filas, evolucion, narrativa,
@@ -3619,8 +3650,9 @@ def _job_informe_aduanas_nacional(job_id, anio, dira_filtro, umbral_alerta_dias,
         fname = f"Informe_Aduanas_Pais_{anio}_{job_id}.docx"
         ruta = os.path.join(OUTPUT_FOLDER, fname)
         doc.save(ruta)
-        archivos = [ruta]
 
+        archivos = []
+        if quiere_word: archivos.append(ruta)
         if quiere_pdf:
             ruta_pdf, error = _convertir_a_pdf(ruta, log_fn=log.append)
             if ruta_pdf: archivos.append(ruta_pdf)
@@ -3690,7 +3722,10 @@ def sintia_aduanas_nacional_informe():
     dira_filtro = (data.get("dira") or "").strip() or None
     umbral_alerta_dias = int(data.get("umbral_dias", 10))
     forzar = bool(data.get("forzar"))
-    quiere_pdf = bool(data.get("quiere_pdf", False))
+    quiere_word = bool(data.get("quiere_word", True))
+    quiere_pdf  = bool(data.get("quiere_pdf", False))
+    if not quiere_word and not quiere_pdf:
+        return jsonify({"ok": False, "error": "Elegí al menos un formato: Word o PDF."}), 400
     username = session.get("username", "?")
 
     cacheado = None if forzar else _buscar_informe_aduanas_cacheado(anio, dira_filtro, umbral_alerta_dias)
@@ -3700,7 +3735,8 @@ def sintia_aduanas_nacional_informe():
         job_status[job_id]["log"].append(
             f"✓ Ya existe un informe con estos mismos parámetros, generado el {cacheado['fecha']} "
             f"(dentro de las últimas 24hs) — se reutiliza en vez de volver a llamar a la IA.")
-        archivos = [cacheado["archivo_word"]]
+        archivos = []
+        if quiere_word: archivos.append(cacheado["archivo_word"])
         if quiere_pdf:
             ruta_pdf, error = _convertir_a_pdf(cacheado["archivo_word"], log_fn=job_status[job_id]["log"].append)
             if ruta_pdf: archivos.append(ruta_pdf)
@@ -3713,7 +3749,7 @@ def sintia_aduanas_nacional_informe():
     job_id = str(uuid.uuid4())[:8]
     job_create(job_id, "Iniciando informe de Aduanas del País...", username=username)
     t = threading.Thread(target=_job_informe_aduanas_nacional,
-                         args=(job_id, anio, dira_filtro, umbral_alerta_dias, username, quiere_pdf))
+                         args=(job_id, anio, dira_filtro, umbral_alerta_dias, username, quiere_word, quiere_pdf))
     t.start()
     return jsonify({"ok": True, "job_id": job_id, "cached": False})
 

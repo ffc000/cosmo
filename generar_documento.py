@@ -89,20 +89,61 @@ def _campo_word(p, instr):
     r4 = p.add_run()
     f3 = OxmlElement('w:fldChar'); f3.set(qn('w:fldCharType'), 'end'); r4._r.append(f3)
     return r3
-def _insertar_toc(doc):
-    """Índice automático — Word lo completa al abrir el archivo (o con clic
-    derecho > Actualizar campo) usando los niveles de heading ya presentes."""
+def _bookmark_parrafo(paragraph, ancla):
+    """Marca un párrafo con un bookmark de Word (ancla interna) -- para que
+    el índice manual pueda apuntarle con un hyperlink."""
+    bmk_id = str(abs(hash(ancla)) % 1000000)
+    start = OxmlElement('w:bookmarkStart'); start.set(qn('w:id'), bmk_id); start.set(qn('w:name'), ancla)
+    end = OxmlElement('w:bookmarkEnd'); end.set(qn('w:id'), bmk_id)
+    paragraph._p.insert(0, start)
+    paragraph._p.append(end)
+
+
+def _hipervinculo_interno(paragraph, texto, ancla, sangria=False):
+    """Agrega un run de hyperlink interno (a un bookmark) dentro de un
+    párrafo -- python-docx no tiene esto nativo, se arma vía OXML."""
+    hyperlink = OxmlElement('w:hyperlink'); hyperlink.set(qn('w:anchor'), ancla)
+    new_run = OxmlElement('w:r')
+    rPr = OxmlElement('w:rPr')
+    color = OxmlElement('w:color'); color.set(qn('w:val'), '1F4E79')
+    u = OxmlElement('w:u'); u.set(qn('w:val'), 'single')
+    sz = OxmlElement('w:sz'); sz.set(qn('w:val'), '20' if sangria else '22')
+    rPr.append(color); rPr.append(u); rPr.append(sz)
+    new_run.append(rPr)
+    t = OxmlElement('w:t'); t.text = texto
+    new_run.append(t)
+    hyperlink.append(new_run)
+    paragraph._p.append(hyperlink)
+
+
+def _heading_indexado(doc, texto, nivel, indice):
+    """doc.add_heading() + bookmark, para que el índice manual pueda
+    apuntarle. `indice` tiene que coincidir con la posición de este heading
+    en la lista `secciones` que se le pasa a _insertar_indice() -- son el
+    mismo número, es lo que conecta el link con el destino."""
+    h = doc.add_heading(texto, level=nivel)
+    _bookmark_parrafo(h, f"sec{indice}")
+    return h
+
+
+def _insertar_indice(doc, secciones):
+    """Índice manual clickeable -- reemplaza el campo TOC nativo de Word
+    (\"Índice \\o \"1-2\" ...\"), que depende de que el lector actualice
+    campos al abrir el archivo (Word real a veces lo hace solo, pero no
+    todos los visores lo hacen -- en la práctica varios informes quedaban
+    con el índice vacío). Esto funciona apenas se abre el documento, en
+    cualquier lector, sin pasos extra.
+
+    secciones: lista de (nivel, texto), en el MISMO ORDEN en que después
+    se crean los headings reales con _heading_indexado() más abajo en el
+    documento -- la posición (1-based) es lo que conecta cada link con su
+    destino."""
     doc.add_heading("Índice", level=1)
-    p = doc.add_paragraph()
-    r3 = _campo_word(p, 'TOC \\o "1-2" \\h \\z \\u')
-    aviso = p.add_run(" (clic derecho sobre esta línea > Actualizar campo, para generar el índice)")
-    aviso.font.size = Pt(8); aviso.font.italic = True; aviso.font.color.rgb = RGBColor(0x80,0x80,0x80)
-    try:
-        settings_el = doc.settings.element
-        upd = OxmlElement('w:updateFields'); upd.set(qn('w:val'), 'true')
-        settings_el.append(upd)
-    except Exception:
-        pass
+    for i, (nivel, texto) in enumerate(secciones, start=1):
+        p = doc.add_paragraph()
+        if nivel == 2:
+            p.paragraph_format.left_indent = Cm(0.6)
+        _hipervinculo_interno(p, texto, f"sec{i}", sangria=(nivel == 2))
     doc.add_page_break()
 
 
@@ -216,16 +257,13 @@ def _borde_tabla_lado(tabla, lado, color_hex="1F4E79", size=6):
     tblBorders.append(borde)
 
 
-def _agregar_pie_pagina(doc, nombre_archivo="", codigo_area="SSPO#DVMPAD#DESYFC#DIREPA"):
+def _agregar_pie_pagina(doc, titulo_doc="", codigo_area="SSPO#DVMPAD#DESYFC#DIREPA"):
     """Pie de página institucional (Fase 8: tomado del template oficial de
     ARCA -- Instructivo de Acceso Remoto SAR, Dirección de Seguridad de la
-    Información). Nombre de archivo a la izquierda, código de área + página
-    a la derecha, línea divisoria arriba.
-
-    Fuente fijada explícitamente (Calibri) -- antes no se especificaba y
-    quedaba a criterio del estilo Normal del documento/del programa que lo
-    abra, lo que hacía que el "#" se viera desproporcionado (más chico que
-    las letras) en algunos renders."""
+    Información). A diferencia del original (que pone el nombre de archivo
+    a la izquierda), acá va el TÍTULO del documento -- decisión explícita:
+    el nombre de archivo no le dice nada a quien lo lee, el título sí.
+    Código de área + página a la derecha, línea divisoria arriba."""
     section = doc.sections[0]
     footer = section.footer
     footer.is_linked_to_previous = False
@@ -237,7 +275,7 @@ def _agregar_pie_pagina(doc, nombre_archivo="", codigo_area="SSPO#DVMPAD#DESYFC#
     celda_izq, celda_der = tabla.rows[0].cells
     celda_izq.width = Cm(10); celda_der.width = Cm(6)
 
-    r0 = celda_izq.paragraphs[0].add_run(nombre_archivo)
+    r0 = celda_izq.paragraphs[0].add_run(titulo_doc)
     r0.font.size = Pt(8.5); r0.font.name = "Calibri"; r0.font.color.rgb = _GRIS_FOOTER
 
     p2 = celda_der.paragraphs[0]; p2.alignment = WD_ALIGN_PARAGRAPH.RIGHT
@@ -324,7 +362,7 @@ def _generar_word(pais, anio, mes_d, mes_h, version,
         section.top_margin=Cm(2.5); section.bottom_margin=Cm(2.5)
         section.left_margin=Cm(3); section.right_margin=Cm(2.5)
     _agregar_encabezado(doc, "Dirección de Reingeniería de Procesos Aduaneros")
-    _agregar_pie_pagina(doc, nombre_archivo)
+    _agregar_pie_pagina(doc, f"Estado de Situación SINTIA {anio} {pais}-AR")
 
     # Portada
     _imagen_portada = _generar_portada_compuesta(
@@ -351,12 +389,24 @@ def _generar_word(pais, anio, mes_d, mes_h, version,
         dest.add_run("Elaborado por: ").bold=True; dest.add_run("Secci\u00f3n Simplificaci\u00f3n de Procesos Operativos — DI REPA")
     doc.add_page_break()
 
-    # Índice (se completa al abrir el documento en Word / actualizar campo)
-    _insertar_toc(doc)
+    # Índice (manual, clickeable -- ver _insertar_indice)
+    _insertar_indice(doc, [
+        (1, "Resumen Ejecutivo"),
+        (1, "1.  Introducción"),
+        (1, "2.  Estado de Situación"),
+        (2, "2.1.  Evolución de ingreso de camiones por mes"),
+        (2, "2.2.  Evolución de transmisión anticipada por mes"),
+        (2, "2.3.  Evaluación del tiempo de transmisión – MICs Transmitidos"),
+        (2, "2.4.  Evaluación del tiempo de transmisión – MICs tardíos"),
+        (2, "2.5.  Evaluación del tiempo de transmisión – MICs no transmitidos"),
+        (2, "2.6.  Análisis de MICs Rechazados"),
+        (1, "3.  Conclusiones y estado actual"),
+        (1, "Anexo — Glosario de siglas"),
+    ])
 
     # Resumen ejecutivo — KPIs + veredicto de una línea, calculado (no generado por IA)
     # para que sea 100% determinístico y no dependa de la disponibilidad de la API.
-    doc.add_heading("Resumen Ejecutivo", level=1)
+    _heading_indexado(doc, "Resumen Ejecutivo", 1, 1)
     pct_trans_num = pct_f(gT, gTot) if gTot > 0 else 0
     if pct_trans_num >= 80:
         veredicto = "El circuito muestra un desempeño sólido en la transmisión anticipada del MIC-DTA, con un volumen acotado de rechazos."
@@ -383,7 +433,7 @@ def _generar_word(pais, anio, mes_d, mes_h, version,
     doc.add_page_break()
 
     # 1. Introducción
-    doc.add_heading("1.  Introducci\u00f3n",level=1)
+    _heading_indexado(doc, "1.  Introducci\u00f3n", 1, 2)
     if narrativa_ia and len(narrativa_ia)>=1:
         doc.add_paragraph(narrativa_ia[0])
     else:
@@ -398,7 +448,7 @@ def _generar_word(pais, anio, mes_d, mes_h, version,
 
 
     # 2. Estado de situación
-    doc.add_heading("2.  Estado de Situaci\u00f3n",level=1)
+    _heading_indexado(doc, "2.  Estado de Situaci\u00f3n", 1, 3)
     if narrativa_ia and len(narrativa_ia)>=2:
         doc.add_paragraph(narrativa_ia[1])
     else:
@@ -435,7 +485,7 @@ def _generar_word(pais, anio, mes_d, mes_h, version,
     if "torta" in graficos: insertar_grafico(doc,graficos["torta"],width_cm=11)
 
     # 2.1 Evolución mensual
-    doc.add_heading("2.1.  Evoluci\u00f3n de ingreso de camiones por mes",level=2)
+    _heading_indexado(doc, "2.1.  Evoluci\u00f3n de ingreso de camiones por mes", 2, 4)
     agregar_tabla_word(doc,["MES","CARGADO","LASTRE","TOTAL"],
         [[mes_label_largo(r["MES"]),fmt(n(r.get("CARGADO",0))),fmt(n(r.get("LASTRE",0))),fmt(n(r.get("CARGADO",0))+n(r.get("LASTRE",0)))] for r in ev_total],
         col_widths=[3.5,2.5,2.5,2.5])
@@ -443,7 +493,7 @@ def _generar_word(pais, anio, mes_d, mes_h, version,
 
     # 2.3 Transmitidos
     doc.add_page_break()
-    doc.add_heading("2.2.  Evolución de transmisión anticipada por mes",level=2)
+    _heading_indexado(doc, "2.2.  Evolución de transmisión anticipada por mes", 2, 5)
     doc.add_paragraph()
     rows_ev_trans = []
     for r in ev_total:
@@ -455,14 +505,14 @@ def _generar_word(pais, anio, mes_d, mes_h, version,
         rows_ev_trans.append([mes_label(mes), pct(trs,tot), pct(ntrs,tot), pct(tds,tot), fmt(tot)])
     agregar_tabla_word(doc,["MES","% TRANS","% NO TRANS","% TARDÍO","TOTAL"],rows_ev_trans,col_widths=[2.8,2.5,2.5,2.5,2.2])
     doc.add_paragraph()
-    doc.add_heading("2.3.  Evaluaci\u00f3n del tiempo de transmisi\u00f3n \u2013 MICs Transmitidos",level=2)
+    _heading_indexado(doc, "2.3.  Evaluaci\u00f3n del tiempo de transmisi\u00f3n \u2013 MICs Transmitidos", 2, 6)
     doc.add_paragraph(f"Del total ({fmt(gTot)}), {fmt(gT)} ({pct(gT,gTot)}) fueron transmitidos correctamente.")
     agregar_tabla_word(doc,["MES","CARGADOS","LASTRE","TOTAL"],
         [[mes_label_largo(r["MES"]),fmt(n(r.get("CARGADOS",0))),fmt(n(r.get("LASTRE",0))),fmt(n(r.get("CARGADOS",0))+n(r.get("LASTRE",0)))] for r in ev_trans],
         col_widths=[3.5,2.5,2.5,2.5])
 
     # 2.4 Tardíos
-    doc.add_heading("2.4.  Evaluaci\u00f3n del tiempo de transmisi\u00f3n \u2013 MICs tard\u00edos",level=2)
+    _heading_indexado(doc, "2.4.  Evaluaci\u00f3n del tiempo de transmisi\u00f3n \u2013 MICs tard\u00edos", 2, 7)
     doc.add_paragraph(f"Del total ({fmt(gTot)}), {fmt(gTd)} ({pct(gTd,gTot)}) fueron transmitidos tard\u00edamente.")
     tardio_por_mes = {r["MES"]: r for r in ev_tardio}
     rows_tardio = []
@@ -476,7 +526,7 @@ def _generar_word(pais, anio, mes_d, mes_h, version,
         col_widths=[3.5,2.5,2.5,2.5])
 
     # 2.5 No transmitidos
-    doc.add_heading("2.5.  Evaluaci\u00f3n del tiempo de transmisi\u00f3n \u2013 MICs no transmitidos",level=2)
+    _heading_indexado(doc, "2.5.  Evaluaci\u00f3n del tiempo de transmisi\u00f3n \u2013 MICs no transmitidos", 2, 8)
     doc.add_paragraph(f"Del total ({fmt(gTot)}), {fmt(gN)} ({pct(gN,gTot)}) no fueron transmitidos.")
     notrans_por_mes = {r["MES"]: r for r in ev_no_trans}
     rows_notrans = []
@@ -491,7 +541,7 @@ def _generar_word(pais, anio, mes_d, mes_h, version,
     if "lineas" in graficos: insertar_grafico(doc,graficos["lineas"])
 
     # 2.6 Rechazos
-    doc.add_heading("2.6.  An\u00e1lisis de MICs Rechazados",level=2)
+    _heading_indexado(doc, "2.6.  An\u00e1lisis de MICs Rechazados", 2, 9)
     if narrativa_ia and len(narrativa_ia)>=3:
         texto_26 = narrativa_ia[2] if narrativa_ia and len(narrativa_ia) > 2 and narrativa_ia[2] and len(narrativa_ia[2]) > 20 else None
         if texto_26:
@@ -522,7 +572,7 @@ def _generar_word(pais, anio, mes_d, mes_h, version,
 
     # 3. Conclusiones
     doc.add_page_break()
-    doc.add_heading("3.  Conclusiones y estado actual",level=1)
+    _heading_indexado(doc, "3.  Conclusiones y estado actual", 1, 10)
 
     ult_t=n(datos_ult.get("total",0)) if datos_ult else 0
     ult_tr=n(datos_ult.get("trans",0)) if datos_ult else 0
@@ -742,7 +792,7 @@ def _generar_word(pais, anio, mes_d, mes_h, version,
 
     # Apéndice — Glosario (texto fijo, no generado por IA, para que sea auditable)
     doc.add_page_break()
-    doc.add_heading("Anexo — Glosario de siglas", level=1)
+    _heading_indexado(doc, "Anexo — Glosario de siglas", 1, 11)
     glosario_items = [
         ("SINTIA", "Sistema de Información Aduanera — registro y control de la operatoria del circuito."),
         ("PAD", "Portal Aduanero — sistema central de registro de ingreso/egreso terrestre."),
@@ -864,7 +914,7 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
         section.top_margin = Cm(2.5); section.bottom_margin = Cm(2.5)
         section.left_margin = Cm(3); section.right_margin = Cm(2.5)
     _agregar_encabezado(doc, "Dirección de Reingeniería de Procesos Aduaneros")
-    _agregar_pie_pagina(doc, nombre_archivo)
+    _agregar_pie_pagina(doc, "Informe Consolidado de Operaciones Fronterizas Terrestres")
 
     # Portada
     _imagen_portada = _generar_portada_compuesta(
@@ -892,10 +942,18 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
         dest.add_run("Elaborado por: ").bold = True; dest.add_run("Sección Simplificación de Procesos Operativos — DI REPA")
     doc.add_page_break()
 
-    _insertar_toc(doc)
+    _insertar_indice(doc, [
+        (1, "Resumen Ejecutivo"),
+        (1, "1.  Operaciones por país"),
+        (1, "2.  Importación vs. Exportación"),
+        (1, "3.  Cargado vs. Lastre"),
+        (1, "4.  Operaciones por aduana"),
+        (1, "5.  Operaciones por variable de control"),
+        (1, "Anexo — Glosario de siglas"),
+    ])
 
     # Resumen ejecutivo
-    doc.add_heading("Resumen Ejecutivo", level=1)
+    _heading_indexado(doc, "Resumen Ejecutivo", 1, 1)
     doc.add_paragraph(
         f"El presente informe consolida la totalidad de las operaciones registradas en SINTIA para "
         f"todos los países del circuito durante el período {periodo}, sin discriminar por país "
@@ -910,7 +968,7 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
     doc.add_page_break()
 
     # 1. Operaciones por país
-    doc.add_heading("1.  Operaciones por país", level=1)
+    _heading_indexado(doc, "1.  Operaciones por país", 1, 2)
     doc.add_paragraph(f"Durante el período se registraron {fmt(total)} operaciones distribuidas entre "
                        f"{len(por_pais)} país(es)/agrupación(es).")
     agregar_tabla_word(doc, ["PAÍS", "TOTAL", "IMPO", "EXPO", "CARGADO", "LASTRE"],
@@ -920,20 +978,20 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
     if "pais" in graficos: insertar_grafico(doc, graficos["pais"])
 
     # 2. Importación vs. Exportación
-    doc.add_heading("2.  Importación vs. Exportación", level=1)
+    _heading_indexado(doc, "2.  Importación vs. Exportación", 1, 3)
     doc.add_paragraph(f"Del total de operaciones, {fmt(impo)} ({pct(impo, total)}) corresponden a "
                        f"importación y {fmt(expo)} ({pct(expo, total)}) a exportación.")
     if "impoexpo" in graficos: insertar_grafico(doc, graficos["impoexpo"], width_cm=11)
 
     # 3. Cargado vs. Lastre
-    doc.add_heading("3.  Cargado vs. Lastre", level=1)
+    _heading_indexado(doc, "3.  Cargado vs. Lastre", 1, 4)
     doc.add_paragraph(f"{fmt(cargado)} ({pct(cargado, total)}) operaciones fueron con mercadería "
                        f"cargada y {fmt(lastre)} ({pct(lastre, total)}) en lastre (vacío).")
     if "cargalast" in graficos: insertar_grafico(doc, graficos["cargalast"], width_cm=11)
     doc.add_page_break()
 
     # 4. Operaciones por aduana
-    doc.add_heading("4.  Operaciones por aduana", level=1)
+    _heading_indexado(doc, "4.  Operaciones por aduana", 1, 5)
     doc.add_paragraph(f"Se relevaron operaciones en {len(por_aduana)} aduana(s) durante el período.")
     agregar_tabla_word(doc, ["ADUANA", "DIRA", "TOTAL", "IMPO", "EXPO", "CARGADO", "LASTRE"],
         [[r.get("ADUANA_NOMBRE", r["ADUANA"]), r.get("DIRA_NOMBRE", "—"), fmt(r.get("TOTAL", 0)),
@@ -944,7 +1002,7 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
     doc.add_page_break()
 
     # 5. Variables de control
-    doc.add_heading("5.  Operaciones por variable de control", level=1)
+    _heading_indexado(doc, "5.  Operaciones por variable de control", 1, 6)
     sin_dato = next((n(r.get("TOTAL", 0)) for r in por_var_control if r["VAR_CONTROL"] == "SIN VARIABLE DE CONTROL"), 0)
     doc.add_paragraph(
         f"Se identificaron {len(por_var_control)} variable(s) de control distintas en el período."
@@ -957,7 +1015,7 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
 
     # Anexo — Glosario (mismo que el informe SINTIA estándar)
     doc.add_page_break()
-    doc.add_heading("Anexo — Glosario de siglas", level=1)
+    _heading_indexado(doc, "Anexo — Glosario de siglas", 1, 7)
     glosario_items = [
         ("SINTIA", "Sistema de Información Aduanera — registro y control de la operatoria del circuito."),
         ("PAD", "Portal Aduanero — sistema central de registro de ingreso/egreso terrestre."),
