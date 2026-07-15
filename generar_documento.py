@@ -6,6 +6,7 @@ profesionalización).
 """
 import os
 import re
+import logging
 from datetime import datetime
 
 try:
@@ -195,6 +196,7 @@ def _generar_portada_compuesta(titulo, subtitulo, meta_lineas):
         buf.seek(0)
         return buf
     except Exception:
+        logging.exception("PORTADA COMPUESTA | fall\u00f3, se usa fallback de texto plano")
         return None
 
 
