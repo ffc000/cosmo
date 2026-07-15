@@ -216,11 +216,16 @@ def _borde_tabla_lado(tabla, lado, color_hex="1F4E79", size=6):
     tblBorders.append(borde)
 
 
-def _agregar_pie_pagina(doc, nombre_archivo="", codigo_area="DIREPA"):
+def _agregar_pie_pagina(doc, nombre_archivo="", codigo_area="SSPO#DVMPAD#DESYFC#DIREPA"):
     """Pie de página institucional (Fase 8: tomado del template oficial de
     ARCA -- Instructivo de Acceso Remoto SAR, Dirección de Seguridad de la
     Información). Nombre de archivo a la izquierda, código de área + página
-    a la derecha, línea divisoria arriba."""
+    a la derecha, línea divisoria arriba.
+
+    Fuente fijada explícitamente (Calibri) -- antes no se especificaba y
+    quedaba a criterio del estilo Normal del documento/del programa que lo
+    abra, lo que hacía que el "#" se viera desproporcionado (más chico que
+    las letras) en algunos renders."""
     section = doc.sections[0]
     footer = section.footer
     footer.is_linked_to_previous = False
@@ -233,13 +238,14 @@ def _agregar_pie_pagina(doc, nombre_archivo="", codigo_area="DIREPA"):
     celda_izq.width = Cm(10); celda_der.width = Cm(6)
 
     r0 = celda_izq.paragraphs[0].add_run(nombre_archivo)
-    r0.font.size = Pt(8); r0.font.color.rgb = _GRIS_FOOTER
+    r0.font.size = Pt(8.5); r0.font.name = "Calibri"; r0.font.color.rgb = _GRIS_FOOTER
 
     p2 = celda_der.paragraphs[0]; p2.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     prefijo = f"[{codigo_area}]    " if codigo_area else ""
     r1 = p2.add_run(f"{prefijo}Pág. ")
-    r1.font.size = Pt(8); r1.font.color.rgb = _GRIS_FOOTER
-    _campo_word(p2, "PAGE")
+    r1.font.size = Pt(8.5); r1.font.name = "Calibri"; r1.font.color.rgb = _GRIS_FOOTER
+    r_pagina = _campo_word(p2, "PAGE")
+    r_pagina.font.size = Pt(8.5); r_pagina.font.name = "Calibri"; r_pagina.font.color.rgb = _GRIS_FOOTER
 
     _borde_tabla_lado(tabla, "top", "1F4E79", 6)
 
