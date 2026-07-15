@@ -603,12 +603,15 @@ input:checked+.slider::before{transform:translateX(18px)}
         <div id="aduanas-error" style="display:none;color:var(--danger);font-size:.82rem;padding:.5rem 0"></div>
         <div id="aduanas-content" style="display:none">
 
-          <p style="font-size:.76rem;color:var(--muted);margin-bottom:.9rem">
-            Demora = tiempo entre el registro de la operación y su salida (estado SAL). El promedio solo
-            considera operaciones que salieron <strong>dentro</strong> de <span id="aduanas-umbral-txt">10</span> días —
-            tanto las que siguen en trámite hace más de ese tiempo como las que salieron pero tardaron más de
-            eso se cuentan aparte, como alerta, sin ensuciar el promedio.
-          </p>
+          <details style="margin-bottom:.9rem">
+            <summary style="font-size:.76rem;color:var(--muted);cursor:pointer;user-select:none">ⓘ ¿Cómo se calcula la demora?</summary>
+            <p style="font-size:.76rem;color:var(--muted);margin:.5rem 0 0">
+              Demora = tiempo entre el registro de la operación y su salida (estado SAL). El promedio solo
+              considera operaciones que salieron <strong>dentro</strong> de <span id="aduanas-umbral-txt">10</span> días —
+              tanto las que siguen en trámite hace más de ese tiempo como las que salieron pero tardaron más de
+              eso se cuentan aparte, como alerta, sin ensuciar el promedio.
+            </p>
+          </details>
 
           <div class="form-row" style="margin-bottom:1.25rem;align-items:flex-end">
             <div>
@@ -624,29 +627,7 @@ input:checked+.slider::before{transform:translateX(18px)}
               <input type="number" id="aduanas-umbral" value="10" style="width:90px">
             </div>
             <button class="btn btn-primary btn-sm" onclick="cargarAduanasNacional()">Actualizar</button>
-            <button class="btn btn-outline btn-sm" onclick="exportarAduanasNacional()">⬇ Excel (tabla)</button>
           </div>
-
-          <div class="card" style="padding:1rem 1.25rem">
-            <div class="card-title" style="margin-bottom:.7rem">Informe con análisis IA</div>
-            <div class="form-row cols3" style="margin-bottom:.6rem;align-items:center;max-width:340px">
-              <label style="display:flex;align-items:center;gap:.35rem;font-size:.82rem;font-weight:400;cursor:pointer">
-                <input type="checkbox" id="aduanas-fmt-word" checked> Word
-              </label>
-              <label style="display:flex;align-items:center;gap:.35rem;font-size:.82rem;font-weight:400;cursor:pointer">
-                <input type="checkbox" id="aduanas-fmt-pdf"> PDF
-              </label>
-            </div>
-            <div class="form-row" style="margin-bottom:0;align-items:center">
-              <button class="btn btn-outline btn-sm" id="btn-informe-aduanas" onclick="generarInformeAduanas()">🤖 Generar informe</button>
-              <label style="display:flex;align-items:center;gap:.3rem;font-size:.72rem;color:var(--muted);cursor:pointer" title="Por default, pedir el mismo informe (mismo año/DIRA/umbral) dentro de las últimas 24hs devuelve el ya generado, sin volver a llamar a la IA. Tildar esto lo salta.">
-                <input type="checkbox" id="aduanas-informe-forzar"> Forzar regeneración
-              </label>
-            </div>
-            <div id="aduanas-informe-log" class="log-box"></div>
-            <div id="aduanas-informe-descarga" style="display:none;margin-bottom:0"></div>
-          </div>
-
 
           <!-- Indicadores nacionales -->
           <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:.9rem;margin-bottom:1.25rem">
@@ -669,6 +650,26 @@ input:checked+.slider::before{transform:translateX(18px)}
             </div>
           </div>
 
+          <div class="card" style="padding:1rem 1.25rem">
+            <div class="card-title" style="margin-bottom:.7rem">Informe con análisis IA</div>
+            <div class="form-row cols3" style="margin-bottom:.6rem;align-items:center;max-width:340px">
+              <label style="display:flex;align-items:center;gap:.35rem;font-size:.82rem;font-weight:400;cursor:pointer">
+                <input type="checkbox" id="aduanas-fmt-word" checked> Word
+              </label>
+              <label style="display:flex;align-items:center;gap:.35rem;font-size:.82rem;font-weight:400;cursor:pointer">
+                <input type="checkbox" id="aduanas-fmt-pdf"> PDF
+              </label>
+            </div>
+            <div class="form-row" style="margin-bottom:0;align-items:center">
+              <button class="btn btn-outline btn-sm" id="btn-informe-aduanas" onclick="generarInformeAduanas()">🤖 Generar informe</button>
+              <label style="display:flex;align-items:center;gap:.3rem;font-size:.72rem;color:var(--muted);cursor:pointer" title="Por default, pedir el mismo informe (mismo año/DIRA/umbral) dentro de las últimas 24hs devuelve el ya generado, sin volver a llamar a la IA. Tildar esto lo salta.">
+                <input type="checkbox" id="aduanas-informe-forzar"> Forzar regeneración
+              </label>
+            </div>
+            <div id="aduanas-informe-log" class="log-box"></div>
+            <div id="aduanas-informe-descarga" style="display:none;margin-bottom:0"></div>
+          </div>
+
           <div class="card" style="margin:0 0 1rem 0">
             <div class="card-title">Evolución mensual de la demora <span id="aduanas-evol-ambito" style="font-weight:400;color:var(--muted);font-size:.78rem"></span></div>
             <p style="font-size:.72rem;color:var(--muted);margin-bottom:.6rem">
@@ -681,13 +682,14 @@ input:checked+.slider::before{transform:translateX(18px)}
           <div class="card" style="margin:0">
             <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:.6rem">
               <div class="card-title" style="margin-bottom:0">Aduanas</div>
-              <div style="display:flex;align-items:center;gap:.5rem;font-size:.78rem">
+              <div style="display:flex;align-items:center;gap:.8rem;font-size:.78rem;flex-wrap:wrap">
                 <label style="color:var(--muted)">Ordenar por</label>
                 <select id="aduanas-orden" onchange="_renderAduanasTabla()" style="width:auto">
                   <option value="alfabetico">Alfabético</option>
                   <option value="operaciones">Más operaciones primero</option>
                   <option value="alertas">Más alertas primero</option>
                 </select>
+                <button class="btn btn-outline btn-sm" onclick="exportarAduanasNacional()">⬇ Excel</button>
               </div>
             </div>
             <table class="data-table">
