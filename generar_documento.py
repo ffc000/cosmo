@@ -27,6 +27,13 @@ try:
 except ImportError:
     XLSX_OK = False
 
+try:
+    from PIL import Image, ImageDraw, ImageFont
+    import io
+    PIL_OK = True
+except ImportError:
+    PIL_OK = False
+
 from generar_utils import PAISES, PAISES_CONSOLIDADO, fmt, pct, pct_f, n, periodo_texto, mes_label, mes_label_largo, color_semaforo
 from generar_graficos import (grafico_torta, grafico_barras_apiladas, grafico_lineas_pct,
     grafico_rechazos_cat, grafico_rechazos_mes, grafico_comparativo_meses, MPL_OK,
@@ -100,6 +107,99 @@ _ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 _LOGO_PATH = os.path.join(_ASSETS_DIR, "logo_arca.png")
 _AZUL_HEADER = RGBColor(0x1F, 0x4E, 0x79)   # color exacto tomado del template oficial ARCA
 _GRIS_FOOTER = RGBColor(0x32, 0x3E, 0x4F)   # ídem
+
+
+_ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+_LOGO_PATH = os.path.join(_ASSETS_DIR, "logo_arca.png")
+_COVER_FONDO_PATH = os.path.join(_ASSETS_DIR, "cover_fondo.png")
+_COVER_BANNER_PATH = os.path.join(_ASSETS_DIR, "cover_banner.png")
+_FONT_BOLD = "/usr/share/fonts/truetype/crosextra/Carlito-Bold.ttf"
+_FONT_REG = "/usr/share/fonts/truetype/crosextra/Carlito-Regular.ttf"
+_AZUL_HEADER = RGBColor(0x1F, 0x4E, 0x79)   # color exacto tomado del template oficial ARCA
+_GRIS_FOOTER = RGBColor(0x32, 0x3E, 0x4F)   # ídem
+_NAVY_TITULO = (0x24, 0x2C, 0x4F)           # ídem, en RGB plano (para Pillow, no python-docx)
+_AZUL_META = (0x1F, 0x4E, 0x79)
+
+
+def _wrap_texto_pil(texto, font, max_width, draw):
+    """Envuelve texto a un ancho máximo en píxeles, usando el font real
+    (no por cantidad de caracteres -- una tipografía bold ancha entra
+    distinto que una regular, así que se mide con textlength de verdad)."""
+    palabras = texto.split()
+    lineas, actual = [], ""
+    for palabra in palabras:
+        prueba = f"{actual} {palabra}".strip()
+        if draw.textlength(prueba, font=font) <= max_width:
+            actual = prueba
+        else:
+            if actual:
+                lineas.append(actual)
+            actual = palabra
+    if actual:
+        lineas.append(actual)
+    return lineas
+
+
+def _generar_portada_compuesta(titulo, subtitulo, meta_lineas):
+    """Compone la imagen de portada (Fase 8: tomada del template oficial de
+    ARCA -- Instructivo de Acceso Remoto SAR): fondo diagonal + banner con
+    logo (assets/cover_fondo.png y cover_banner.png, extraídos en alta
+    resolución del PDF oficial) con el título/subtítulo/metadata de CADA
+    informe compuestos encima vía Pillow. Se genera de nuevo en cada
+    informe (no es un asset estático) porque el texto cambia -- país,
+    período, versión, etc.
+
+    titulo: string, se envuelve automáticamente si no entra en una línea
+        (ej. el título del consolidado es mucho más largo que "INSTRUCTIVO"
+        del documento original).
+    subtitulo: una línea (ej. "Período: 01/01/2026 a 31/01/2026").
+    meta_lineas: lista de líneas chicas debajo (dirección, versión, fecha,
+        elaborado por).
+
+    Devuelve un BytesIO con el PNG compuesto, o None si Pillow no está
+    disponible o falta algún asset -- el caller debe tener un fallback de
+    portada en texto plano para ese caso (ver PIL_OK)."""
+    if not PIL_OK or not os.path.exists(_COVER_FONDO_PATH) or not os.path.exists(_COVER_BANNER_PATH):
+        return None
+    try:
+        fondo = Image.open(_COVER_FONDO_PATH).convert("RGB")
+        banner = Image.open(_COVER_BANNER_PATH).convert("RGB")
+        W, H = fondo.size
+        escala = W / 560  # 560pt = ancho de página del PDF original de referencia
+
+        bx0, by0 = 224.1 * escala, 88.5 * escala
+        bx1, by1 = 564.9 * escala, 147.7 * escala
+        banner_r = banner.resize((int(bx1 - bx0), int(by1 - by0)))
+        fondo.paste(banner_r, (int(bx0), int(by0)))
+
+        draw = ImageDraw.Draw(fondo)
+        x_texto = 900  # calibrado contra el asset real (1831px de ancho)
+        max_w = W - x_texto - 60
+
+        y = int(640 * (H / 2590))
+        font_titulo = ImageFont.truetype(_FONT_BOLD, int(46 * (H / 2590)))
+        for linea in _wrap_texto_pil(titulo, font_titulo, max_w, draw):
+            draw.text((x_texto, y), linea, font=font_titulo, fill=_NAVY_TITULO)
+            y += int(58 * (H / 2590))
+
+        y += int(40 * (H / 2590))
+        font_sub = ImageFont.truetype(_FONT_REG, int(34 * (H / 2590)))
+        for linea in _wrap_texto_pil(subtitulo, font_sub, max_w, draw):
+            draw.text((x_texto, y), linea, font=font_sub, fill=_NAVY_TITULO)
+            y += int(45 * (H / 2590))
+
+        y += int(45 * (H / 2590))
+        font_meta = ImageFont.truetype(_FONT_REG, int(26 * (H / 2590)))
+        for linea in meta_lineas:
+            draw.text((x_texto, y), linea, font=font_meta, fill=_AZUL_META)
+            y += int(45 * (H / 2590))
+
+        buf = io.BytesIO()
+        fondo.save(buf, format="PNG")
+        buf.seek(0)
+        return buf
+    except Exception:
+        return None
 
 
 def _borde_tabla_lado(tabla, lado, color_hex="1F4E79", size=6):
@@ -223,17 +323,28 @@ def _generar_word(pais, anio, mes_d, mes_h, version,
     _agregar_pie_pagina(doc, nombre_archivo)
 
     # Portada
-    titulo=doc.add_heading(f"ESTADO DE SITUACI\u00d3N SINTIA {anio} {pais}-AR",0)
-    titulo.alignment=WD_ALIGN_PARAGRAPH.CENTER
-    for txt,sz in [("Direcci\u00f3n de Reingeniería de Procesos Aduaneros (DG ADUA)",12),(f"Per\u00edodo: {periodo}",11)]:
-        p=doc.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.CENTER
-        run=p.add_run(txt); run.font.size=Pt(sz); run.font.color.rgb=RGBColor(0x40,0x40,0x40)
-    doc.add_paragraph()
-    meta=doc.add_paragraph(); meta.alignment=WD_ALIGN_PARAGRAPH.CENTER
-    meta.add_run("Versi\u00f3n: ").bold=True; meta.add_run(f"{version}   ")
-    meta.add_run("\u00daltima modificaci\u00f3n: ").bold=True; meta.add_run(datetime.today().strftime("%d/%m/%Y"))
-    dest=doc.add_paragraph(); dest.alignment=WD_ALIGN_PARAGRAPH.CENTER
-    dest.add_run("Elaborado por: ").bold=True; dest.add_run("Secci\u00f3n Simplificaci\u00f3n de Procesos Operativos — DI REPA")
+    _imagen_portada = _generar_portada_compuesta(
+        titulo=f"ESTADO DE SITUACIÓN SINTIA {anio} {pais}-AR",
+        subtitulo=f"Período: {periodo}",
+        meta_lineas=[
+            "Dirección de Reingeniería de Procesos Aduaneros (DG ADUA)",
+            f"Versión: {version}     Última modificación: {datetime.today().strftime('%d/%m/%Y')}",
+            "Elaborado por: Sección Simplificación de Procesos Operativos — DI REPA",
+        ])
+    if _imagen_portada:
+        doc.add_picture(_imagen_portada, width=Cm(16.09))
+    else:
+        titulo=doc.add_heading(f"ESTADO DE SITUACI\u00d3N SINTIA {anio} {pais}-AR",0)
+        titulo.alignment=WD_ALIGN_PARAGRAPH.CENTER
+        for txt,sz in [("Direcci\u00f3n de Reingeniería de Procesos Aduaneros (DG ADUA)",12),(f"Per\u00edodo: {periodo}",11)]:
+            p=doc.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.CENTER
+            run=p.add_run(txt); run.font.size=Pt(sz); run.font.color.rgb=RGBColor(0x40,0x40,0x40)
+        doc.add_paragraph()
+        meta=doc.add_paragraph(); meta.alignment=WD_ALIGN_PARAGRAPH.CENTER
+        meta.add_run("Versi\u00f3n: ").bold=True; meta.add_run(f"{version}   ")
+        meta.add_run("\u00daltima modificaci\u00f3n: ").bold=True; meta.add_run(datetime.today().strftime("%d/%m/%Y"))
+        dest=doc.add_paragraph(); dest.alignment=WD_ALIGN_PARAGRAPH.CENTER
+        dest.add_run("Elaborado por: ").bold=True; dest.add_run("Secci\u00f3n Simplificaci\u00f3n de Procesos Operativos — DI REPA")
     doc.add_page_break()
 
     # Índice (se completa al abrir el documento en Word / actualizar campo)
@@ -752,18 +863,29 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
     _agregar_pie_pagina(doc, nombre_archivo)
 
     # Portada
-    titulo = doc.add_heading("INFORME CONSOLIDADO DE OPERACIONES FRONTERIZAS TERRESTRES", 0)
-    titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    for txt, sz in [("Dirección de Reingeniería de Procesos Aduaneros (DG ADUA)", 12),
-                     (f"Período: {periodo}", 11)]:
-        p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = p.add_run(txt); run.font.size = Pt(sz); run.font.color.rgb = RGBColor(0x40, 0x40, 0x40)
-    doc.add_paragraph()
-    meta = doc.add_paragraph(); meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    meta.add_run("Versión: ").bold = True; meta.add_run(f"{version}   ")
-    meta.add_run("Última modificación: ").bold = True; meta.add_run(datetime.today().strftime("%d/%m/%Y"))
-    dest = doc.add_paragraph(); dest.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    dest.add_run("Elaborado por: ").bold = True; dest.add_run("Sección Simplificación de Procesos Operativos — DI REPA")
+    _imagen_portada = _generar_portada_compuesta(
+        titulo="INFORME CONSOLIDADO DE OPERACIONES FRONTERIZAS TERRESTRES",
+        subtitulo=f"Período: {periodo}",
+        meta_lineas=[
+            "Dirección de Reingeniería de Procesos Aduaneros (DG ADUA)",
+            f"Versión: {version}     Última modificación: {datetime.today().strftime('%d/%m/%Y')}",
+            "Elaborado por: Sección Simplificación de Procesos Operativos — DI REPA",
+        ])
+    if _imagen_portada:
+        doc.add_picture(_imagen_portada, width=Cm(16.09))
+    else:
+        titulo = doc.add_heading("INFORME CONSOLIDADO DE OPERACIONES FRONTERIZAS TERRESTRES", 0)
+        titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        for txt, sz in [("Dirección de Reingeniería de Procesos Aduaneros (DG ADUA)", 12),
+                         (f"Período: {periodo}", 11)]:
+            p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = p.add_run(txt); run.font.size = Pt(sz); run.font.color.rgb = RGBColor(0x40, 0x40, 0x40)
+        doc.add_paragraph()
+        meta = doc.add_paragraph(); meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        meta.add_run("Versión: ").bold = True; meta.add_run(f"{version}   ")
+        meta.add_run("Última modificación: ").bold = True; meta.add_run(datetime.today().strftime("%d/%m/%Y"))
+        dest = doc.add_paragraph(); dest.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        dest.add_run("Elaborado por: ").bold = True; dest.add_run("Sección Simplificación de Procesos Operativos — DI REPA")
     doc.add_page_break()
 
     _insertar_toc(doc)
