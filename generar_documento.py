@@ -103,10 +103,6 @@ def _insertar_toc(doc):
     except Exception:
         pass
     doc.add_page_break()
-_ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
-_LOGO_PATH = os.path.join(_ASSETS_DIR, "logo_arca.png")
-_AZUL_HEADER = RGBColor(0x1F, 0x4E, 0x79)   # color exacto tomado del template oficial ARCA
-_GRIS_FOOTER = RGBColor(0x32, 0x3E, 0x4F)   # ídem
 
 
 _ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
