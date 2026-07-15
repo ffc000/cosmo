@@ -33,7 +33,7 @@ from generar_documento import agregar_tabla_word, _agregar_encabezado, _agregar_
 
 
 def generar_acta_word(titulo_doc, fecha, asunto, lugar, participantes, secciones,
-                       roles_predefinidos=None):
+                       roles_predefinidos=None, nombre_archivo=""):
     """
     titulo_doc: encabezado del documento, ej. "ACTA DE REUNIÓN" (VUA) o
         "ACTA DE REUNIÓN — SENASA / ARCA" (SENASA).
@@ -44,6 +44,9 @@ def generar_acta_word(titulo_doc, fecha, asunto, lugar, participantes, secciones
         con items=[] se omite del documento (no aparece un título vacío).
     roles_predefinidos: dict opcional {nombre: cargo} para completar el cargo
         de un participante si no vino explícito en el dict.
+    nombre_archivo: opcional, para mostrar en el pie de página -- el caller
+        es quien decide el nombre final del archivo (esta función no lo
+        guarda), así que si no se pasa, el pie queda sin nombre de archivo.
 
     Devuelve un objeto Document (python-docx) ya armado — el caller decide
     dónde guardarlo (doc.save(ruta)).
@@ -55,8 +58,8 @@ def generar_acta_word(titulo_doc, fecha, asunto, lugar, participantes, secciones
         section.bottom_margin = Cm(2.5)
         section.left_margin = Cm(3)
         section.right_margin = Cm(2.5)
-    _agregar_encabezado(doc, "ARCA — Dirección de Reingeniería de Procesos Aduaneros")
-    _agregar_pie_pagina(doc)
+    _agregar_encabezado(doc, "Dirección de Reingeniería de Procesos Aduaneros")
+    _agregar_pie_pagina(doc, nombre_archivo)
 
     titulo = doc.add_paragraph()
     titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
