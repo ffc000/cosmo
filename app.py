@@ -1099,12 +1099,20 @@ def api_dashboard_pendientes():
     o a SENASA, esa parte simplemente no se incluye (no es un tema de
     ocultar en el frontend, el dato ni se manda).
 
-    SENASA es una query en vivo (barata: son pocas filas, ya indexado por
-    estado). VUA viene de una caché actualizada en background cada 6hs (ver
-    _actualizar_vua_pendientes_cache en vua.py) -- no se recalcula acá
-    porque eso implicaría llamar a la IA en cada carga del dashboard."""
+    Dos fuentes distintas para VUA, mostradas por separado (no son lo
+    mismo, no había que fusionarlas):
+    - vua_cronologia con estado='Pendiente'/'En curso': en vivo, mismo
+      criterio que SENASA (barato, pocas filas) -- es la lista de tareas
+      con estado real que carga el equipo a mano. Esto era lo que faltaba
+      originalmente: el widget solo mostraba la señal de IA de abajo.
+    - "vua" (acuerdos sin evidencia de cierre): viene de una caché
+      actualizada en background cada 6hs (_actualizar_vua_pendientes_cache
+      en vua.py) -- no se recalcula acá porque implicaría llamar a la IA
+      en cada carga del dashboard. Es una señal distinta: compromisos
+      mencionados en minutas que no aparecen resueltos en minutas
+      posteriores, sin relación con el campo estado de cronología."""
     modulos = session.get("modulos", [])
-    resultado = {"senasa": [], "vua": None, "vua_actualizado": None}
+    resultado = {"senasa": [], "vua_cronologia": [], "vua": None, "vua_actualizado": None}
 
     if "senasa" in modulos:
         try:
@@ -1120,6 +1128,22 @@ def api_dashboard_pendientes():
             logging.exception("Error obteniendo pendientes SENASA para el dashboard")
 
     if "vua" in modulos:
+        # Cronología con estado Pendiente/En curso -- en vivo, igual criterio
+        # que SENASA (barato, ya son pocas filas). Esto es lo que faltaba:
+        # antes solo se mostraban los "acuerdos sin evidencia de cierre"
+        # detectados por IA (ver más abajo), que es una señal distinta --
+        # cronología es la lista de tareas con estado real que carga el
+        # equipo a mano, y no tenía por qué depender de la caché de IA.
+        try:
+            with get_db(HIST_DB, row_factory=True) as con:
+                filas = con.execute(
+                    "SELECT fecha, actividad, participantes, estado FROM vua_cronologia "
+                    "WHERE estado != 'Completado' ORDER BY (estado='Pendiente') DESC, orden ASC "
+                    "LIMIT 8").fetchall()
+                resultado["vua_cronologia"] = [dict(f) for f in filas]
+        except Exception:
+            logging.exception("Error obteniendo cronología pendiente de VUA para el dashboard")
+
         try:
             with get_db(HIST_DB, row_factory=True) as con:
                 row = con.execute(
