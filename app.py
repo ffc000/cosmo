@@ -15,7 +15,7 @@ from werkzeug.utils import secure_filename
 # app, csrf y limiter viven en core.py — ahí también los necesitan los
 # blueprints, y así evitamos que "limiter" no exista todavía cuando se
 # importa un blueprint que lo usa en un decorador de ruta.
-from core import app, csrf, limiter, notificar_telegram
+from core import app, csrf, limiter, notificar_telegram, registrar_auditoria
 
 # ── Blueprints ─────────────────────────────────────────────────────────────────
 # Extraídos de app.py en la Fase 2 de profesionalización (separar los ~200
@@ -938,10 +938,12 @@ def login():
                     con.execute("UPDATE usuarios SET ultimo_acceso=datetime('now') WHERE username=?", (u,))
             except: pass
             logging.info("LOGIN OK | user=" + u + " | ip=" + ip)
+            registrar_auditoria(u, "auth", "login_ok", ip=ip)
             notificar_telegram(f"🔓 Login: {u} ({ip})")
             return redirect(url_for("index"))
         else:
             logging.warning("LOGIN FAIL | user=" + u + " | ip=" + ip)
+            registrar_auditoria(u or "(desconocido)", "auth", "login_fail", ip=ip)
             error = "Usuario o contraseña incorrectos"
     return render_template("login.html", error=error)
 
@@ -1063,6 +1065,7 @@ def health_check_detalle():
 @app.route("/logout")
 def logout():
     logging.info(f"LOGOUT | user={session.get('username','?')} | ip={request.remote_addr}")
+    registrar_auditoria(session.get("username","?"), "auth", "logout", ip=request.remote_addr)
     session.clear()
     return redirect(url_for("login"))
 
@@ -1087,6 +1090,49 @@ def index():
         db_exists=db_exists, db_size=db_size, now=hoy, mes_ult=mes_ult, meses=meses,
         api_key=bool(get_api_key()), role=session.get("role","admin"),
         username=session.get("username",""), pendientes=pendientes)
+
+@app.route("/api/dashboard/pendientes")
+@login_required
+def api_dashboard_pendientes():
+    """Widget combinado de pendientes VUA+SENASA para el dashboard (Fase 9).
+    Respeta los módulos habilitados del usuario -- si no tiene acceso a VUA
+    o a SENASA, esa parte simplemente no se incluye (no es un tema de
+    ocultar en el frontend, el dato ni se manda).
+
+    SENASA es una query en vivo (barata: son pocas filas, ya indexado por
+    estado). VUA viene de una caché actualizada en background cada 6hs (ver
+    _actualizar_vua_pendientes_cache en vua.py) -- no se recalcula acá
+    porque eso implicaría llamar a la IA en cada carga del dashboard."""
+    modulos = session.get("modulos", [])
+    resultado = {"senasa": [], "vua": None, "vua_actualizado": None}
+
+    if "senasa" in modulos:
+        try:
+            with get_db(HIST_DB, row_factory=True) as con:
+                hoy = date.today().isoformat()
+                filas = con.execute(
+                    "SELECT descripcion, responsable, fecha_compromiso, estado FROM senasa_acuerdos "
+                    "WHERE estado != 'Completado' ORDER BY "
+                    "CASE WHEN fecha_compromiso IS NULL OR fecha_compromiso='' THEN 1 ELSE 0 END, "
+                    "fecha_compromiso ASC LIMIT 8").fetchall()
+                resultado["senasa"] = [dict(f) for f in filas]
+        except Exception:
+            logging.exception("Error obteniendo pendientes SENASA para el dashboard")
+
+    if "vua" in modulos:
+        try:
+            with get_db(HIST_DB, row_factory=True) as con:
+                row = con.execute(
+                    "SELECT resultado, actualizado FROM vua_pendientes_cache WHERE clave='ultimo'").fetchone()
+                if row:
+                    cache = json.loads(row["resultado"])
+                    resultado["vua"] = cache.get("pendientes", [])
+                    resultado["vua_actualizado"] = row["actualizado"]
+        except Exception:
+            logging.exception("Error obteniendo pendientes VUA (caché) para el dashboard")
+
+    return jsonify({"ok": True, **resultado})
+
 
 # ── DB Status ──────────────────────────────────────────────────────────────────
 @app.route("/api/db-status")
@@ -1736,6 +1782,8 @@ def run_job(job_id, pais, anio, mes_d, mes_h, usar_ia, username, quiere_word=Tru
                  pais, anio, mes_d, mes_h, int(usar_ia), word, excel, 0, 'sintia',
                  f"{pais} {mes_d}-{mes_h}/{anio}"))
         logging.info(f"INFORME OK | user={username} | pais={pais} | {mes_d}-{mes_h}/{anio}")
+        registrar_auditoria(username, "sintia", "informe_generado",
+                             f"{pais} {mes_d}-{mes_h}/{anio} (word={quiere_word} excel={quiere_excel} pdf={quiere_pdf})")
         job_status[job_id]["status"] = "done"
         job_status[job_id]["files"]  = archivos
         _job_persist(job_id)
@@ -1814,6 +1862,8 @@ def run_job_consolidado(job_id, fecha_d, fecha_h, username, quiere_word=True, qu
                  "TODOS", "", fecha_d, fecha_h, 0, word, excel, 0, 'sintia_consolidado',
                  f"Consolidado {fecha_d} a {fecha_h}"))
         logging.info(f"INFORME CONSOLIDADO OK | user={username} | {fecha_d} a {fecha_h}")
+        registrar_auditoria(username, "sintia", "informe_consolidado_generado",
+                             f"{fecha_d} a {fecha_h} (word={quiere_word} excel={quiere_excel} pdf={quiere_pdf})")
         job_status[job_id]["status"] = "done"
         job_status[job_id]["files"]  = archivos
         _job_persist(job_id)
@@ -2243,6 +2293,8 @@ def admin_usuarios_create():
             con.execute("INSERT INTO usuarios (username, password_hash, rol, modulos, activo) VALUES (?,?,?,?,1)",
                 (username, hashed, rol, modulos))
         logging.info(f"USUARIO CREATE | by={session.get('username')} | nuevo={username} | rol={rol} | modulos={modulos}")
+        registrar_auditoria(session.get("username","?"), "admin", "usuario_creado",
+                             f"nuevo={username} rol={rol} modulos={modulos}")
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": "Usuario ya existe" if "UNIQUE" in str(e) else str(e)})
@@ -2267,6 +2319,8 @@ def admin_usuarios_update(uid):
             con.execute("UPDATE usuarios SET " + ", ".join(fields) + " WHERE id=?", params)
     logging.info(f"USUARIO UPDATE | by={session.get('username')} | uid={uid} | campos={list(data.keys())}" +
                  (" | password cambiado" if cambia_pass else ""))
+    registrar_auditoria(session.get("username","?"), "admin", "usuario_editado",
+                         f"uid={uid} campos={list(data.keys())}" + (" (incluye password)" if cambia_pass else ""))
     return jsonify({"ok": True})
 
 @app.route("/api/admin/usuarios/<int:uid>", methods=["DELETE"])
@@ -2276,7 +2330,44 @@ def admin_usuarios_delete(uid):
     with get_db(HIST_DB) as con:
         con.execute("DELETE FROM usuarios WHERE id=?", (uid,))
     logging.info(f"USUARIO DELETE | by={session.get('username')} | uid={uid}")
+    registrar_auditoria(session.get("username","?"), "admin", "usuario_borrado", f"uid={uid}")
     return jsonify({"ok": True})
+
+@app.route("/api/admin/auditoria", methods=["GET"])
+@login_required
+@admin_required("sistema")
+def admin_auditoria_list():
+    """Auditoría centralizada (Fase 9). Filtros opcionales: usuario, modulo,
+    desde/hasta (fecha YYYY-MM-DD), q (busca en accion/detalle). Paginado
+    con limit/offset -- por defecto trae los últimos 200 registros."""
+    usuario = request.args.get("usuario", "").strip()
+    modulo = request.args.get("modulo", "").strip()
+    desde = request.args.get("desde", "").strip()
+    hasta = request.args.get("hasta", "").strip()
+    q = request.args.get("q", "").strip()
+    limit = min(int(request.args.get("limit", 200)), 500)
+    offset = int(request.args.get("offset", 0))
+
+    where = ["1=1"]; params = []
+    if usuario: where.append("usuario=?"); params.append(usuario)
+    if modulo:  where.append("modulo=?"); params.append(modulo)
+    if desde:   where.append("fecha>=?"); params.append(desde)
+    if hasta:   where.append("fecha<=?"); params.append(hasta + " 23:59:59")
+    if q:
+        where.append("(accion LIKE ? OR detalle LIKE ?)")
+        params.extend([f"%{q}%", f"%{q}%"])
+
+    with get_db(HIST_DB, row_factory=True) as con:
+        total = con.execute(f"SELECT COUNT(*) FROM auditoria WHERE {' AND '.join(where)}", params).fetchone()[0]
+        rows = [dict(r) for r in con.execute(
+            f"SELECT * FROM auditoria WHERE {' AND '.join(where)} ORDER BY fecha DESC LIMIT ? OFFSET ?",
+            params + [limit, offset]).fetchall()]
+        usuarios = [r[0] for r in con.execute("SELECT DISTINCT usuario FROM auditoria ORDER BY usuario").fetchall()]
+        modulos_disponibles = [r[0] for r in con.execute("SELECT DISTINCT modulo FROM auditoria ORDER BY modulo").fetchall()]
+
+    return jsonify({"ok": True, "rows": rows, "total": total, "limit": limit, "offset": offset,
+                     "usuarios": usuarios, "modulos": modulos_disponibles})
+
 
 @app.route("/api/admin/sesiones", methods=["GET"])
 @login_required
@@ -3683,6 +3774,8 @@ def _job_informe_aduanas_nacional(job_id, anio, dira_filtro, umbral_alerta_dias,
         _job_persist(job_id)
         log.append(f"✓ Informe generado: {fname}")
         logging.info(f"INFORME ADUANAS PAIS OK | user={username} | anio={anio} | dira={dira_filtro}")
+        registrar_auditoria(username, "sintia", "informe_aduanas_generado",
+                             f"año={anio} dira={dira_filtro or 'todas'} (word={quiere_word} pdf={quiere_pdf})")
     except Exception as e:
         log.append(f"✗ Error: {e}")
         job_status[job_id]["status"] = "error"

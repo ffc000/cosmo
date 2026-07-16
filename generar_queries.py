@@ -4,7 +4,7 @@ Extraído de generar.py (Fase 3 de profesionalización).
 """
 import re
 from db_utils import get_db
-from generar_utils import CAT_LIKE, PAISES, PAISES_CONSOLIDADO, n, fmt, mes_label_largo
+from generar_utils import CAT_LIKE, PAISES, PAISES_CONSOLIDADO, n, fmt, mes_label_largo, formatear_demora
 
 def _sql_case_categorias(campo="mensaje"):
     """CASE WHEN reutilizable para categorización de rechazos."""
@@ -147,7 +147,20 @@ def calcular_totales(totales):
 # fechas arbitrario (puede cruzar años calendario), por eso arma un UNION ALL
 # de las tablas DAT_<año> involucradas en vez de operar sobre una sola tabla.
 
-_COLUMNAS_CONSOLIDADO = ["MIC", "FECHA_INGRESO_ISO", "CARGADO", "TIPO_REGISTRO", "ADUANA", "VAR_CONTROL"]
+_COLUMNAS_CONSOLIDADO = ["MIC", "FECHA_INGRESO_ISO", "CARGADO", "TIPO_REGISTRO", "ADUANA", "VAR_CONTROL",
+                         "ULT_ESTADO", "FECHA_ULT_INT"]
+
+# Mismo criterio que _FECHA_ULT_INT_ISO en app.py (informe "Aduanas del
+# país") -- duplicado a propósito acá para no crear una dependencia de
+# generar_queries.py hacia app.py (este módulo es Flask-agnóstico). Si se
+# cambia uno, cambiar el otro. FECHA_ULT_INT viene como "DD-MM-YYYY HH:MM:SS"
+# (formato argentino), no ISO -- julianday() de SQLite solo reconoce ISO.
+_FECHA_ULT_INT_ISO = (
+    "(CASE WHEN FECHA_ULT_INT LIKE '____-__-__%' THEN FECHA_ULT_INT "
+    "ELSE substr(FECHA_ULT_INT,7,4) || '-' || substr(FECHA_ULT_INT,4,2) "
+    "|| '-' || substr(FECHA_ULT_INT,1,2) || substr(FECHA_ULT_INT,11) END)"
+)
+UMBRAL_ALERTA_DIAS_CONSOLIDADO = 10  # mismo default que el informe "Aduanas del país"
 
 def _tablas_dat_en_rango(con, fecha_d, fecha_h):
     """Nombres de tabla DAT_<año> que intersectan [fecha_d, fecha_h]
@@ -249,11 +262,18 @@ def correr_queries_consolidado(ruta_db, fecha_d, fecha_h, log_fn, hist_db=None):
             FROM {origen} {where} GROUP BY PAIS ORDER BY TOTAL DESC
         """, params)
 
+        _demora_expr = f"(julianday({_FECHA_ULT_INT_ISO}) - julianday(FECHA_INGRESO_ISO))"
+        umbral = UMBRAL_ALERTA_DIAS_CONSOLIDADO
         por_aduana = q(f"""
-            SELECT COALESCE(NULLIF(TRIM(ADUANA),''),'SIN DATO') AS ADUANA, {agregados_sql}
+            SELECT COALESCE(NULLIF(TRIM(ADUANA),''),'SIN DATO') AS ADUANA, {agregados_sql},
+                AVG(CASE WHEN ULT_ESTADO='SAL' AND {_demora_expr} <= ? THEN {_demora_expr} END) AS DEMORA_MEDIA_DIAS,
+                SUM(CASE
+                    WHEN ULT_ESTADO='SAL' AND {_demora_expr} > ? THEN 1
+                    WHEN ULT_ESTADO!='SAL' AND (julianday('now') - julianday(FECHA_INGRESO_ISO)) > ? THEN 1
+                    ELSE 0 END) AS EN_ALERTA_PAD
             FROM {origen} {where}
             GROUP BY COALESCE(NULLIF(TRIM(ADUANA),''),'SIN DATO') ORDER BY TOTAL DESC
-        """, params)
+        """, (umbral, umbral, umbral) + params)
 
         por_var_control = q(f"""
             SELECT COALESCE(NULLIF(TRIM(VAR_CONTROL),''),'SIN VARIABLE DE CONTROL') AS VAR_CONTROL,
@@ -264,6 +284,7 @@ def correr_queries_consolidado(ruta_db, fecha_d, fecha_h, log_fn, hist_db=None):
 
     cat_aduanas, cat_diras = _catalogo_aduanas_dira(hist_db)
     for r in por_aduana:
+        r["DEMORA_MEDIA_FMT"] = formatear_demora(r.get("DEMORA_MEDIA_DIAS"))
         cod = r["ADUANA"]
         if cod == "SIN DATO":
             r["ADUANA_NOMBRE"] = "SIN DATO"; r["DIRA_NOMBRE"] = "—"

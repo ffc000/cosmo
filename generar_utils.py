@@ -100,3 +100,17 @@ def _dir(diff, positivo="mejoró", negativo="retrocedió", neutro="se mantuvo"):
 def _pp(diff):
     """Formatea una diferencia en pp con signo y coma decimal."""
     return f"{abs(diff):.1f}".replace(".", ",")
+
+def formatear_demora(dias):
+    """Convierte una demora en días (float, con fracción) a un texto legible
+    en horas/minutos/segundos -- 0.75 días no dice nada de un vistazo, pero
+    '18h 00m 00s' sí. Duplicada a propósito de _formatear_demora en app.py
+    (Fase 9: se necesita también desde generar_documento.py/generar_queries.py,
+    que son Flask-agnósticos y no pueden importar de app.py sin crear una
+    dependencia circular). Si se cambia uno, cambiar el otro."""
+    if dias is None:
+        return None
+    total_seg = round(dias * 86400)
+    h, resto = divmod(total_seg, 3600)
+    m, s = divmod(resto, 60)
+    return f"{h}h {m:02d}m {s:02d}s"

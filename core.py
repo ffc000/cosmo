@@ -621,3 +621,25 @@ def notificar_telegram(msg: str):
         except Exception:
             pass
     threading.Thread(target=_enviar, daemon=True).start()
+
+
+def registrar_auditoria(usuario, modulo, accion, detalle="", ip=""):
+    """Auditoría centralizada (Fase 9): una fila por acción relevante, en
+    una tabla queryable -- a diferencia de accesos.log (texto plano, hay
+    que grepearlo) o de tablas puntuales como ref_aduanas_log (solo cubre
+    esa pantalla). No es exhaustiva de entrada: cubre login/logout,
+    generación de informes, y administración de usuarios -- son los
+    puntos de mayor valor para auditar primero. Sumar más puntos de
+    registro es agregar un llamado a esta función donde haga falta, no
+    tocar el esquema.
+
+    Nunca debe romper el flujo si falla -- mismo criterio que
+    notificar_telegram: preferible perder una fila de auditoría a tirar
+    abajo la acción real que se está auditando."""
+    try:
+        with get_db(HIST_DB) as con:
+            con.execute(
+                "INSERT INTO auditoria (usuario, modulo, accion, detalle, ip) VALUES (?,?,?,?,?)",
+                (usuario, modulo, accion, detalle, ip))
+    except Exception:
+        logging.exception("AUDITORIA | no se pudo registrar: usuario=%s modulo=%s accion=%s", usuario, modulo, accion)
