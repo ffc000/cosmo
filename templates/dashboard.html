@@ -253,7 +253,11 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);display:flex
       {% endif %}
       {% if 'vua' in modulos %}
       <div class="stat-card" style="grid-column:span 2">
-        <div class="stat-label">VUA — sin evidencia de cierre <span id="pend-vua-actualizado" style="font-weight:400;color:var(--dim);text-transform:none;letter-spacing:normal"></span></div>
+        <div class="stat-label">VUA — cronología pendiente</div>
+        <div id="pend-vua-cronologia-lista" style="font-size:.78rem;margin-top:.6rem;color:var(--muted)">Cargando…</div>
+      </div>
+      <div class="stat-card" style="grid-column:span 2">
+        <div class="stat-label">VUA — sin evidencia de cierre (IA) <span id="pend-vua-actualizado" style="font-weight:400;color:var(--dim);text-transform:none;letter-spacing:normal"></span></div>
         <div id="pend-vua-lista" style="font-size:.78rem;margin-top:.6rem;color:var(--muted)">Cargando…</div>
       </div>
       {% endif %}
@@ -335,6 +339,24 @@ updateTime();setInterval(updateTime,30000);
           return `<div style="padding:.35rem 0;border-bottom:1px solid var(--border)">
             ${escHtml(it.descripcion)}<br>
             <span style="color:var(--dim)">${escHtml(it.responsable||'s/d')}</span> · ${fechaTxt}
+          </div>`;
+        }).join('');
+      }
+    }
+
+    const elVuaCron = document.getElementById('pend-vua-cronologia-lista');
+    if(elVuaCron){
+      const items = data.vua_cronologia || [];
+      if(!items.length){
+        elVuaCron.innerHTML = '<span style="color:var(--accent2)">✓ Sin pendientes en cronología</span>';
+      }else{
+        elVuaCron.innerHTML = items.map(it=>{
+          const colorEstado = it.estado === 'Pendiente' ? 'var(--warn)' : 'var(--dim)';
+          return `<div style="padding:.35rem 0;border-bottom:1px solid var(--border)">
+            ${escHtml(it.actividad)}<br>
+            <span style="color:var(--dim)">${escHtml(it.participantes||'s/d')}</span> ·
+            <span style="color:${colorEstado}">${escHtml(it.estado)}</span> ·
+            <span style="color:var(--dim)">${escHtml(it.fecha||'')}</span>
           </div>`;
         }).join('');
       }
