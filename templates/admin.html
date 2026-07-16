@@ -224,6 +224,7 @@ select option{background:var(--surface)}
       <div class="nav-section">Sistema</div>
       <div class="nav-item{% if not permiso_bd %} active{% endif %}" data-tab="usuarios"><span class="nav-icon">👤</span><span class="nav-label">Usuarios</span></div>
       <div class="nav-item" data-tab="sesiones"><span class="nav-icon">🔌</span><span class="nav-label">Sesiones activas</span></div>
+      <div class="nav-item" data-tab="auditoria"><span class="nav-icon">🕵️</span><span class="nav-label">Auditoría</span></div>
       <div class="nav-item" data-tab="prompts"><span class="nav-icon">🧠</span><span class="nav-label">Prompts IA</span></div>
       {% endif %}
     </nav>
@@ -376,6 +377,28 @@ select option{background:var(--surface)}
         </div>
       </div>
 
+      <!-- AUDITORÍA -->
+      <div class="panel" id="tab-auditoria">
+        <div class="card">
+          <div class="card-title">Auditoría centralizada</div>
+          <p style="font-size:.78rem;color:var(--muted);margin-bottom:1rem">
+            Registro de acciones relevantes en toda la plataforma: login/logout, informes generados,
+            administración de usuarios. No es exhaustivo de cada endpoint todavía — cubre los puntos de
+            mayor valor primero; se puede sumar más a medida que se necesite.
+          </p>
+          <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1rem">
+            <select id="aud-usuario" style="width:auto"><option value="">Todos los usuarios</option></select>
+            <select id="aud-modulo" style="width:auto"><option value="">Todos los módulos</option></select>
+            <input type="date" id="aud-desde" style="width:auto">
+            <input type="date" id="aud-hasta" style="width:auto">
+            <input type="text" id="aud-q" placeholder="Buscar en acción/detalle..." style="width:auto;min-width:200px">
+            <button class="btn btn-primary btn-sm" onclick="cargarAuditoria(0)">Filtrar</button>
+          </div>
+          <div id="auditoria-content"><div style="color:var(--muted);font-size:.82rem">Cargando...</div></div>
+          <div id="auditoria-paginado" style="display:flex;justify-content:space-between;align-items:center;margin-top:.8rem;font-size:.78rem;color:var(--muted)"></div>
+        </div>
+      </div>
+
       <!-- PROMPTS -->
       <div class="panel" id="tab-prompts">
         <div class="card">
@@ -461,7 +484,7 @@ const sidebar=document.getElementById('sidebar'),overlay=document.getElementById
 document.getElementById('hamburger').addEventListener('click',()=>{sidebar.classList.toggle('open');overlay.classList.toggle('visible')});
 overlay.addEventListener('click',()=>{sidebar.classList.remove('open');overlay.classList.remove('visible')});
 
-const TITLES={actualizar:'Actualización Semanal',historial:'Historial',bd:'Base de Datos',usuarios:'Gestión de Usuarios',sesiones:'Sesiones Activas',prompts:'Prompts IA',backup:'Backup Semanal',refaduanas:'Ref. Aduanas / DIRA',feriados:'Feriados'};
+const TITLES={actualizar:'Actualización Semanal',historial:'Historial',bd:'Base de Datos',usuarios:'Gestión de Usuarios',sesiones:'Sesiones Activas',auditoria:'Auditoría',prompts:'Prompts IA',backup:'Backup Semanal',refaduanas:'Ref. Aduanas / DIRA',feriados:'Feriados'};
 document.querySelectorAll('.nav-item').forEach(item=>{
   item.addEventListener('click',()=>{
     document.querySelectorAll('.nav-item').forEach(i=>i.classList.remove('active'));
@@ -473,6 +496,7 @@ document.querySelectorAll('.nav-item').forEach(item=>{
     if(item.dataset.tab==='bd'){loadDbStatus();loadTablasDetalle();}
     if(item.dataset.tab==='usuarios')loadUsuarios();
     if(item.dataset.tab==='sesiones')loadSesiones();
+    if(item.dataset.tab==='auditoria')cargarAuditoria(0);
     if(item.dataset.tab==='prompts')loadPrompts();
     if(item.dataset.tab==='backup')loadBackup();
     if(item.dataset.tab==='refaduanas')loadRefAduanas();
@@ -753,6 +777,56 @@ function loadSesiones(){
 }
 function revocarSesion(tp){if(!confirm('¿Cerrar esta sesión?'))return;fetch(`/api/admin/sesiones/${tp}/revocar`,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.ok)loadSesiones();else alert(d.error)})}
 function revocarTodas(){if(!confirm('¿Cerrar todas las sesiones (excepto la tuya)?'))return;fetch('/api/admin/sesiones/revocar-todas',{method:'POST'}).then(r=>r.json()).then(d=>{if(d.ok){alert(`✓ ${d.revocadas} sesión(es) cerrada(s)`);loadSesiones()}})}
+
+let _auditoriaFiltrosCargados=false;
+function cargarAuditoria(offset){
+  offset=offset||0;
+  const params=new URLSearchParams({offset, limit:50});
+  const usuario=document.getElementById('aud-usuario').value;
+  const modulo=document.getElementById('aud-modulo').value;
+  const desde=document.getElementById('aud-desde').value;
+  const hasta=document.getElementById('aud-hasta').value;
+  const q=document.getElementById('aud-q').value.trim();
+  if(usuario) params.set('usuario',usuario);
+  if(modulo) params.set('modulo',modulo);
+  if(desde) params.set('desde',desde);
+  if(hasta) params.set('hasta',hasta);
+  if(q) params.set('q',q);
+
+  fetch('/api/admin/auditoria?'+params.toString()).then(r=>r.json()).then(data=>{
+    const el=document.getElementById('auditoria-content');
+    if(!data.ok){el.innerHTML='<div style="color:var(--danger);font-size:.82rem">Error al cargar auditoría.</div>';return}
+
+    if(!_auditoriaFiltrosCargados){
+      const selU=document.getElementById('aud-usuario'), selM=document.getElementById('aud-modulo');
+      data.usuarios.forEach(u=>selU.innerHTML+=`<option value="${esc(u)}">${esc(u)}</option>`);
+      data.modulos.forEach(m=>selM.innerHTML+=`<option value="${esc(m)}">${esc(m)}</option>`);
+      _auditoriaFiltrosCargados=true;
+    }
+
+    if(!data.rows.length){el.innerHTML='<div style="color:var(--muted);font-size:.82rem">Sin registros con estos filtros.</div>';document.getElementById('auditoria-paginado').innerHTML='';return}
+
+    let html='<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Fecha</th><th>Usuario</th><th>Módulo</th><th>Acción</th><th class="col-hide-mobile">Detalle</th><th class="col-hide-mobile">IP</th></tr></thead><tbody>';
+    data.rows.forEach(r=>{
+      html+=`<tr>
+        <td style="font-family:var(--mono);font-size:.72rem;color:var(--muted)">${esc((r.fecha||'').slice(0,16))}</td>
+        <td style="font-weight:600">${esc(r.usuario)}</td>
+        <td><span class="tag">${esc(r.modulo)}</span></td>
+        <td style="font-size:.78rem">${esc(r.accion)}</td>
+        <td class="col-hide-mobile" style="font-size:.72rem;color:var(--muted)">${esc(r.detalle||'—')}</td>
+        <td class="col-hide-mobile" style="font-family:var(--mono);font-size:.7rem;color:var(--muted)">${esc(r.ip||'—')}</td>
+      </tr>`;
+    });
+    el.innerHTML=html+'</tbody></table></div>';
+
+    const desde1=offset+1, hasta1=Math.min(offset+data.rows.length,data.total);
+    const pag=document.getElementById('auditoria-paginado');
+    pag.innerHTML=`<span>${desde1}–${hasta1} de ${data.total}</span><span>
+      <button class="btn btn-outline btn-sm" ${offset===0?'disabled':''} onclick="cargarAuditoria(${Math.max(0,offset-50)})">← Anterior</button>
+      <button class="btn btn-outline btn-sm" ${hasta1>=data.total?'disabled':''} onclick="cargarAuditoria(${offset+50})">Siguiente →</button>
+    </span>`;
+  });
+}
 
 function loadPrompts(){
   fetch('/api/admin/prompts').then(r=>r.json()).then(data=>{

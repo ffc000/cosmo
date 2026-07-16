@@ -223,6 +223,7 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
       <div class="nav-item" id="nav-tarjetas" onclick="switchModule('fin','tarjetas')"><span class="nav-icon">💳</span><span class="nav-label">Tarjetas</span></div>
       <div class="nav-item" id="nav-ddjj" onclick="switchModule('fin','ddjj')"><span class="nav-icon">📑</span><span class="nav-label">Declaraciones Juradas</span></div>
       <div class="nav-item" id="nav-servicios" onclick="switchModule('fin','servicios')"><span class="nav-icon">🔔</span><span class="nav-label">Servicios recurrentes</span></div>
+      <div class="nav-item" id="nav-reglas" onclick="switchModule('fin','reglas')"><span class="nav-icon">🧠</span><span class="nav-label">Reglas de categorización</span></div>
     </nav>
     {% include '_sidebar_footer.html' %}
   </div>
@@ -536,6 +537,27 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
         </div>
       </div>
 
+      <div class="panel" id="panel-reglas">
+        <div class="card">
+          <div class="card-title">Reglas de categorización aprendidas</div>
+          <p style="font-size:.78rem;color:var(--muted);margin-bottom:1rem">
+            Cada vez que corregís la categoría de un movimiento a mano, el sistema aprende una regla para que la
+            próxima compra de ese mismo comercio se categorice sola. Acá están todas las reglas aprendidas — si
+            alguna quedó mal (por ejemplo, corregiste un movimiento por error), podés cambiarle la categoría o
+            borrarla. Borrar una regla no cambia los movimientos que ya se categorizaron con ella, solo evita que
+            se siga aplicando a compras nuevas.
+          </p>
+          <div id="reglas-error" style="display:none" class="alert alert-danger"></div>
+          <table class="data-table">
+            <thead><tr><th>Patrón (comercio)</th><th>Categoría</th><th>Aprendida el</th><th></th></tr></thead>
+            <tbody id="reglas-tbody"></tbody>
+          </table>
+          <div id="reglas-vacio" style="display:none;font-size:.82rem;color:var(--muted);padding:1rem 0">
+            Todavía no se aprendió ninguna regla — se van a ir agregando solas a medida que corrijas categorías.
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -553,6 +575,7 @@ const TOPBAR_TITLES = {
   tarjetas:    'FINANZAS / TARJETAS',
   ddjj:        'FINANZAS / DECLARACIONES JURADAS',
   servicios:   'FINANZAS / SERVICIOS RECURRENTES',
+  reglas:      'FINANZAS / REGLAS DE CATEGORIZACIÓN',
 };
 
 function switchModule(mod, panel) {
@@ -571,6 +594,7 @@ function switchModule(mod, panel) {
   if (panel === 'tarjetas')    cargarTarjetasList();
   if (panel === 'ddjj')        cargarDDJJList();
   if (panel === 'servicios')   cargarServicios();
+  if (panel === 'reglas')      cargarReglas();
 }
 
 document.getElementById('hamburger').onclick = () => {
@@ -1353,6 +1377,52 @@ function togglePagoServicio(id, pagado) {
 function borrarServicio(id) {
   if (!confirm('¿Eliminar este servicio de la lista?')) return;
   fetch(`/api/finanzas/servicios/${id}`, {method:'DELETE'}).then(r => r.json()).then(() => cargarServicios());
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// REGLAS DE CATEGORIZACIÓN APRENDIDAS
+// ══════════════════════════════════════════════════════════════════════════════
+let _todasCategorias = [];
+
+async function cargarReglas() {
+  const errBox = document.getElementById('reglas-error');
+  errBox.style.display = 'none';
+  if (!_todasCategorias.length) {
+    const dc = await (await fetch('/api/finanzas/categorias')).json();
+    if (dc.ok) _todasCategorias = dc.rows;
+  }
+  fetch('/api/finanzas/reglas').then(r => r.json()).then(d => {
+    if (!d.ok) { errBox.textContent = d.error || 'Error al cargar reglas.'; errBox.style.display = 'block'; return; }
+    const tbody = document.getElementById('reglas-tbody');
+    const vacio = document.getElementById('reglas-vacio');
+    if (!d.reglas.length) { tbody.innerHTML = ''; vacio.style.display = 'block'; return; }
+    vacio.style.display = 'none';
+    tbody.innerHTML = d.reglas.map(r => {
+      const opciones = _todasCategorias.map(c =>
+        `<option value="${c.id}" ${c.id === r.categoria_id ? 'selected' : ''}>${esc(c.nombre)}</option>`).join('');
+      const fecha = (r.creado || '').substring(0, 10);
+      return `<tr>
+        <td style="font-family:var(--mono)">${esc(r.patron)}</td>
+        <td>
+          <select onchange="cambiarCategoriaRegla(${r.id}, this.value)" style="width:auto;font-size:.78rem">${opciones}</select>
+        </td>
+        <td style="font-size:.78rem;color:var(--muted)">${esc(fecha)}</td>
+        <td><button class="btn btn-sm" onclick="borrarRegla(${r.id})">🗑️</button></td>
+      </tr>`;
+    }).join('');
+  });
+}
+
+function cambiarCategoriaRegla(id, categoriaId) {
+  fetch(`/api/finanzas/reglas/${id}`, {
+    method: 'PUT', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({categoria_id: categoriaId})
+  }).then(r => r.json()).then(d => { if (!d.ok) cargarReglas(); });
+}
+
+function borrarRegla(id) {
+  if (!confirm('¿Borrar esta regla? Los movimientos ya categorizados con ella no cambian, pero las compras nuevas de este comercio van a dejar de categorizarse solas.')) return;
+  fetch(`/api/finanzas/reglas/${id}`, {method: 'DELETE'}).then(r => r.json()).then(() => cargarReglas());
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────────

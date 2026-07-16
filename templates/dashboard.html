@@ -240,6 +240,27 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);display:flex
     </a>{% endif %}
   </div>
 
+  <!-- Pendientes VUA + SENASA (Fase 9) -->
+  {% if 'vua' in modulos or 'senasa' in modulos %}
+  <div id="pendientes-widget" style="display:none">
+    <div class="section-label">Pendientes VUA + SENASA</div>
+    <div class="stats-grid" style="margin-bottom:2rem">
+      {% if 'senasa' in modulos %}
+      <div class="stat-card" style="grid-column:span 2">
+        <div class="stat-label">SENASA — acuerdos sin cerrar</div>
+        <div id="pend-senasa-lista" style="font-size:.78rem;margin-top:.6rem;color:var(--muted)">Cargando…</div>
+      </div>
+      {% endif %}
+      {% if 'vua' in modulos %}
+      <div class="stat-card" style="grid-column:span 2">
+        <div class="stat-label">VUA — sin evidencia de cierre <span id="pend-vua-actualizado" style="font-weight:400;color:var(--dim);text-transform:none;letter-spacing:normal"></span></div>
+        <div id="pend-vua-lista" style="font-size:.78rem;margin-top:.6rem;color:var(--muted)">Cargando…</div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
   {% if db_exists %}
   <!-- Stats -->
   <div class="section-label">Estadísticas</div>
@@ -291,6 +312,59 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);display:flex
 const esc = escHtml;
 function updateTime(){const el=document.getElementById('status-time');if(el)el.textContent=new Date().toLocaleString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'})}
 updateTime();setInterval(updateTime,30000);
+
+// ── Pendientes VUA + SENASA (Fase 9) ──
+(function(){
+  const widget = document.getElementById('pendientes-widget');
+  if(!widget) return;  // usuario sin acceso a ninguno de los 2 módulos
+  fetch('/api/dashboard/pendientes').then(r=>r.json()).then(data=>{
+    if(!data.ok) return;
+
+    const elSenasa = document.getElementById('pend-senasa-lista');
+    if(elSenasa){
+      const items = data.senasa || [];
+      if(!items.length){
+        elSenasa.innerHTML = '<span style="color:var(--accent2)">✓ Sin acuerdos pendientes</span>';
+      }else{
+        const hoy = new Date().toISOString().slice(0,10);
+        elSenasa.innerHTML = items.map(it=>{
+          const vencido = it.fecha_compromiso && it.fecha_compromiso < hoy;
+          const fechaTxt = it.fecha_compromiso
+            ? `<span style="color:${vencido?'var(--warn)':'var(--dim)'}">${vencido?'⚠ vencía ':'vence '}${escHtml(it.fecha_compromiso)}</span>`
+            : '<span style="color:var(--dim)">sin fecha</span>';
+          return `<div style="padding:.35rem 0;border-bottom:1px solid var(--border)">
+            ${escHtml(it.descripcion)}<br>
+            <span style="color:var(--dim)">${escHtml(it.responsable||'s/d')}</span> · ${fechaTxt}
+          </div>`;
+        }).join('');
+      }
+    }
+
+    const elVua = document.getElementById('pend-vua-lista');
+    const elVuaFecha = document.getElementById('pend-vua-actualizado');
+    if(elVua){
+      if(data.vua === null){
+        elVua.innerHTML = '<span style="color:var(--dim)">Sin datos todavía (se actualiza cada 6hs en segundo plano)</span>';
+      }else{
+        const items = data.vua || [];
+        if(elVuaFecha && data.vua_actualizado) elVuaFecha.textContent = '· actualizado ' + data.vua_actualizado.slice(0,16).replace('T',' ');
+        if(!items.length){
+          elVua.innerHTML = '<span style="color:var(--accent2)">✓ Sin pendientes detectados</span>';
+        }else{
+          const colorPrioridad = {Alta:'var(--warn)', Media:'var(--text-sub)', Baja:'var(--dim)'};
+          elVua.innerHTML = items.map(it=>`
+            <div style="padding:.35rem 0;border-bottom:1px solid var(--border)">
+              ${escHtml(it.descripcion)}<br>
+              <span style="color:var(--dim)">${escHtml(it.origen||'')}</span>
+              ${it.prioridad?` · <span style="color:${colorPrioridad[it.prioridad]||'var(--dim)'}">${escHtml(it.prioridad)}</span>`:''}
+            </div>`).join('');
+        }
+      }
+    }
+
+    widget.style.display = 'block';
+  }).catch(()=>{});
+})();
 
 {% if db_exists %}
 fetch('/api/db-status').then(r=>r.json()).then(data=>{
