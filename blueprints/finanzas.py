@@ -413,6 +413,52 @@ def api_fin_servicios_list():
         rows = _estado_servicios_mes(con, mes)
     return jsonify({"ok": True, "mes": mes, "rows": rows})
 
+
+@finanzas_bp.route("/api/finanzas/reglas")
+@login_required
+@finanzas_owner_required
+def api_fin_reglas_list():
+    """Reglas de auto-categorización aprendidas (Fase 9). Antes no había
+    forma de verlas: si el sistema aprendía una regla mal (ej. corregiste
+    un movimiento a la categoría equivocada por error), no había manera de
+    encontrarla salvo toparse con el error de nuevo más adelante."""
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute("""
+            SELECT r.id, r.patron, r.categoria_id, r.prioridad, r.creado,
+                   c.nombre AS categoria_nombre, c.color AS categoria_color
+            FROM fin_reglas_categorizacion r
+            LEFT JOIN fin_categorias c ON r.categoria_id = c.id
+            ORDER BY r.creado DESC
+        """).fetchall()]
+    return jsonify({"ok": True, "reglas": rows})
+
+
+@finanzas_bp.route("/api/finanzas/reglas/<int:regla_id>", methods=["PUT"])
+@login_required
+@finanzas_owner_required
+def api_fin_reglas_update(regla_id):
+    """Cambia la categoría de una regla aprendida, sin tener que borrarla y
+    esperar a que se equivoque de nuevo para reaprenderla sola."""
+    data = request.json or {}
+    categoria_id = data.get("categoria_id")
+    if not categoria_id:
+        return jsonify({"ok": False, "error": "Falta categoria_id."}), 400
+    with get_db(HIST_DB) as con:
+        con.execute("UPDATE fin_reglas_categorizacion SET categoria_id=? WHERE id=?", (categoria_id, regla_id))
+    return jsonify({"ok": True})
+
+
+@finanzas_bp.route("/api/finanzas/reglas/<int:regla_id>", methods=["DELETE"])
+@login_required
+@finanzas_owner_required
+def api_fin_reglas_delete(regla_id):
+    """Borra una regla aprendida (ej. se aprendió mal). No afecta los
+    movimientos ya categorizados con ella, solo evita que se siga
+    aplicando a compras nuevas del mismo comercio."""
+    with get_db(HIST_DB) as con:
+        con.execute("DELETE FROM fin_reglas_categorizacion WHERE id=?", (regla_id,))
+    return jsonify({"ok": True})
+
 @finanzas_bp.route("/api/finanzas/servicios", methods=["POST"])
 @login_required
 @finanzas_owner_required

@@ -13,12 +13,13 @@ import os
 import json
 import uuid
 import logging
+import threading
 import urllib.request
 from datetime import datetime, date, timedelta
 
 from flask import request, jsonify, render_template, session
 
-from core import HIST_DB, login_required, modulo_required, get_db
+from core import HIST_DB, login_required, modulo_required, get_db, notificar_telegram
 from blueprints.training import training_bp, _api_key, get_credenciales_garmin
 
 # ── BD ────────────────────────────────────────────────────────────────────────
@@ -237,6 +238,81 @@ def _get_log(fecha_desde=None, fecha_hasta=None):
     with get_db(HIST_DB, row_factory=True) as con:
         rows = [dict(r) for r in con.execute(q, params).fetchall()]
     return rows
+
+
+# ── Cruce carga semanal vs. plan (Fase 9: alertas proactivas) ────────────────
+def _carga_semana_actual():
+    """Sesiones planificadas (entrenamiento_plan) vs. completadas
+    (entrenamiento_log) de la semana en curso. No hay un campo de "carga"
+    numérica en el plan (duración/intensidad estimada) -- se compara
+    cantidad de sesiones, que es lo que el esquema realmente tiene."""
+    num = _semana_actual()
+    with get_db(HIST_DB, row_factory=True) as con:
+        semana = con.execute("SELECT * FROM entrenamiento_semanas WHERE semana_num=?", (num,)).fetchone()
+        if not semana:
+            return None
+        fi = datetime.strptime(semana["fecha_inicio"], "%Y-%m-%d").date()
+        ff = fi + timedelta(days=6)
+        planificadas = con.execute(
+            "SELECT COUNT(*) FROM entrenamiento_plan WHERE semana_num=?", (num,)).fetchone()[0]
+        completadas = con.execute(
+            "SELECT COUNT(*) FROM entrenamiento_log WHERE fecha BETWEEN ? AND ? AND completado=1",
+            (fi.isoformat(), ff.isoformat())).fetchone()[0]
+    return {
+        "semana_num": num, "es_descarga": bool(semana["es_descarga"]), "objetivo": semana["objetivo"],
+        "fecha_inicio": fi.isoformat(), "fecha_fin": ff.isoformat(),
+        "planificadas": planificadas, "completadas": completadas,
+    }
+
+
+def _chequear_carga_semanal():
+    """Compara sesiones planificadas vs. completadas de la semana en curso
+    y avisa por Telegram en 2 casos (un aviso por semana como máximo por
+    caso, dedup vía garmin_config -- mismo patrón que el aviso de
+    sincronización atrasada):
+
+    1. Vas muy atrasado: a partir del jueves, completaste menos de la
+       mitad de lo planificado para la semana.
+    2. Sobrecarga en semana de descarga: la semana está marcada como
+       es_descarga (buscando bajar volumen a propósito) pero ya
+       completaste tantas o más sesiones que las planificadas -- justo lo
+       que una semana de descarga busca evitar."""
+    DIAS = ["", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+    while True:
+        try:
+            carga = _carga_semana_actual()
+            if carga and carga["planificadas"] > 0:
+                dia_semana = date.today().isoweekday()  # 1=lunes ... 7=domingo
+                pct = carga["completadas"] / carga["planificadas"]
+                with get_db(HIST_DB, row_factory=True) as con:
+                    def _ya_avisado(clave, valor):
+                        row = con.execute("SELECT valor FROM garmin_config WHERE clave=?", (clave,)).fetchone()
+                        return row and row["valor"] == str(valor)
+
+                    def _marcar(clave, valor):
+                        con.execute(
+                            "INSERT INTO garmin_config (clave,valor,modificado) VALUES (?,?,datetime('now')) "
+                            "ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor, modificado=excluded.modificado",
+                            (clave, str(valor)))
+
+                    if dia_semana >= 4 and pct < 0.5 and not _ya_avisado("aviso_carga_baja_semana", carga["semana_num"]):
+                        notificar_telegram(
+                            f"🏋️ Semana {carga['semana_num']}: completaste {carga['completadas']}/"
+                            f"{carga['planificadas']} sesiones planificadas (ya es {DIAS[dia_semana]}).")
+                        _marcar("aviso_carga_baja_semana", carga["semana_num"])
+
+                    if (carga["es_descarga"] and carga["completadas"] >= carga["planificadas"]
+                            and not _ya_avisado("aviso_sobrecarga_descarga_semana", carga["semana_num"])):
+                        notificar_telegram(
+                            f"⚠️ Semana {carga['semana_num']} es de DESCARGA y ya completaste "
+                            f"{carga['completadas']}/{carga['planificadas']} sesiones planificadas — "
+                            f"cuidado con no bajar el volumen como corresponde en esta fase.")
+                        _marcar("aviso_sobrecarga_descarga_semana", carga["semana_num"])
+        except Exception:
+            logging.exception("Error en chequeo de carga semanal de entrenamiento")
+        threading.Event().wait(21600)  # cada 6 horas
+
+threading.Thread(target=_chequear_carga_semanal, daemon=True).start()
 
 # ── Rutas ─────────────────────────────────────────────────────────────────────
 @training_bp.route("/training")
