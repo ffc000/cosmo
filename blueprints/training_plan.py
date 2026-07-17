@@ -22,7 +22,7 @@ from flask import request, jsonify, render_template, session
 from core import HIST_DB, login_required, modulo_required, get_db, notificar_telegram
 from blueprints.training import (training_bp, _api_key, get_credenciales_garmin,
     _conectar_garmin, _sincronizar_wellness_dia, _sincronizar_actividades_dia,
-    _obtener_peso_garmin, guardar_analisis, get_actividades)
+    _obtener_peso_garmin, guardar_analisis, get_actividades, GARMIN_TOKENSTORE)
 
 # ── BD ────────────────────────────────────────────────────────────────────────
 def init_training_db():
@@ -326,9 +326,41 @@ def _sesiones_planificadas_dia(semana_num, dia_nombre):
     return [dict(r) for r in rows]
 
 
+def _workout_programado_garmin(client, fecha):
+    """Trae lo que GARMIN CONNECT tiene programado en SU calendario para un
+    día puntual (get_scheduled_workouts) -- a diferencia de
+    entrenamiento_plan (nuestro plan interno de 14 semanas), esto es lo
+    que se carga directamente en Garmin Connect, y en la práctica es la
+    fuente real de "qué toca hoy" (bug encontrado: entrenamiento_plan
+    estaba vacío/desactualizado para la semana en curso, y sin datos
+    reales la IA terminó inventando una sesión de running que no
+    existía). Misma lógica de parseo que /api/training/calendario.
+    Devuelve una lista de dicts (puede haber más de una sesión el mismo
+    día) -- [] si no hay nada programado ahí o falló la consulta."""
+    anio, mes = int(fecha[:4]), int(fecha[5:7])
+    try:
+        data = client.get_scheduled_workouts(anio, mes)
+    except Exception as e:
+        logging.info(f"Workout programado Garmin no disponible para {fecha}: {e}")
+        return []
+    items = data if isinstance(data, list) else ((data or {}).get("calendarItems") or (data or {}).get("items") or [])
+    resultado = []
+    for item in items:
+        f = item.get("date") or item.get("calendarDate") or item.get("scheduledDate") or ""
+        if f[:10] != fecha:
+            continue
+        nombre = item.get("workoutName") or item.get("title") or item.get("name") or item.get("eventName") or "Entrenamiento"
+        tipo = item.get("sportType") or item.get("sport") or item.get("activityType") or ""
+        if isinstance(tipo, dict):
+            tipo = tipo.get("typeKey") or tipo.get("key") or ""
+        duracion = item.get("estimatedDurationInSecs") or item.get("duration")
+        resultado.append({"nombre": nombre, "tipo": str(tipo).lower(), "duracion_seg": duracion})
+    return resultado
+
+
 def _armar_prompt_matutino(fecha_ayer, fecha_hoy, dia_ayer, dia_hoy, peso_row,
                             actividades_ayer, actividades_semana, wellness_ayer, wellness_hoy,
-                            sesiones_hoy, carga):
+                            workout_hoy_garmin, sesiones_hoy_plan, carga):
     """Fase 11: cambió el enfoque de 'analizar hoy a la noche' a 'analizar
     ayer + la semana + recomendar para hoy, listo a la mañana' -- correr a
     la noche no tenía sentido para el sueño (la noche todavía no pasó) ni
@@ -391,26 +423,46 @@ def _armar_prompt_matutino(fecha_ayer, fecha_hoy, dia_ayer, dia_hoy, peso_row,
 
     if carga:
         partes.append(
-            f"\nPLAN SEMANAL: semana {carga['semana_num']}{' (DESCARGA)' if carga['es_descarga'] else ''}, "
-            f"objetivo: {carga.get('objetivo','')}. Completadas {carga['completadas']}/{carga['planificadas']} "
-            f"sesiones planificadas esta semana.")
+            f"\nPLAN SEMANAL (periodización interna): semana {carga['semana_num']}"
+            f"{' (DESCARGA)' if carga['es_descarga'] else ''}, objetivo: {carga.get('objetivo','')}. "
+            f"Completadas {carga['completadas']}/{carga['planificadas']} sesiones planificadas esta semana.")
 
-    if sesiones_hoy:
-        partes.append(f"\nPLANIFICADO PARA HOY ({dia_hoy} {fecha_hoy}):")
-        for s in sesiones_hoy:
+    # "Planificado para hoy" tiene DOS fuentes posibles: el calendario real
+    # de Garmin Connect (workout_hoy_garmin -- lo que efectivamente carga
+    # el usuario/coach ahí, la fuente más confiable en la práctica) y
+    # nuestro plan interno de 14 semanas (sesiones_hoy_plan). Se muestran
+    # ambas si existen; si ninguna tiene nada, se dice explícitamente para
+    # que la IA no tenga que inventar una sesión (bug real encontrado en
+    # Fase 11: sin datos, la IA describió una sesión de running con
+    # estructura y duración específicas que no existía en ningún lado).
+    hay_algo_hoy = bool(workout_hoy_garmin) or bool(sesiones_hoy_plan)
+    if workout_hoy_garmin:
+        partes.append(f"\nPROGRAMADO HOY EN GARMIN CONNECT ({dia_hoy} {fecha_hoy}) -- esta es la fuente real:")
+        for w in workout_hoy_garmin:
+            dur_min = round((w.get("duracion_seg") or 0) / 60) if w.get("duracion_seg") else None
+            partes.append(f"- {w.get('nombre','')} ({w.get('tipo','')})" + (f", {dur_min} min estimados" if dur_min else ""))
+    if sesiones_hoy_plan:
+        partes.append(f"\nADEMÁS, EN EL PLAN INTERNO DE 14 SEMANAS PARA HOY:")
+        for s in sesiones_hoy_plan:
             partes.append(f"- {s.get('turno','')}: {s.get('descripcion','')}" +
                           (f" ({s['notas']})" if s.get("notas") else ""))
-    else:
-        partes.append(f"\nPLANIFICADO PARA HOY ({dia_hoy} {fecha_hoy}): nada cargado en el plan para este día.")
+    if not hay_algo_hoy:
+        partes.append(
+            f"\nPROGRAMADO PARA HOY ({dia_hoy} {fecha_hoy}): NO hay ninguna sesión cargada, ni en Garmin "
+            f"Connect ni en el plan interno. No hay ninguna sesión real que analizar hoy.")
 
     partes.append(
         "\nDame TRES cosas, cada una en su propio párrafo corto:\n"
         "1) Análisis del entrenamiento y la recuperación de AYER.\n"
         "2) Análisis de cómo viene la ÚLTIMA SEMANA (volumen, consistencia, señales de sobrecarga o buen progreso).\n"
-        "3) Recomendaciones CONCRETAS para lo planificado HOY -- si conviene hacerlo tal cual está planificado, "
-        "ajustar intensidad/volumen, o priorizar descanso, en base a todo lo anterior. Si no hay nada planificado "
-        "para hoy, decilo y opiná igual si conviene entrenar algo o descansar.\n"
-        "No inventes datos que no te di. Si falta información para opinar sobre algo, decilo en vez de asumir.")
+        "3) Sobre HOY: tu trabajo es EVALUAR la sesión que ya está programada (arriba), no proponer una "
+        "sesión distinta. Confirmá si conviene hacerla tal cual está, o avisá si ayer/la semana muestran una "
+        "señal de riesgo concreta (mala recuperación, sobrecarga, síntomas) que justifique ajustar intensidad, "
+        "volumen, o directamente descansar en su lugar. Si NO hay ninguna sesión programada hoy (ver arriba), "
+        "decilo explícitamente -- NO describas ni evalúes una sesión específica que no te di, como mucho opiná "
+        "en términos generales si conviene entrenar algo liviano o descansar, sin inventar tipo/duración/estructura.\n"
+        "No inventes datos que no te di -- ni sesiones, ni duraciones, ni estructuras de entrenamiento. "
+        "Si falta información para opinar sobre algo, decilo en vez de asumir.")
     return "\n".join(partes)
 
 
@@ -524,11 +576,18 @@ def _analisis_matutino_diario():
                                 peso_row["nota"] = fila_ayer["nota"]
 
                         carga = _carga_semana_actual()
-                        sesiones_hoy = _sesiones_planificadas_dia(carga["semana_num"], dia_hoy) if carga else []
+                        sesiones_hoy_plan = _sesiones_planificadas_dia(carga["semana_num"], dia_hoy) if carga else []
+                        workout_hoy_garmin = []
+                        if client:
+                            try:
+                                workout_hoy_garmin = _workout_programado_garmin(client, hoy)
+                            except Exception as e:
+                                logging.info(f"Análisis diario: no se pudo traer el calendario de Garmin ({e}).")
 
                         prompt = _armar_prompt_matutino(ayer, hoy, dia_ayer, dia_hoy, peso_row,
                                                          actividades_ayer, actividades_semana,
-                                                         wellness_ayer, wellness_hoy, sesiones_hoy, carga)
+                                                         wellness_ayer, wellness_hoy,
+                                                         workout_hoy_garmin, sesiones_hoy_plan, carga)
                         try:
                             respuesta = _llamar_ia_haiku(prompt, api_key)
                             guardar_analisis({"tipo": "diario", "fecha_desde": ayer, "fecha_hasta": hoy,
@@ -908,8 +967,9 @@ def api_training_calendario():
         return jsonify({"ok": False, "error": "Credenciales Garmin no configuradas"})
 
     try:
+        os.makedirs(GARMIN_TOKENSTORE, exist_ok=True)
         client = Garmin(g_user, g_pass)
-        client.login()
+        client.login(tokenstore=GARMIN_TOKENSTORE)
     except Exception as e:
         return jsonify({"ok": False, "error": f"Login Garmin: {e}"})
 
