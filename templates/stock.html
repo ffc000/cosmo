@@ -220,9 +220,14 @@ overlay.addEventListener('click', () => {
 
 // ── Fecha por defecto: ayer ──
 (function() {
+  // toISOString() convierte a UTC -- en Argentina (UTC-3), de noche eso
+  // puede correr la fecha un día (ej. 21:00 ART = 00:00 UTC del día
+  // siguiente), haciendo que "ayer" termine mostrando "hoy". Se arma la
+  // fecha a mano con los componentes locales, sin pasar por UTC.
   const d = new Date();
   d.setDate(d.getDate() - 1);
-  document.getElementById('fecha_max').value = d.toISOString().slice(0, 10);
+  const yyyy = d.getFullYear(), mm = String(d.getMonth()+1).padStart(2,'0'), dd = String(d.getDate()).padStart(2,'0');
+  document.getElementById('fecha_max').value = `${yyyy}-${mm}-${dd}`;
 })();
 
 // ── Upload zones ──

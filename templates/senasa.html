@@ -507,7 +507,7 @@ async function generarInformeSenasa() {
     statusTxt.textContent = '✓ Descargando...';
     const a = document.createElement('a');
     a.href = `/api/senasa/informe/download/${jobId}`;
-    a.download = `Informe_SENASA_${new Date().toISOString().slice(0,10)}.docx`;
+    a.download = `Informe_SENASA_${(()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')})()}.docx`;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     statusTxt.textContent = '✓ Informe generado correctamente';
     setTimeout(() => { statusDiv.style.display = 'none'; }, 3000);
@@ -547,11 +547,7 @@ async function cargarCronologia() {
   });
 }
 
-function esc(s) {
-  return String(s ?? '')
-    .replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,' ')
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
+function esc(s) { return (s||'').replace(/'/g,"\\'").replace(/\n/g,' '); }
 
 function abrirModalCrono() {
   document.getElementById('crono-edit-id').value = '';
