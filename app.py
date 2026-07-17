@@ -1255,7 +1255,7 @@ def upload_db():
 def import_sql():
     if "file" not in request.files: return jsonify({"ok":False,"error":"No se recibió archivo"})
     f = request.files["file"]
-    if not f.filename.endswith(".sql"): return jsonify({"ok":False,"error":"El archivo debe ser .sql"})
+    if not f.filename.lower().endswith(".sql"): return jsonify({"ok":False,"error":"El archivo debe ser .sql"})
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     tmp_sql = "/tmp/import_cosmo.sql"
     f.save(tmp_sql)
@@ -1307,7 +1307,7 @@ def import_sql_agregar():
     tabla) o usar 'Importar SQL' si se quiere reemplazar todo."""
     if "file" not in request.files: return jsonify({"ok":False,"error":"No se recibió archivo"})
     f = request.files["file"]
-    if not f.filename.endswith(".sql"): return jsonify({"ok":False,"error":"El archivo debe ser .sql"})
+    if not f.filename.lower().endswith(".sql"): return jsonify({"ok":False,"error":"El archivo debe ser .sql"})
 
     contenido = f.read().decode("utf-8", errors="replace")
 
