@@ -575,9 +575,9 @@ function uploadXHR(fId,url,pId,bId,wId,mId){
   document.getElementById(pId).textContent='Subiendo... 0%';
   document.getElementById(bId).style.width='0%';
   showMsg(mId,'','');
-  xhr.timeout = 600000; // 10 min -- generoso a propósito (un .sql de un año entero puede tardar), pero si ni con eso responde, al menos avisa en vez de quedar colgado sin feedback
+  xhr.timeout = 3600000; // 60 min -- alineado con el timeout del backend (subprocess de sqlite3 en app.py), para que el navegador no avise "colgado" mientras el import sigue corriendo de verdad en el servidor
   xhr.addEventListener('timeout',()=>{
-    showMsg(mId,'✗ El servidor no respondió en 10 minutos. Puede que el archivo sea muy grande, o que se haya colgado de verdad -- revisá el estado de la base antes de reintentar (por si ya se procesó parcialmente).','err');
+    showMsg(mId,'✗ El servidor no respondió en 60 minutos. Puede que el archivo sea muy grande, o que se haya colgado de verdad -- revisá el estado de la base antes de reintentar (por si ya se procesó parcialmente).','err');
   });
   xhr.upload.addEventListener('progress',e=>{
     if(e.lengthComputable){
