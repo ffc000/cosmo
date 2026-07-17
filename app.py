@@ -1247,6 +1247,46 @@ def upload_db():
         logging.warning(f"No se pudo registrar metadata tras subir pad.db: {e}")
     return jsonify({"ok":True,"size_gb":size_gb})
 
+def _correr_sqlite_import(db_path, tmp_sql_path, timeout=3600):
+    """Corre un .sql contra db_path via el binario sqlite3, anteponiendo
+    PRAGMA synchronous=OFF / journal_mode=MEMORY antes del contenido del
+    archivo.
+
+    Por qué: los .sql grandes (ej. un DAT_YYYY de un año entero) suelen venir
+    envueltos en una única transacción (BEGIN...COMMIT). Con la config por
+    default de SQLite, cada escritura a disco espera un fsync -- para un
+    dump de cientos de miles de filas eso puede tardar mucho más que los
+    minutos que uno esperaría. synchronous=OFF/journal_mode=MEMORY evitan
+    ese fsync por escritura (journal en RAM en vez de disco) y suelen bajar
+    el tiempo de import de decenas de minutos a segundos/pocos minutos.
+
+    Se usa Popen (no subprocess.run con stdin=archivo) para poder escribir
+    primero las líneas de PRAGMA y recién después volcar el archivo, sin
+    tener que leer el .sql completo a memoria para concatenarlo (importante
+    para archivos de varios GB).
+
+    Devuelve (returncode, stderr). Si el proceso no termina dentro de
+    `timeout` segundos, se lo mata y se relanza subprocess.TimeoutExpired
+    (igual que hacía subprocess.run antes), para que el caller lo siga
+    capturando como ya lo hacía."""
+    proc = subprocess.Popen(
+        ["sqlite3", db_path],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        proc.stdin.write("PRAGMA synchronous=OFF;\nPRAGMA journal_mode=MEMORY;\n")
+        with open(tmp_sql_path, "r", encoding="utf-8", errors="replace") as fh:
+            shutil.copyfileobj(fh, proc.stdin)
+        proc.stdin.close()
+        _stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
+        raise
+    return proc.returncode, stderr
+
+
 # ── Import SQL ─────────────────────────────────────────────────────────────────
 @app.route("/api/import-sql", methods=["POST"])
 @login_required
@@ -1261,12 +1301,10 @@ def import_sql():
     f.save(tmp_sql)
     try:
         if os.path.exists(DB_PATH): os.remove(DB_PATH)
-        result = subprocess.run(["sqlite3", DB_PATH],
-            stdin=open(tmp_sql,"r",encoding="utf-8",errors="replace"),
-            capture_output=True, text=True, timeout=1800)
+        returncode, stderr = _correr_sqlite_import(DB_PATH, tmp_sql, timeout=3600)
         os.remove(tmp_sql)
-        if result.returncode != 0 and result.stderr:
-            return jsonify({"ok":False,"error":result.stderr[:500]})
+        if returncode != 0 and stderr:
+            return jsonify({"ok":False,"error":stderr[:500]})
         size = round(os.path.getsize(DB_PATH)/(1024**3),2)
         logging.info(f"SQL IMPORT | user={session.get('username')} | size={size}GB")
         notificar_telegram(f"📦 BD reimportada desde .sql por {session.get('username')} ({size} GB)")
@@ -1335,12 +1373,10 @@ def import_sql_agregar():
     with open(tmp_sql, "w", encoding="utf-8") as fh:
         fh.write(contenido)
     try:
-        result = subprocess.run(["sqlite3", DB_PATH],
-            stdin=open(tmp_sql, "r", encoding="utf-8", errors="replace"),
-            capture_output=True, text=True, timeout=1800)
+        returncode, stderr = _correr_sqlite_import(DB_PATH, tmp_sql, timeout=3600)
         os.remove(tmp_sql)
-        if result.returncode != 0 and result.stderr:
-            return jsonify({"ok": False, "error": result.stderr[:500]})
+        if returncode != 0 and stderr:
+            return jsonify({"ok": False, "error": stderr[:500]})
         size = round(os.path.getsize(DB_PATH)/(1024**3), 2)
         logging.info(f"SQL IMPORT (agregar) | user={session.get('username')} | "
                      f"tablas={sorted(tablas_en_sql)} | size={size}GB")
