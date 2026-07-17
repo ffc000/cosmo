@@ -1288,6 +1288,19 @@ def _correr_sqlite_import(db_path, tmp_sql_path, timeout=3600):
 
 
 # ── Import SQL ─────────────────────────────────────────────────────────────────
+@app.route("/api/ping", methods=["POST"])
+@login_required
+def api_ping():
+    """Endpoint sin efecto propio -- su única función es que login_required
+    renueve session['last_active'] y Flask reenvíe la cookie de sesión con
+    un Max-Age fresco. Lo llama el frontend cada pocos minutos mientras hay
+    un upload largo en curso (import-sql, subir pad.db) para que la sesión
+    de 10 min no venza a mitad de un import que tarda más que eso -- antes
+    de esto, un import de 15-20 min terminaba con 'token de seguridad
+    vencido' aunque el usuario estuviera activo esperando el resultado."""
+    return jsonify({"ok": True})
+
+
 @app.route("/api/import-sql", methods=["POST"])
 @login_required
 @admin_required("bd")
