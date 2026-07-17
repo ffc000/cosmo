@@ -110,6 +110,11 @@ _threading.Thread(target=_chequear_recordatorio_servicios, daemon=True).start()
 BACKUP_DIR = "/data/backups"
 os.makedirs(BACKUP_DIR, exist_ok=True)
 BACKUP_FUENTES = {"pad": lambda: DB_PATH, "historial": lambda: HIST_DB}
+# Carpeta de .sql encolados por /api/import-sql-agregar, procesados por
+# procesar_imports_pendientes.py (cron) -- ver ese script y el docstring de
+# import_sql_agregar() para el porqué de encolar en vez de importar directo
+# durante la request HTTP.
+PENDING_IMPORTS_DIR = os.path.join(os.path.dirname(DB_PATH), "pending_imports")
 
 def _ejecutar_backup(origen="manual"):
     import shutil, json as _json
@@ -1343,28 +1348,56 @@ def import_sql():
 @app.route("/api/import-sql-agregar", methods=["POST"])
 @login_required
 @admin_required("bd")
-@limiter.limit("5 per hour", error_message="Demasiados intentos de importar SQL.")
+@limiter.limit("20 per hour", error_message="Demasiados intentos de importar SQL.")
 def import_sql_agregar():
     """Como import_sql(), pero SIN borrar la base existente primero -- corre
     el .sql tal cual contra la base actual, para poder sumar una tabla
-    nueva (ej. DAT_2025) sin perder lo que ya hay (ej. DAT_2026). A pedido
-    (13/07/2026): 'Importar SQL' reemplaza TODA la base, y hacía falta una
-    forma de agregar sin destruir lo existente.
+    nueva (ej. DAT_2025) sin perder lo que ya hay (ej. DAT_2026).
+
+    A diferencia de antes, esta ruta ya NO corre el import de una: solo
+    valida (formato, colisión de tablas) y ENCOLA el archivo en
+    PENDING_IMPORTS_DIR -- responde en segundos. El import real lo hace
+    procesar_imports_pendientes.py por cron, fuera del ciclo request/
+    response HTTP. Se decidió así (17/07/2026) después de pegarle a la
+    misma familia de problema una y otra vez con el enfoque síncrono: el
+    navegador se rendía a los 10 min, la sesión/CSRF vencía a mitad de
+    camino, gunicorn mataba el worker a los 30 min, y finalmente el propio
+    proceso reventaba con MemoryError en el droplet de 1GB. Sacar el import
+    del HTTP evita las cuatro cosas de una: no hay navegador ni sesión de
+    por medio mientras corre, y corriendo desde un script aparte se puede
+    tunear memoria/tiempo sin las limitaciones de una request web.
 
     Protección: si el .sql intenta crear o borrar una tabla que YA existe
-    en la base, se bloquea antes de correr nada -- para no pisar datos por
-    accidente sin que el usuario se entere. Si de verdad se quiere
-    reemplazar una tabla puntual, primero hay que borrarla a mano (Limpiar
-    tabla) o usar 'Importar SQL' si se quiere reemplazar todo."""
+    en la base (al momento de encolar), se bloquea antes de encolar nada --
+    para no pisar datos por accidente sin que el usuario se entere. El
+    cron vuelve a chequear la colisión al momento de procesar (por si algo
+    cambió en la base entre que se encoló y que se procesó), así que igual
+    queda cubierto ese caso límite. Si de verdad se quiere reemplazar una
+    tabla puntual, primero hay que borrarla a mano (Limpiar tabla) o usar
+    'Importar SQL' si se quiere reemplazar todo."""
     if "file" not in request.files: return jsonify({"ok":False,"error":"No se recibió archivo"})
     f = request.files["file"]
     if not f.filename.lower().endswith(".sql"): return jsonify({"ok":False,"error":"El archivo debe ser .sql"})
 
-    contenido = f.read().decode("utf-8", errors="replace")
+    os.makedirs(PENDING_IMPORTS_DIR, exist_ok=True)
+    job_id = uuid.uuid4().hex
+    tmp_sql = os.path.join(PENDING_IMPORTS_DIR, f"{job_id}.sql")
+    # f.save() copia a disco en streaming (sin cargar el archivo entero en
+    # RAM) -- importante en el droplet de 1GB, ver MemoryError de antes.
+    f.save(tmp_sql)
 
-    tablas_en_sql = set(re.findall(r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["\']?(\w+)["\']?', contenido, re.I))
-    tablas_en_sql |= set(re.findall(r'DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?["\']?(\w+)["\']?', contenido, re.I))
+    tablas_en_sql = set()
+    _CREATE_RE = re.compile(r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["\']?(\w+)["\']?', re.I)
+    _DROP_RE = re.compile(r'DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?["\']?(\w+)["\']?', re.I)
+    with open(tmp_sql, "r", encoding="utf-8", errors="replace") as fh:
+        for linea in fh:
+            for m in _CREATE_RE.finditer(linea):
+                tablas_en_sql.add(m.group(1))
+            for m in _DROP_RE.finditer(linea):
+                tablas_en_sql.add(m.group(1))
+
     if not tablas_en_sql:
+        os.remove(tmp_sql)
         return jsonify({"ok": False, "error": "No se encontró ningún CREATE TABLE en el archivo."})
 
     tablas_existentes = set()
@@ -1374,46 +1407,55 @@ def import_sql_agregar():
                 tablas_existentes = {r[0] for r in con.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
         except Exception as e:
-            # Típicamente "database is locked" (un import anterior quedó a
-            # mitad de camino y dejó un -journal/-wal residual) o "file is
-            # not a database" (la BD quedó corrupta por un import cortado
-            # a la fuerza). En ambos casos hace falta revisar el archivo a
-            # mano en el servidor antes de reintentar -- no tiene sentido
-            # seguir con el import si ni siquiera se puede leer la base.
+            os.remove(tmp_sql)
             return jsonify({"ok": False, "error":
-                f"No se pudo leer la base actual antes de importar ({e}). Si un import anterior "
+                f"No se pudo leer la base actual antes de encolar ({e}). Si un import anterior "
                 f"quedó a mitad de camino puede haber dejado un archivo -journal o -wal residual "
                 f"junto a {DB_PATH} -- revisalo en el servidor antes de reintentar."})
 
     colision = tablas_en_sql & tablas_existentes
     if colision:
+        os.remove(tmp_sql)
         return jsonify({"ok": False, "error":
             f"El .sql crea o borra la(s) tabla(s) {', '.join(sorted(colision))}, que ya existen en la base. "
             f"Para no pisar datos por accidente, este modo no lo permite. Si realmente querés reemplazar "
             f"esa tabla puntual, borrala primero desde 'Limpiar tabla'; si querés reemplazar TODA la base, "
             f"usá 'Importar SQL'."})
 
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    tmp_sql = "/tmp/import_cosmo_agregar.sql"
-    with open(tmp_sql, "w", encoding="utf-8") as fh:
-        fh.write(contenido)
-    try:
-        returncode, stderr = _correr_sqlite_import(DB_PATH, tmp_sql, timeout=3600)
-        os.remove(tmp_sql)
-        if returncode != 0 and stderr:
-            return jsonify({"ok": False, "error": stderr[:500]})
-        size = round(os.path.getsize(DB_PATH)/(1024**3), 2)
-        logging.info(f"SQL IMPORT (agregar) | user={session.get('username')} | "
-                     f"tablas={sorted(tablas_en_sql)} | size={size}GB")
-        notificar_telegram(f"📦 Tabla(s) {', '.join(sorted(tablas_en_sql))} agregada(s) a la BD "
-                           f"por {session.get('username')} ({size} GB)")
-        for t in sorted(tablas_en_sql):
-            _registrar_modificacion_tabla(t, session.get("username", "?"), "importar_sql_agregar")
-        return jsonify({"ok": True, "size_gb": size, "tablas": sorted(tablas_en_sql)})
-    except subprocess.TimeoutExpired:
-        return jsonify({"ok": False, "error": "Timeout — archivo muy grande."})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)})
+    meta = {"tablas": sorted(tablas_en_sql), "usuario": session.get("username", "?"),
+            "encolado": datetime.now().isoformat()}
+    with open(os.path.join(PENDING_IMPORTS_DIR, f"{job_id}.json"), "w", encoding="utf-8") as fh:
+        json.dump(meta, fh)
+
+    logging.info(f"SQL IMPORT (agregar) ENCOLADO | user={session.get('username')} | "
+                 f"job={job_id} | tablas={sorted(tablas_en_sql)}")
+    return jsonify({"ok": True, "queued": True, "job_id": job_id, "tablas": sorted(tablas_en_sql)})
+
+
+@app.route("/api/import-sql-agregar/estado")
+@login_required
+@admin_required("bd")
+def import_sql_agregar_estado():
+    """Poll del frontend mientras el cron procesa el job encolado en
+    import_sql_agregar(). Devuelve listo=False mientras el .sql sigue
+    esperando/procesándose; listo=True (con ok/error/tablas/size_gb) una
+    vez que procesar_imports_pendientes.py terminó y escribió el
+    .result.json. El .result.json se borra apenas se consulta una vez --
+    es un mensaje de "resultado pendiente de mostrar", no un historial."""
+    job_id = request.args.get("job_id", "")
+    if not re.match(r'^[0-9a-f]{32}$', job_id):
+        return jsonify({"ok": False, "error": "job_id inválido"})
+    result_path = os.path.join(PENDING_IMPORTS_DIR, f"{job_id}.result.json")
+    if os.path.exists(result_path):
+        with open(result_path, encoding="utf-8") as fh:
+            resultado = json.load(fh)
+        os.remove(result_path)
+        resultado["listo"] = True
+        return jsonify(resultado)
+    if os.path.exists(os.path.join(PENDING_IMPORTS_DIR, f"{job_id}.sql")):
+        return jsonify({"ok": True, "listo": False})
+    return jsonify({"ok": False, "error": "No se encontró ese job (¿ya se consultó el resultado antes?)."})
+
 
 
 @app.route("/api/limpiar-tabla", methods=["POST"])
