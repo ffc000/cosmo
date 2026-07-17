@@ -21,7 +21,8 @@ from flask import request, jsonify, render_template, session
 
 from core import HIST_DB, login_required, modulo_required, get_db, notificar_telegram
 from blueprints.training import (training_bp, _api_key, get_credenciales_garmin,
-    _conectar_garmin, _sincronizar_wellness_dia, guardar_analisis, get_actividades)
+    _conectar_garmin, _sincronizar_wellness_dia, _sincronizar_actividades_dia,
+    _obtener_peso_garmin, guardar_analisis, get_actividades)
 
 # ── BD ────────────────────────────────────────────────────────────────────────
 def init_training_db():
@@ -385,11 +386,18 @@ def _llamar_ia_haiku(prompt, api_key):
 
 
 def _analisis_nocturno_diario():
-    """Cruza peso corporal (de hoy o el último cargado), entrenamientos del
-    día, wellness de Garmin (si el reloj lo reporta) y el estado del plan
-    semanal, y le pide a Claude un análisis + proyección corta. Corre una
-    vez por día, cerca de las 22hs (se chequea cada hora, dedup por fecha
-    vía garmin_config -- igual patrón que el resto de las alertas)."""
+    """Cruza peso corporal (de Garmin -- hoy si hay, si no el último
+    registrado), entrenamientos del día, wellness de Garmin (si el reloj
+    lo reporta) y el estado del plan semanal, y le pide a Claude un
+    análisis + proyección corta. Corre una vez por día, cerca de las 22hs
+    (se chequea cada hora, dedup por fecha vía garmin_config -- igual
+    patrón que el resto de las alertas).
+
+    Antes de armar el análisis, sincroniza los entrenamientos del día
+    (_sincronizar_actividades_dia) -- si no, el análisis se quedaría sin
+    ver la sesión de hoy en caso de que no se haya sincronizado a mano
+    todavía. Una sola conexión a Garmin para todo el job (sync actividades
+    + wellness + peso), no una por cada cosa."""
     while True:
         try:
             ahora = datetime.now()
@@ -405,20 +413,62 @@ def _analisis_nocturno_diario():
                     if not api_key:
                         logging.warning("Análisis nocturno: sin API key configurada, se salta hoy.")
                     else:
-                        with get_db(HIST_DB, row_factory=True) as con:
-                            peso_row = con.execute(
-                                "SELECT * FROM entrenamiento_peso WHERE fecha <= ? ORDER BY fecha DESC LIMIT 1",
-                                (hoy,)).fetchone()
-                            peso_row = dict(peso_row) if peso_row else None
+                        client = None
+                        try:
+                            client = _conectar_garmin()
+                        except Exception as e:
+                            logging.info(f"Análisis nocturno: no se pudo conectar a Garmin ({e}); "
+                                         f"sigue con lo que ya haya en la base.")
+
+                        if client:
+                            try:
+                                nuevas = _sincronizar_actividades_dia(client, hoy)
+                                if nuevas:
+                                    logging.info(f"Análisis nocturno: sincronizadas {nuevas} actividad(es) nueva(s) de hoy.")
+                            except Exception:
+                                logging.exception("Análisis nocturno: fall\u00f3 el sync de actividades de hoy")
 
                         actividades_hoy = [a for a in get_actividades(limit=20) if (a.get("fecha") or "").startswith(hoy)]
 
                         wellness = None
-                        try:
-                            client = _conectar_garmin()
-                            wellness = _sincronizar_wellness_dia(client, hoy)
-                        except Exception as e:
-                            logging.info(f"Análisis nocturno: wellness no disponible hoy ({e}).")
+                        if client:
+                            try:
+                                wellness = _sincronizar_wellness_dia(client, hoy)
+                            except Exception as e:
+                                logging.info(f"Análisis nocturno: wellness no disponible hoy ({e}).")
+
+                        # Peso: de Garmin (hoy, o el último registrado ahí);
+                        # si Garmin no devuelve nada (sin conexión o sin
+                        # datos en 60 días), se cae a lo último que haya en
+                        # nuestra base como último recurso.
+                        peso_row = None
+                        if client:
+                            try:
+                                fecha_peso, peso_kg, _raw = _obtener_peso_garmin(client, hoy)
+                                if peso_kg:
+                                    with get_db(HIST_DB) as con:
+                                        con.execute("""
+                                            INSERT INTO entrenamiento_peso (fecha, peso_kg) VALUES (?,?)
+                                            ON CONFLICT(fecha) DO UPDATE SET peso_kg=excluded.peso_kg
+                                        """, (fecha_peso, peso_kg))
+                                    peso_row = {"fecha": fecha_peso, "peso_kg": peso_kg, "sensacion": None, "nota": ""}
+                            except Exception as e:
+                                logging.info(f"Análisis nocturno: peso de Garmin no disponible hoy ({e}).")
+                        if not peso_row:
+                            with get_db(HIST_DB, row_factory=True) as con:
+                                fila = con.execute(
+                                    "SELECT * FROM entrenamiento_peso WHERE fecha <= ? AND peso_kg IS NOT NULL "
+                                    "ORDER BY fecha DESC LIMIT 1", (hoy,)).fetchone()
+                                peso_row = dict(fila) if fila else None
+                        # sensación/nota de hoy (carga manual) se suman al peso
+                        # aunque el peso en sí haya venido de Garmin -- son
+                        # cosas independientes, ver api_training_peso_guardar.
+                        with get_db(HIST_DB, row_factory=True) as con:
+                            fila_hoy = con.execute(
+                                "SELECT sensacion, nota FROM entrenamiento_peso WHERE fecha=?", (hoy,)).fetchone()
+                            if fila_hoy and peso_row:
+                                peso_row["sensacion"] = fila_hoy["sensacion"]
+                                peso_row["nota"] = fila_hoy["nota"]
 
                         carga = _carga_semana_actual()
 

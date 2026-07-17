@@ -253,6 +253,101 @@ def _conectar_garmin():
     return client
 
 
+def _sincronizar_actividades_dia(client, fecha):
+    """Versión liviana de _sync_worker, sin tracking de progreso para UI --
+    paso previo del análisis nocturno (Fase 10): trae y guarda las
+    actividades de UN día puntual, para asegurarse de que estén en la base
+    antes de armar el análisis (si no se sincronizó a mano ese día, el
+    análisis se quedaría sin ver los entrenamientos de hoy). Sí descarga
+    el .fit de cada actividad nueva, igual que el sync completo -- si no,
+    guardada sin archivo acá, el sync completo la saltearía después (ya
+    existe) y el .fit nunca se bajaría. Devuelve la cantidad de nuevas."""
+    nuevas = 0
+    try:
+        actividades = client.get_activities_by_date(fecha, fecha)
+    except Exception as e:
+        logging.info(f"Sync nocturno: no se pudieron traer actividades de {fecha}: {e}")
+        return 0
+
+    for act in actividades or []:
+        act_id = str(act.get("activityId", ""))
+        if not act_id:
+            continue
+        with get_db(HIST_DB) as con:
+            existe = con.execute("SELECT 1 FROM garmin_actividades WHERE id=?", (act_id,)).fetchone()
+        if existe:
+            continue
+        datos = _parsear_actividad(act)
+        try:
+            mes_dir = os.path.join(GARMIN_DIR, datos["fecha"][:7] if datos["fecha"] else "unknown")
+            os.makedirs(mes_dir, exist_ok=True)
+            fit_path = os.path.join(mes_dir, f"{act_id}.fit")
+            fit_data = client.download_activity(int(act_id), dl_fmt=client.ActivityDownloadFormat.ORIGINAL)
+            with open(fit_path, "wb") as f:
+                f.write(fit_data)
+            datos["archivo_path"] = fit_path
+        except Exception as e:
+            logging.info(f"Sync nocturno: no se pudo bajar el .fit de {act_id}: {e}")
+        guardar_actividad(datos)
+        nuevas += 1
+    return nuevas
+
+
+def _extraer_peso_de_respuesta(resp):
+    """Busca un valor de peso (Garmin lo reporta en gramos) en distintas
+    formas posibles de respuesta -- no se pudo confirmar contra una cuenta
+    real qué shape exacto devuelve get_daily_weigh_ins/get_weigh_ins, así
+    que se prueban varias rutas conocidas de la comunidad en vez de asumir
+    una sola. Devuelve (fecha_iso_o_None, peso_kg_o_None)."""
+    if not resp:
+        return None, None
+    if isinstance(resp, dict):
+        resumenes = resp.get("dailyWeightSummaries")
+        if resumenes:
+            for r in sorted(resumenes, key=lambda x: x.get("summaryDate", ""), reverse=True):
+                for m in (r.get("allWeightMetrics") or []):
+                    if m.get("weight"):
+                        return r.get("summaryDate"), round(m["weight"] / 1000, 1)
+        ta = resp.get("totalAverage")
+        if ta and ta.get("weight"):
+            return resp.get("endDate"), round(ta["weight"] / 1000, 1)
+    if isinstance(resp, list):
+        validos = [m for m in resp if isinstance(m, dict) and m.get("weight")]
+        if validos:
+            ultimo = sorted(validos, key=lambda m: m.get("date") or m.get("calendarDate") or "", reverse=True)[0]
+            fecha = ultimo.get("date") or ultimo.get("calendarDate")
+            return fecha, round(ultimo["weight"] / 1000, 1)
+    return None, None
+
+
+def _obtener_peso_garmin(client, fecha, dias_atras=60):
+    """Peso corporal desde Garmin (no manual -- se carga en Garmin Connect,
+    acá solo se lee) (Fase 10). Primero intenta el día pedido; si no hay
+    carga ese día, busca hacia atrás hasta encontrar el último peso
+    registrado (hasta dias_atras). Devuelve (fecha_del_peso, peso_kg,
+    raw) -- fecha_del_peso puede ser distinta a `fecha` si tuvo que ir
+    para atrás. (None, None, raw) si no encontró nada en todo el rango."""
+    raw = {}
+    try:
+        raw["dia"] = client.get_daily_weigh_ins(fecha)
+        f, kg = _extraer_peso_de_respuesta(raw["dia"])
+        if kg:
+            return fecha, kg, raw
+    except Exception as e:
+        logging.info(f"Peso Garmin (día puntual) no disponible para {fecha}: {e}")
+
+    try:
+        desde = (datetime.strptime(fecha, "%Y-%m-%d").date() - timedelta(days=dias_atras)).isoformat()
+        raw["rango"] = client.get_weigh_ins(desde, fecha)
+        f, kg = _extraer_peso_de_respuesta(raw["rango"])
+        if kg:
+            return f, kg, raw
+    except Exception as e:
+        logging.info(f"Peso Garmin (rango {dias_atras}d) no disponible para {fecha}: {e}")
+
+    return None, None, raw
+
+
 def _sincronizar_wellness_dia(client, fecha):
     """Trae Body Battery/sueño/estrés/HRV/FC en reposo de un día desde
     Garmin y los guarda (Fase 10). Defensivo a propósito: cada endpoint en
@@ -330,19 +425,22 @@ def _sincronizar_wellness_dia(client, fecha):
 @login_required
 @modulo_required("training")
 def api_garmin_wellness_probar():
-    """Sincroniza wellness de una fecha (hoy por default) y devuelve tanto
-    los campos extraídos como el JSON crudo completo -- para poder ver de
-    entrada qué trae realmente tu cuenta/reloj. No se pudo probar en
-    desarrollo sin credenciales reales de Garmin (Fase 10)."""
+    """Sincroniza wellness + peso de una fecha (hoy por default) y devuelve
+    tanto los campos extraídos como el JSON crudo completo -- para poder
+    ver de entrada qué trae realmente tu cuenta/reloj. No se pudo probar
+    en desarrollo sin credenciales reales de Garmin (Fase 10)."""
     data = request.json or {}
     fecha = data.get("fecha") or date.today().isoformat()
     try:
         client = _conectar_garmin()
         resultado = _sincronizar_wellness_dia(client, fecha)
+        fecha_peso, peso_kg, raw_peso = _obtener_peso_garmin(client, fecha)
         with get_db(HIST_DB, row_factory=True) as con:
             row = con.execute("SELECT raw_json FROM garmin_wellness WHERE fecha=?", (fecha,)).fetchone()
         return jsonify({"ok": True, "extraido": resultado,
-                         "raw": json.loads(row["raw_json"]) if row else {}})
+                         "peso": {"fecha": fecha_peso, "peso_kg": peso_kg},
+                         "raw": json.loads(row["raw_json"]) if row else {},
+                         "raw_peso": raw_peso})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
 
@@ -351,10 +449,12 @@ def api_garmin_wellness_probar():
 @login_required
 @modulo_required("training")
 def api_training_peso_guardar():
-    """Carga manual de peso corporal + \"cómo te sentiste\" del día (1-5).
-    Garmin no expone estado de ánimo en su API, por eso es manual -- ver
-    wellness (Body Battery/sueño/estrés/HRV) para las señales objetivas
-    que sí vienen de Garmin."""
+    """Carga manual de \"cómo te sentiste\" del día (1-5) + nota. El peso
+    corporal NO se carga acá -- se toma de Garmin automáticamente (se
+    carga en Garmin Connect, ver _obtener_peso_garmin) en el análisis
+    nocturno. peso_kg sigue existiendo como parámetro opcional para poder
+    corregir/completar a mano un valor puntual si hiciera falta, pero el
+    formulario de la pantalla no lo pide."""
     data = request.json or {}
     fecha = data.get("fecha") or date.today().isoformat()
     peso_kg = data.get("peso_kg")
@@ -370,7 +470,8 @@ def api_training_peso_guardar():
     with get_db(HIST_DB) as con:
         con.execute("""
             INSERT INTO entrenamiento_peso (fecha, peso_kg, sensacion, nota) VALUES (?,?,?,?)
-            ON CONFLICT(fecha) DO UPDATE SET peso_kg=excluded.peso_kg,
+            ON CONFLICT(fecha) DO UPDATE SET
+                peso_kg=COALESCE(excluded.peso_kg, entrenamiento_peso.peso_kg),
                 sensacion=excluded.sensacion, nota=excluded.nota
         """, (fecha, peso_kg, sensacion, nota))
     return jsonify({"ok": True})
