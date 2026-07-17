@@ -519,6 +519,7 @@ function setupZone(zId,iId,fId){
 }
 ['dat','rech','sql','db'].forEach(x=>setupZone(`zone-${x}`,`file-${x}`,`fname-${x}`));
 setupZone('zone-rech-sql','file-rech-sql','fname-rech-sql');
+setupZone('zone-agregar-sql','file-agregar-sql','fname-agregar-sql');
 
 function uploadTXT(fId,tabla,mId,lId,bId,anio,modo){
   const file=document.getElementById(fId).files[0];if(!file){showMsg(mId,"Seleccioná un archivo primero.","warn");return}
