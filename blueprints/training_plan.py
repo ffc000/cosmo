@@ -317,52 +317,77 @@ def _chequear_carga_semanal():
 threading.Thread(target=_chequear_carga_semanal, daemon=True).start()
 
 
-# ── Análisis nocturno con IA (Fase 10) ────────────────────────────────────────
-def _armar_prompt_diario(fecha, peso_row, actividades_hoy, wellness, carga):
-    partes = [f"Analizá el día {fecha} de un atleta que entrena para Hyrox, con estos datos:\n"]
+# ── Análisis matutino con IA (Fase 10/11) ─────────────────────────────────────
+def _sesiones_planificadas_dia(semana_num, dia_nombre):
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = con.execute(
+            "SELECT * FROM entrenamiento_plan WHERE semana_num=? AND dia_semana=? ORDER BY turno",
+            (semana_num, dia_nombre)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _armar_prompt_matutino(fecha_ayer, fecha_hoy, dia_ayer, dia_hoy, peso_row,
+                            actividades_ayer, actividades_semana, wellness_ayer, wellness_hoy,
+                            sesiones_hoy, carga):
+    """Fase 11: cambió el enfoque de 'analizar hoy a la noche' a 'analizar
+    ayer + la semana + recomendar para hoy, listo a la mañana' -- correr a
+    la noche no tenía sentido para el sueño (la noche todavía no pasó) ni
+    para dar una recomendación accionable (el día ya se estaba yendo).
+    Wellness se pide de DOS fechas: ayer (para Body Battery/estrés/pasos
+    del día completo de ayer, que a la mañana siguiente ya está cerrado) y
+    hoy (para el sueño, que Garmin asocia a la fecha en la que te
+    despertaste -- la noche de ayer a hoy)."""
+    partes = [f"Son las primeras horas de la mañana del {dia_hoy} {fecha_hoy}. "
+              f"Analizá el día de ayer ({dia_ayer} {fecha_ayer}), la última semana, y dame "
+              f"recomendaciones para hoy, de un atleta que entrena para Hyrox, con estos datos:\n"]
 
     if peso_row:
-        if peso_row["fecha"] == fecha:
+        if peso_row["fecha"] == fecha_hoy:
             origen = "cargado hoy"
         else:
-            origen = f"último registrado, del {peso_row['fecha']} -- no se cargó peso hoy"
+            origen = f"último registrado, del {peso_row['fecha']}"
         partes.append(f"PESO CORPORAL: {peso_row['peso_kg']} kg ({origen}).")
         if peso_row.get("sensacion"):
-            partes.append(f"Cómo se sintió ese día (1=mal, 5=muy bien): {peso_row['sensacion']}/5.")
+            partes.append(f"Cómo se sintió ayer (1=mal, 5=muy bien): {peso_row['sensacion']}/5.")
         if peso_row.get("nota"):
-            partes.append(f"Nota: {peso_row['nota']}")
+            partes.append(f"Nota de ayer: {peso_row['nota']}")
     else:
         partes.append("PESO CORPORAL: sin registros todavía.")
 
-    if actividades_hoy:
-        partes.append(f"\nENTRENAMIENTOS DE HOY ({len(actividades_hoy)}):")
-        for a in actividades_hoy:
+    if actividades_ayer:
+        partes.append(f"\nENTRENAMIENTOS DE AYER ({dia_ayer} {fecha_ayer}) -- {len(actividades_ayer)}:")
+        for a in actividades_ayer:
             dur_min = round((a.get("duracion_seg") or 0) / 60)
             partes.append(
                 f"- {a.get('nombre','')} ({a.get('tipo','')}), {dur_min} min, "
                 f"FC media {a.get('fc_media') or '—'}, {a.get('calorias') or '—'} kcal."
                 + (f" Nota real: {a['nota_real']}" if a.get("nota_real") else ""))
     else:
-        partes.append("\nENTRENAMIENTOS DE HOY: ninguno registrado (día de descanso o sin sincronizar).")
+        partes.append(f"\nENTRENAMIENTOS DE AYER ({dia_ayer} {fecha_ayer}): ninguno registrado (descanso o sin sincronizar).")
 
-    if wellness:
+    if wellness_ayer:
         partes.append(
-            f"\nWELLNESS DE HOY (Garmin): Body Battery {wellness.get('body_battery_min','—')}-"
-            f"{wellness.get('body_battery_max','—')}, sueño {round((wellness.get('sleep_seg') or 0)/3600,1)}h "
-            f"(score {wellness.get('sleep_score','—')}), estrés medio {wellness.get('stress_avg','—')}, "
-            f"HRV {wellness.get('hrv_avg_ms','—')}ms ({wellness.get('hrv_status','—')}), "
-            f"FC en reposo {wellness.get('resting_hr','—')}.")
-        # Estos 4 importan sobre todo en días SIN entrenamiento estructurado
-        # -- un "día de descanso" puede tener mucho o poco movimiento igual
-        # (caminatas, mandados, etc.), y eso es información real: no es lo
-        # mismo un descanso sedentario que uno con actividad general alta.
+            f"\nACTIVIDAD Y RECUPERACIÓN DE AYER (Garmin, día completo): "
+            f"Body Battery {wellness_ayer.get('body_battery_min','—')}-{wellness_ayer.get('body_battery_max','—')}, "
+            f"estrés medio {wellness_ayer.get('stress_avg','—')}, FC en reposo {wellness_ayer.get('resting_hr','—')}, "
+            f"{wellness_ayer.get('total_steps','—')} pasos, {wellness_ayer.get('active_kcal','—')} kcal activas, "
+            f"{wellness_ayer.get('moderate_min','—')} min moderada + {wellness_ayer.get('vigorous_min','—')} min vigorosa.")
+    if wellness_hoy and wellness_hoy.get("sleep_seg"):
         partes.append(
-            f"Actividad general del día (más allá de sesiones estructuradas): "
-            f"{wellness.get('total_steps','—')} pasos, {wellness.get('active_kcal','—')} kcal activas, "
-            f"{wellness.get('moderate_min','—')} min de intensidad moderada, "
-            f"{wellness.get('vigorous_min','—')} min de intensidad vigorosa.")
+            f"SUEÑO (noche de ayer a hoy): {round((wellness_hoy.get('sleep_seg') or 0)/3600,1)}h, "
+            f"score {wellness_hoy.get('sleep_score','—')}, HRV {wellness_hoy.get('hrv_avg_ms','—')}ms "
+            f"({wellness_hoy.get('hrv_status','—')}).")
+    if not wellness_ayer and not (wellness_hoy and wellness_hoy.get("sleep_seg")):
+        partes.append("\nWELLNESS: no disponible (el reloj no lo reporta, o no se pudo sincronizar).")
+
+    if actividades_semana:
+        dias_con_sesion = len({(a.get("fecha") or "")[:10] for a in actividades_semana})
+        partes.append(f"\nÚLTIMA SEMANA (últimos 7 días): {len(actividades_semana)} sesión(es) en {dias_con_sesion} día(s) distintos.")
+        for a in actividades_semana:
+            dur_min = round((a.get("duracion_seg") or 0) / 60)
+            partes.append(f"- {(a.get('fecha') or '')[:10]}: {a.get('nombre','')} ({a.get('tipo','')}), {dur_min} min")
     else:
-        partes.append("\nWELLNESS DE HOY: no disponible (el reloj no lo reporta, o no se pudo sincronizar).")
+        partes.append("\nÚLTIMA SEMANA: sin entrenamientos registrados en los últimos 7 días.")
 
     if carga:
         partes.append(
@@ -370,18 +395,21 @@ def _armar_prompt_diario(fecha, peso_row, actividades_hoy, wellness, carga):
             f"objetivo: {carga.get('objetivo','')}. Completadas {carga['completadas']}/{carga['planificadas']} "
             f"sesiones planificadas esta semana.")
 
-    if not actividades_hoy:
-        partes.append(
-            "\nHoy no hay entrenamiento estructurado registrado. Con los datos de wellness y actividad general "
-            "de arriba, opiná si el descanso parece justificado (ej. Body Battery bajo, mal sueño, HRV en baja, "
-            "poca actividad general que sugiere que el cuerpo lo necesitaba) o si los indicadores estaban bien y "
-            "el descanso fue por otro motivo (agenda, etc., algo que no podés saber vos). No asumas el motivo si "
-            "los datos no lo sugieren con claridad.")
+    if sesiones_hoy:
+        partes.append(f"\nPLANIFICADO PARA HOY ({dia_hoy} {fecha_hoy}):")
+        for s in sesiones_hoy:
+            partes.append(f"- {s.get('turno','')}: {s.get('descripcion','')}" +
+                          (f" ({s['notas']})" if s.get("notas") else ""))
+    else:
+        partes.append(f"\nPLANIFICADO PARA HOY ({dia_hoy} {fecha_hoy}): nada cargado en el plan para este día.")
 
     partes.append(
-        "\nHacé un análisis breve (4-6 líneas) de cómo viene el día de hoy en el contexto de la semana, "
-        "y una proyección corta: si sigue así, ¿cómo llega a fin de semana/al objetivo Hyrox? Señalá si ves "
-        "alguna señal de alarma (sobrecarga, mala recuperación, peso con tendencia rara) o si viene bien. "
+        "\nDame TRES cosas, cada una en su propio párrafo corto:\n"
+        "1) Análisis del entrenamiento y la recuperación de AYER.\n"
+        "2) Análisis de cómo viene la ÚLTIMA SEMANA (volumen, consistencia, señales de sobrecarga o buen progreso).\n"
+        "3) Recomendaciones CONCRETAS para lo planificado HOY -- si conviene hacerlo tal cual está planificado, "
+        "ajustar intensidad/volumen, o priorizar descanso, en base a todo lo anterior. Si no hay nada planificado "
+        "para hoy, decilo y opiná igual si conviene entrenar algo o descansar.\n"
         "No inventes datos que no te di. Si falta información para opinar sobre algo, decilo en vez de asumir.")
     return "\n".join(partes)
 
@@ -402,113 +430,124 @@ def _llamar_ia_haiku(prompt, api_key):
     return result["content"][0]["text"]
 
 
-def _analisis_nocturno_diario():
-    """Cruza peso corporal (de Garmin -- hoy si hay, si no el último
-    registrado), entrenamientos del día, wellness de Garmin (si el reloj
-    lo reporta) y el estado del plan semanal, y le pide a Claude un
-    análisis + proyección corta. Corre una vez por día, cerca de las 22hs
-    (se chequea cada hora, dedup por fecha vía garmin_config -- igual
-    patrón que el resto de las alertas).
+def _analisis_matutino_diario():
+    """Análisis diario con IA (Fase 11) -- corre a la madrugada (5hs, se
+    chequea cada hora, dedup por fecha vía garmin_config) para estar listo
+    cuando te despertás: analiza el entrenamiento y la recuperación de
+    AYER, cómo viene la ÚLTIMA SEMANA, y da recomendaciones para lo
+    planificado HOY. Antes corría a las 22hs analizando "hoy" -- eso no
+    tenía sentido para el sueño (la noche todavía no había pasado) ni para
+    dar una recomendación accionable (el día ya se estaba yendo).
 
-    Antes de armar el análisis, sincroniza los entrenamientos del día
-    (_sincronizar_actividades_dia) -- si no, el análisis se quedaría sin
-    ver la sesión de hoy en caso de que no se haya sincronizado a mano
-    todavía. Una sola conexión a Garmin para todo el job (sync actividades
-    + wellness + peso), no una por cada cosa."""
+    Sincroniza los entrenamientos de AYER antes de armar el análisis
+    (_sincronizar_actividades_dia) -- si una sesión de anoche no se
+    sincronizó todavía, esto la trae. Una sola conexión a Garmin para todo
+    el job (sync actividades + wellness + peso)."""
     while True:
         try:
             ahora = datetime.now()
             hoy = ahora.date().isoformat()
-            if ahora.hour == 22:
+            ayer_date = ahora.date() - timedelta(days=1)
+            ayer = ayer_date.isoformat()
+            dia_hoy = DIAS_ORDER[ahora.date().isoweekday() - 1]
+            dia_ayer = DIAS_ORDER[ayer_date.isoweekday() - 1]
+
+            if ahora.hour == 5:
                 with get_db(HIST_DB, row_factory=True) as con:
                     row = con.execute(
-                        "SELECT valor FROM garmin_config WHERE clave='ultimo_analisis_nocturno_fecha'").fetchone()
+                        "SELECT valor FROM garmin_config WHERE clave='ultimo_analisis_diario_fecha'").fetchone()
                     ya_corrio_hoy = row and row["valor"] == hoy
 
                 if not ya_corrio_hoy:
                     api_key = _api_key()
                     if not api_key:
-                        logging.warning("Análisis nocturno: sin API key configurada, se salta hoy.")
+                        logging.warning("Análisis diario: sin API key configurada, se salta hoy.")
                     else:
                         client = None
                         try:
                             client = _conectar_garmin()
                         except Exception as e:
-                            logging.info(f"Análisis nocturno: no se pudo conectar a Garmin ({e}); "
+                            logging.info(f"Análisis diario: no se pudo conectar a Garmin ({e}); "
                                          f"sigue con lo que ya haya en la base.")
 
                         if client:
                             try:
-                                nuevas = _sincronizar_actividades_dia(client, hoy)
+                                nuevas = _sincronizar_actividades_dia(client, ayer)
                                 if nuevas:
-                                    logging.info(f"Análisis nocturno: sincronizadas {nuevas} actividad(es) nueva(s) de hoy.")
+                                    logging.info(f"Análisis diario: sincronizadas {nuevas} actividad(es) de ayer.")
                             except Exception:
-                                logging.exception("Análisis nocturno: fall\u00f3 el sync de actividades de hoy")
+                                logging.exception("Análisis diario: fall\u00f3 el sync de actividades de ayer")
 
-                        actividades_hoy = [a for a in get_actividades(limit=20) if (a.get("fecha") or "").startswith(hoy)]
+                        actividades_ayer = [a for a in get_actividades(limit=20) if (a.get("fecha") or "").startswith(ayer)]
+                        desde_semana = (ayer_date - timedelta(days=6)).isoformat()
+                        actividades_semana = [a for a in get_actividades(limit=50) if (a.get("fecha") or "")[:10] >= desde_semana]
 
-                        wellness = None
+                        # Wellness de DOS fechas: ayer (Body Battery/estrés/pasos
+                        # del día completo, ya cerrado) y hoy (para el sueño --
+                        # Garmin lo asocia a la fecha en la que te despertaste).
+                        wellness_ayer = wellness_hoy = None
                         if client:
                             try:
-                                wellness = _sincronizar_wellness_dia(client, hoy)
+                                wellness_ayer = _sincronizar_wellness_dia(client, ayer)
                             except Exception as e:
-                                logging.info(f"Análisis nocturno: wellness no disponible hoy ({e}).")
+                                logging.info(f"Análisis diario: wellness de ayer no disponible ({e}).")
+                            try:
+                                wellness_hoy = _sincronizar_wellness_dia(client, hoy)
+                            except Exception as e:
+                                logging.info(f"Análisis diario: wellness de hoy (sueño) no disponible ({e}).")
 
-                        # Peso: de Garmin (hoy, o el último registrado ahí);
-                        # si Garmin no devuelve nada (sin conexión o sin
-                        # datos en 60 días), se cae a lo último que haya en
-                        # nuestra base como último recurso.
+                        # Peso: de Garmin (hoy si hay, si no el último
+                        # registrado ahí); si Garmin no devuelve nada, se cae
+                        # a lo último que haya en nuestra base.
                         peso_row = None
                         if client:
                             try:
                                 fecha_peso, peso_kg, _raw = _obtener_peso_garmin(client, hoy)
                                 if peso_kg:
-                                    with get_db(HIST_DB) as con:
-                                        con.execute("""
-                                            INSERT INTO entrenamiento_peso (fecha, peso_kg) VALUES (?,?)
-                                            ON CONFLICT(fecha) DO UPDATE SET peso_kg=excluded.peso_kg
-                                        """, (fecha_peso, peso_kg))
                                     peso_row = {"fecha": fecha_peso, "peso_kg": peso_kg, "sensacion": None, "nota": ""}
                             except Exception as e:
-                                logging.info(f"Análisis nocturno: peso de Garmin no disponible hoy ({e}).")
+                                logging.info(f"Análisis diario: peso de Garmin no disponible ({e}).")
                         if not peso_row:
                             with get_db(HIST_DB, row_factory=True) as con:
                                 fila = con.execute(
                                     "SELECT * FROM entrenamiento_peso WHERE fecha <= ? AND peso_kg IS NOT NULL "
                                     "ORDER BY fecha DESC LIMIT 1", (hoy,)).fetchone()
                                 peso_row = dict(fila) if fila else None
-                        # sensación/nota de hoy (carga manual) se suman al peso
-                        # aunque el peso en sí haya venido de Garmin -- son
-                        # cosas independientes, ver api_training_peso_guardar.
+                        # sensación/nota de AYER (carga manual) se suman al
+                        # peso -- son cosas independientes, ver
+                        # api_training_peso_guardar.
                         with get_db(HIST_DB, row_factory=True) as con:
-                            fila_hoy = con.execute(
-                                "SELECT sensacion, nota FROM entrenamiento_peso WHERE fecha=?", (hoy,)).fetchone()
-                            if fila_hoy and peso_row:
-                                peso_row["sensacion"] = fila_hoy["sensacion"]
-                                peso_row["nota"] = fila_hoy["nota"]
+                            fila_ayer = con.execute(
+                                "SELECT sensacion, nota FROM entrenamiento_peso WHERE fecha=?", (ayer,)).fetchone()
+                            if fila_ayer and peso_row:
+                                peso_row["sensacion"] = fila_ayer["sensacion"]
+                                peso_row["nota"] = fila_ayer["nota"]
 
                         carga = _carga_semana_actual()
+                        sesiones_hoy = _sesiones_planificadas_dia(carga["semana_num"], dia_hoy) if carga else []
 
-                        prompt = _armar_prompt_diario(hoy, peso_row, actividades_hoy, wellness, carga)
+                        prompt = _armar_prompt_matutino(ayer, hoy, dia_ayer, dia_hoy, peso_row,
+                                                         actividades_ayer, actividades_semana,
+                                                         wellness_ayer, wellness_hoy, sesiones_hoy, carga)
                         try:
                             respuesta = _llamar_ia_haiku(prompt, api_key)
-                            guardar_analisis({"tipo": "diario", "fecha_desde": hoy, "fecha_hasta": hoy,
+                            guardar_analisis({"tipo": "diario", "fecha_desde": ayer, "fecha_hasta": hoy,
                                                "prompt_usado": prompt, "respuesta": respuesta})
-                            notificar_telegram(f"🌙 Análisis del día ({hoy}):\n\n{respuesta[:3500]}")
+                            notificar_telegram(f"☀️ Análisis del día ({dia_ayer} {ayer} → hoy {dia_hoy}):\n\n{respuesta[:3500]}")
                         except Exception:
-                            logging.exception("Análisis nocturno: fall\u00f3 la llamada a la IA")
+                            logging.exception("Análisis diario: fall\u00f3 la llamada a la IA")
 
                         with get_db(HIST_DB) as con:
                             con.execute(
                                 "INSERT INTO garmin_config (clave,valor,modificado) VALUES "
-                                "('ultimo_analisis_nocturno_fecha',?,datetime('now')) "
+                                "('ultimo_analisis_diario_fecha',?,datetime('now')) "
                                 "ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor, modificado=excluded.modificado",
                                 (hoy,))
         except Exception:
-            logging.exception("Error en el análisis nocturno diario")
-        threading.Event().wait(3600)  # revisa cada hora, corre solo a las 22hs
+            logging.exception("Error en el análisis diario matutino")
+        threading.Event().wait(3600)  # revisa cada hora, corre solo a las 5hs
 
-threading.Thread(target=_analisis_nocturno_diario, daemon=True).start()
+threading.Thread(target=_analisis_matutino_diario, daemon=True).start()
 
 # ── Rutas ─────────────────────────────────────────────────────────────────────
 @training_bp.route("/training")

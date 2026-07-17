@@ -335,18 +335,35 @@ def _extraer_peso_de_respuesta(resp):
     return None, None
 
 
+def _persistir_peso(fecha, peso_kg):
+    """Guarda/actualiza SOLO peso_kg de una fecha, sin tocar sensación/nota
+    si ya había una carga manual ese día (son cosas independientes, ver
+    api_training_peso_guardar)."""
+    with get_db(HIST_DB) as con:
+        con.execute("""
+            INSERT INTO entrenamiento_peso (fecha, peso_kg) VALUES (?,?)
+            ON CONFLICT(fecha) DO UPDATE SET peso_kg=excluded.peso_kg
+        """, (fecha, peso_kg))
+
+
 def _obtener_peso_garmin(client, fecha, dias_atras=60):
     """Peso corporal desde Garmin (no manual -- se carga en Garmin Connect,
     acá solo se lee) (Fase 10). Primero intenta el día pedido; si no hay
     carga ese día, busca hacia atrás hasta encontrar el último peso
     registrado (hasta dias_atras). Devuelve (fecha_del_peso, peso_kg,
     raw) -- fecha_del_peso puede ser distinta a `fecha` si tuvo que ir
-    para atrás. (None, None, raw) si no encontró nada en todo el rango."""
+    para atrás. (None, None, raw) si no encontró nada en todo el rango.
+
+    Efecto secundario a propósito: si encuentra un peso, lo persiste en
+    entrenamiento_peso (antes esta función solo devolvía el valor sin
+    guardarlo -- "Probar sincronización" mostraba el peso pero nunca
+    quedaba en el historial, que solo se llenaba por el job nocturno)."""
     raw = {}
     try:
         raw["dia"] = client.get_daily_weigh_ins(fecha)
         f, kg = _extraer_peso_de_respuesta(raw["dia"])
         if kg:
+            _persistir_peso(fecha, kg)
             return fecha, kg, raw
     except Exception as e:
         logging.info(f"Peso Garmin (día puntual) no disponible para {fecha}: {e}")
@@ -356,11 +373,35 @@ def _obtener_peso_garmin(client, fecha, dias_atras=60):
         raw["rango"] = client.get_weigh_ins(desde, fecha)
         f, kg = _extraer_peso_de_respuesta(raw["rango"])
         if kg:
+            _persistir_peso(f, kg)
             return f, kg, raw
     except Exception as e:
         logging.info(f"Peso Garmin (rango {dias_atras}d) no disponible para {fecha}: {e}")
 
     return None, None, raw
+
+
+def _sincronizar_historial_peso(client, dias=90):
+    """Trae TODOS los pesajes de Garmin en los últimos `dias` días y los
+    guarda -- a diferencia de _obtener_peso_garmin (que solo se queda con
+    el más reciente encontrado), esto rellena el historial completo de
+    una sola vez. Pensado para un botón de \"sincronizar historial\" en la
+    pantalla, así no hay que esperar a que el job nocturno vaya
+    completando fecha por fecha. Devuelve la cantidad de registros
+    guardados."""
+    hasta = date.today().isoformat()
+    desde = (date.today() - timedelta(days=dias)).isoformat()
+    resp = client.get_weigh_ins(desde, hasta)
+    resumenes = (resp or {}).get("dailyWeightSummaries") or []
+    guardados = 0
+    for r in resumenes:
+        fecha_r = r.get("summaryDate")
+        for m in (r.get("allWeightMetrics") or []):
+            if m.get("weight") and fecha_r:
+                _persistir_peso(fecha_r, round(m["weight"] / 1000, 1))
+                guardados += 1
+                break  # un registro por día alcanza para el historial
+    return guardados
 
 
 def _sincronizar_wellness_dia(client, fecha):
@@ -516,6 +557,33 @@ def api_training_peso_list():
     with get_db(HIST_DB, row_factory=True) as con:
         rows = [dict(r) for r in con.execute(
             "SELECT * FROM entrenamiento_peso WHERE fecha >= ? ORDER BY fecha DESC", (desde,)).fetchall()]
+    return jsonify({"ok": True, "rows": rows})
+
+
+@training_bp.route("/api/training/peso/sincronizar", methods=["POST"])
+@login_required
+@modulo_required("training")
+def api_training_peso_sincronizar():
+    """Trae TODO el historial de pesajes de Garmin (90 días por default) y
+    lo guarda de una -- antes solo se completaba fecha por fecha, una vez
+    por noche, vía el job de análisis; con una cuenta que pesa cada tanto
+    (no todos los días) eso podía tardar semanas en mostrar algo en el
+    historial. Este botón lo llena de entrada."""
+    data = request.json or {}
+    dias = int(data.get("dias", 90))
+    try:
+        client = _conectar_garmin()
+        guardados = _sincronizar_historial_peso(client, dias)
+        return jsonify({"ok": True, "guardados": guardados})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
+@training_bp.route("/api/garmin/analisis/diario")
+@login_required
+@modulo_required("training")
+def api_analisis_diario_list():
+    rows = get_analisis(tipo="diario")
     return jsonify({"ok": True, "rows": rows})
 
 def set_credenciales_garmin(usuario: str, passwd: str):
