@@ -1493,6 +1493,89 @@ def import_sql_agregar_estado():
 
 
 
+_SQL_KEYWORDS_PROHIBIDAS = re.compile(
+    r'\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|REPLACE|ATTACH|DETACH|VACUUM|PRAGMA|TRIGGER)\b',
+    re.IGNORECASE
+)
+
+
+@app.route("/api/admin/sql-query", methods=["POST"])
+@login_required
+@admin_required("bd")
+@limiter.limit("30 per hour", error_message="Demasiadas consultas SQL en poco tiempo.")
+def api_admin_sql_query():
+    """Consola SQL de solo lectura para diagnósticos (ej. 'cuántos MIC no
+    matchean ningún país', 'hay duplicados en tal tabla') sin tener que
+    entrar por SSH a correr sqlite3 a mano en el servidor -- ver
+    conversación 17/07/2026, donde varios diagnósticos así requirieron ir
+    y volver por consola.
+
+    Solo permite SELECT/WITH (los CTEs siempre terminan en un SELECT) --
+    se bloquea cualquier palabra que pueda escribir o modificar el schema
+    (INSERT/UPDATE/DELETE/DROP/ALTER/CREATE/etc.), incluso dentro de un
+    CTE o subquery, buscando esas palabras en TODO el texto de la query,
+    no solo al principio. No es a prueba de balas contra alguien
+    deliberadamente adversarial (nadie debería tener este permiso si no
+    es de confianza), pero sí evita el típico error de tipeo que borra
+    algo por accidente.
+
+    Además de la whitelist de instrucciones:
+    - Se bloquean múltiples sentencias separadas por ';' (excepto un
+      ';' final opcional) -- para que no se cuele una segunda sentencia
+      después de una válida.
+    - Se corta a `limite` filas (default 500, máximo 2000) aunque la
+      query no tenga LIMIT -- para no tirar millones de filas al navegador
+      por error.
+    - No hay timeout de ejecución más allá del busy_timeout de SQLite --
+      una consulta cara (ej. sin índice, escaneando toda la tabla) puede
+      tardar varios segundos; es aceptable para un uso ocasional de
+      diagnóstico, no para un endpoint de uso frecuente."""
+    data = request.json or {}
+    query = (data.get("query") or "").strip()
+    base = data.get("base", "pad")  # "pad" (DB_PATH) o "historial" (HIST_DB)
+    limite = min(int(data.get("limite", 500) or 500), 2000)
+
+    if not query:
+        return jsonify({"ok": False, "error": "La consulta está vacía."})
+
+    # Múltiples sentencias: cortar un ';' final (típico al copiar/pegar),
+    # pero si queda OTRO ';' en el medio, hay más de una sentencia -- no.
+    query_sin_fin = query.rstrip().rstrip(";").rstrip()
+    if ";" in query_sin_fin:
+        return jsonify({"ok": False, "error":
+            "Solo se permite una sentencia por consulta (se encontró un ';' en el medio del texto)."})
+
+    if not re.match(r'^\s*(SELECT|WITH)\b', query_sin_fin, re.IGNORECASE):
+        return jsonify({"ok": False, "error":
+            "Solo se permiten consultas SELECT (o WITH ... SELECT). Esta consola es de solo lectura."})
+
+    if _SQL_KEYWORDS_PROHIBIDAS.search(query_sin_fin):
+        return jsonify({"ok": False, "error":
+            "La consulta contiene una palabra no permitida en esta consola de solo lectura "
+            "(INSERT/UPDATE/DELETE/DROP/ALTER/CREATE/etc.)."})
+
+    ruta_db = DB_PATH if base == "pad" else HIST_DB
+    if not os.path.exists(ruta_db):
+        return jsonify({"ok": False, "error": f"La base '{base}' no está cargada."})
+
+    try:
+        with get_db(ruta_db, timeout=30, row_factory=True) as con:
+            cur = con.cursor()
+            t0 = time.time()
+            cur.execute(query_sin_fin)
+            filas_raw = cur.fetchmany(limite + 1)
+            duracion = round(time.time() - t0, 2)
+            cols = [d[0] for d in cur.description] if cur.description else []
+            truncado = len(filas_raw) > limite
+            filas = [list(r) for r in filas_raw[:limite]]
+        logging.info(f"SQL ADMIN QUERY | user={session.get('username')} | base={base} | "
+                     f"{duracion}s | {len(filas)} filas | query={query_sin_fin[:200]!r}")
+        return jsonify({"ok": True, "cols": cols, "rows": filas, "truncado": truncado,
+                        "duracion_seg": duracion})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
 @app.route("/api/limpiar-tabla", methods=["POST"])
 @login_required
 @admin_required("bd")
