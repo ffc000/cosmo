@@ -45,12 +45,29 @@ if not _secret:
     raise RuntimeError("SECRET_KEY no está definida en las variables de entorno. "
                        "Exportá una clave aleatoria antes de iniciar la aplicación.")
 app.secret_key = _secret
-app.permanent_session_lifetime = timedelta(minutes=10)
+# OJO: esto NO es "cuánto dura la sesión antes de desloguear por inactividad"
+# -- eso ya lo hace login_required más abajo, comparando session['last_active']
+# contra 600s cada vez que entra una request. Esto es cuán vieja puede ser la
+# FIRMA de la cookie antes de que Flask directamente la descarte al abrirla
+# (SecureCookieSessionInterface.open_session usa este valor como max_age del
+# unsign). Con 10 minutos acá, una sola request larga (ej. importar un .sql
+# grande, que puede tardar bastante más que eso entre transferencia y
+# procesamiento) llegaba al servidor con una cookie que salió del navegador
+# ya "vencida" para cuando Flask la procesaba -- sin forma de renovarla a
+# mitad de camino, porque los headers (incluida la Cookie) se mandan una
+# sola vez al principio de la request, no se re-envían mientras dura el
+# upload. Resultado: "token de seguridad vencido" en requests que en
+# realidad eran de un usuario activo, no de una sesión abandonada.
+# Subir esto no afloja el logout por inactividad real (login_required sigue
+# cortando a los 10 min exactos de inactividad real); solo evita que una
+# request larga y legítima se corte a mitad de camino por la firma de la
+# cookie en sí.
+app.permanent_session_lifetime = timedelta(hours=2)
 app.config['MAX_CONTENT_LENGTH'] = None  # Sin límite en Flask — nginx maneja con client_max_body_size 2G
 app.config['SESSION_COOKIE_SECURE'] = True     # solo se envía por HTTPS
 app.config['SESSION_COOKIE_HTTPONLY'] = True   # no accesible desde JS
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # mitiga CSRF básico en navegación cruzada
-app.config['WTF_CSRF_TIME_LIMIT'] = None  # el timeout de sesión ya lo maneja login_required (10min)
+app.config['WTF_CSRF_TIME_LIMIT'] = None  # el logout real por inactividad (10min) lo hace login_required vía last_active, no esto
 
 @app.after_request
 def _security_headers(resp):
