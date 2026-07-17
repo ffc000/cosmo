@@ -624,7 +624,78 @@ function uploadXHR(fId,url,pId,bId,wId,mId){
   xhr.send(fd);
 }
 document.getElementById('btn-upload-sql').addEventListener('click',()=>uploadXHR('file-sql','/api/import-sql','pct-sql','bar-sql','progress-sql','msg-sql'));
-document.getElementById('btn-upload-agregar-sql').addEventListener('click',()=>uploadXHR('file-agregar-sql','/api/import-sql-agregar','pct-agregar-sql','bar-agregar-sql','progress-agregar-sql','msg-agregar-sql'));
+document.getElementById('btn-upload-agregar-sql').addEventListener('click',()=>encolarYSeguirAgregarSql());
+
+// ── "Agregar tabla (SQL)": ya no espera el import en la misma request --
+// sube el archivo (rápido, /api/import-sql-agregar solo valida y lo
+// encola), y a partir de ahí consulta /api/import-sql-agregar/estado cada
+// 15s hasta que el cron (procesar_imports_pendientes.py) lo procese.
+// Reemplaza al uso de uploadXHR para este botón puntual porque la
+// respuesta ya no es "listo al toque" sino "encolado, avisá cuando esté".
+function encolarYSeguirAgregarSql(){
+  const file=document.getElementById('file-agregar-sql').files[0];
+  if(!file){showMsg('msg-agregar-sql','Seleccioná un archivo.','warn');return}
+  const fd=new FormData();fd.append('file',file);
+  const xhr=new XMLHttpRequest();xhr.open('POST','/api/import-sql-agregar');
+  xhr.setRequestHeader('X-CSRFToken', document.querySelector('meta[name="csrf-token"]').content);
+  document.getElementById('progress-agregar-sql').style.display='block';
+  document.getElementById('pct-agregar-sql').textContent='Subiendo... 0%';
+  document.getElementById('bar-agregar-sql').style.width='0%';
+  showMsg('msg-agregar-sql','','');
+  xhr.timeout = 300000; // 5 min -- alcanza de sobra: esta request solo sube el archivo y lo encola, ya no corre el import
+  xhr.addEventListener('timeout',()=>{
+    showMsg('msg-agregar-sql','✗ No se pudo subir/encolar el archivo en 5 minutos. Reintentá.','err');
+  });
+  xhr.upload.addEventListener('progress',e=>{
+    if(e.lengthComputable){
+      const p=Math.round(e.loaded/e.total*100);
+      document.getElementById('pct-agregar-sql').textContent=`Subiendo... ${p}%`;
+      document.getElementById('bar-agregar-sql').style.width=p+'%';
+    }
+  });
+  xhr.addEventListener('load',()=>{
+    let r;
+    try { r=JSON.parse(xhr.responseText); }
+    catch(e) {
+      showMsg('msg-agregar-sql',`✗ El servidor respondió algo inesperado (status ${xhr.status}).`,'err');
+      return;
+    }
+    if(r.ok && r.queued){
+      document.getElementById('pct-agregar-sql').textContent='Encolado — esperando que el cron lo procese...';
+      showMsg('msg-agregar-sql',`⏳ Encolado — tabla(s): ${r.tablas.join(', ')}. Se procesa en el próximo minuto, esta pantalla se actualiza sola.`,'warn');
+      consultarEstadoAgregarSql(r.job_id);
+    } else {
+      showMsg('msg-agregar-sql','✗ '+r.error,'err');
+    }
+  });
+  xhr.addEventListener('error',()=>{
+    showMsg('msg-agregar-sql','✗ Error de red al subir el archivo. Reintentá.','err');
+  });
+  xhr.send(fd);
+}
+
+function consultarEstadoAgregarSql(jobId){
+  fetch(`/api/import-sql-agregar/estado?job_id=${jobId}`)
+    .then(r=>r.json())
+    .then(r=>{
+      if(!r.ok && !r.listo){
+        showMsg('msg-agregar-sql','✗ '+(r.error||'No se encontró el job.'),'err');
+        return;
+      }
+      if(!r.listo){
+        setTimeout(()=>consultarEstadoAgregarSql(jobId), 15000);
+        return;
+      }
+      if(r.ok){
+        document.getElementById('pct-agregar-sql').textContent='Completado';
+        showMsg('msg-agregar-sql',`✓ Completado (${r.size_gb} GB) — tabla(s): ${r.tablas.join(', ')}.`,'ok');
+        loadDbStatus();loadTablasDetalle();
+      } else {
+        showMsg('msg-agregar-sql','✗ '+r.error,'err');
+      }
+    })
+    .catch(()=>setTimeout(()=>consultarEstadoAgregarSql(jobId), 15000));
+}
 document.getElementById('btn-upload-db').addEventListener('click',()=>uploadXHR('file-db','/api/upload-db','pct-db','bar-db','progress-db','msg-db'));
 document.getElementById('btn-upload-rech-sql').addEventListener('click',()=>uploadXHR('file-rech-sql','/api/import-rechazos-sql','pct-rech-sql','bar-rech-sql','progress-rech-sql','msg-rech-sql'));
 function switchBdTab(t){
