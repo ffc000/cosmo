@@ -26,7 +26,7 @@ from datetime import datetime, date, timedelta
 
 from flask import Blueprint, request, jsonify, render_template, session, redirect, url_for, send_file
 
-from core import HIST_DB, login_required, modulo_required, limiter, app, get_db, notificar_telegram
+from core import HIST_DB, login_required, modulo_required, limiter, app, get_db
 import garmin_auth
 
 training_bp = Blueprint("training", __name__)
@@ -111,43 +111,37 @@ def init_garmin_db():
             respuesta     TEXT,
             creado        TEXT
         )""")
+        # Fase 10: peso corporal + wellness diario, para el análisis nocturno
+        # con IA (cruza peso, entrenamientos del día, wellness de Garmin si
+        # el reloj lo reporta, y el estado del plan semanal).
+        con.execute("""CREATE TABLE IF NOT EXISTS entrenamiento_peso (
+            fecha      TEXT PRIMARY KEY,
+            peso_kg    REAL,
+            sensacion  INTEGER,
+            nota       TEXT DEFAULT '',
+            creado     TEXT DEFAULT (datetime('now'))
+        )""")
+        # raw_json guarda la respuesta cruda completa de cada endpoint de
+        # Garmin, además de los campos que se extraen abajo -- no se probó
+        # contra una cuenta real en desarrollo (los nombres de campo de la
+        # API de Garmin no son públicos/estables), así que si algún nombre
+        # no coincide con lo que devuelve tu cuenta, el dato crudo sigue
+        # disponible para reprocesar sin tener que sincronizar de nuevo.
+        con.execute("""CREATE TABLE IF NOT EXISTS garmin_wellness (
+            fecha            TEXT PRIMARY KEY,
+            body_battery_max INTEGER,
+            body_battery_min INTEGER,
+            sleep_score      INTEGER,
+            sleep_seg        INTEGER,
+            stress_avg       INTEGER,
+            hrv_status       TEXT,
+            hrv_avg_ms       INTEGER,
+            resting_hr       INTEGER,
+            raw_json         TEXT,
+            sincronizado     TEXT DEFAULT (datetime('now'))
+        )""")
 
 init_garmin_db()
-
-# ── Alerta de sincronización atrasada (Fase 6: alertas proactivas) ───────────
-DIAS_SIN_SYNC_ALERTA = 3  # umbral fijo a propósito: no hay UI de config todavía
-
-def _chequear_sync_atrasado():
-    """Avisa por Telegram si pasaron DIAS_SIN_SYNC_ALERTA o más desde la
-    última actividad registrada. Un aviso por día como máximo (clave
-    'ultimo_aviso_sync_fecha' en garmin_config, mismo patrón que el
-    recordatorio de servicios de finanzas en app.py)."""
-    while True:
-        try:
-            hoy = date.today()
-            with get_db(HIST_DB, row_factory=True) as con:
-                ultima = con.execute(
-                    "SELECT MAX(fecha) as f FROM garmin_actividades").fetchone()
-                fecha_ultima = (ultima["f"] or "")[:10] if ultima else ""
-                if fecha_ultima:
-                    dias = (hoy - datetime.strptime(fecha_ultima, "%Y-%m-%d").date()).days
-                    if dias >= DIAS_SIN_SYNC_ALERTA:
-                        row = con.execute(
-                            "SELECT valor FROM garmin_config WHERE clave='ultimo_aviso_sync_fecha'").fetchone()
-                        if not (row and row["valor"] == hoy.isoformat()):
-                            notificar_telegram(
-                                f"🏃 Sin sincronizar Garmin hace {dias} día(s) "
-                                f"(última actividad: {fecha_ultima}).")
-                            con.execute(
-                                "INSERT INTO garmin_config (clave,valor,modificado) VALUES "
-                                "('ultimo_aviso_sync_fecha',?,datetime('now')) "
-                                "ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor, modificado=excluded.modificado",
-                                (hoy.isoformat(),))
-        except Exception:
-            logging.exception("Error en chequeo de sincronización Garmin atrasada")
-        threading.Event().wait(21600)  # revisa cada 6 horas — no necesita más frecuencia
-
-threading.Thread(target=_chequear_sync_atrasado, daemon=True).start()
 
 # ── Helpers BD ────────────────────────────────────────────────────────────────
 def get_actividades(limit=50, tipo=None, desde=None, hasta=None):
@@ -242,6 +236,156 @@ def get_credenciales_garmin():
     except garmin_auth.CredencialesNoDisponibles as e:
         logging.error(f"GARMIN CREDS | {e}")
         return "", ""
+
+
+def _conectar_garmin():
+    """Login a Garmin Connect, mismo patrón que usa el sync de actividades
+    (sincronizar_garmin) -- extraído acá para no duplicarlo en el sync de
+    wellness y en el job nocturno de análisis (training_plan.py)."""
+    from garminconnect import Garmin
+    g_user, g_pass = get_credenciales_garmin()
+    if not g_user: g_user = os.environ.get("GARMIN_USER", "")
+    if not g_pass: g_pass = os.environ.get("GARMIN_PASS", "")
+    if not g_user or not g_pass:
+        raise RuntimeError("Credenciales Garmin no configuradas.")
+    client = Garmin(g_user, g_pass)
+    client.login()
+    return client
+
+
+def _sincronizar_wellness_dia(client, fecha):
+    """Trae Body Battery/sueño/estrés/HRV/FC en reposo de un día desde
+    Garmin y los guarda (Fase 10). Defensivo a propósito: cada endpoint en
+    su propio try/except -- si el reloj no soporta uno, que no tire abajo
+    los demás -- y se guarda el JSON crudo completo en raw_json además de
+    los campos extraídos (ver nota en el CREATE TABLE de garmin_wellness:
+    no se pudo probar contra una cuenta real en desarrollo)."""
+    raw = {}
+    bb_max = bb_min = sleep_score = sleep_seg = stress_avg = hrv_avg = resting_hr = None
+    hrv_status = None
+
+    try:
+        bb = client.get_body_battery(fecha)
+        raw["body_battery"] = bb
+        if bb and isinstance(bb, list) and bb[0].get("bodyBatteryValuesArray"):
+            valores = [v[1] for v in bb[0]["bodyBatteryValuesArray"] if len(v) > 1 and v[1] is not None]
+            if valores:
+                bb_max, bb_min = max(valores), min(valores)
+    except Exception as e:
+        logging.info(f"Wellness Body Battery no disponible para {fecha}: {e}")
+
+    try:
+        sleep = client.get_sleep_data(fecha)
+        raw["sleep"] = sleep
+        dto = (sleep or {}).get("dailySleepDTO") or {}
+        sleep_seg = dto.get("sleepTimeSeconds")
+        scores = (sleep or {}).get("sleepScores") or {}
+        sleep_score = (scores.get("overall") or {}).get("value")
+    except Exception as e:
+        logging.info(f"Wellness sueño no disponible para {fecha}: {e}")
+
+    try:
+        stress = client.get_stress_data(fecha)
+        raw["stress"] = stress
+        stress_avg = (stress or {}).get("avgStressLevel")
+    except Exception as e:
+        logging.info(f"Wellness estrés no disponible para {fecha}: {e}")
+
+    try:
+        hrv = client.get_hrv_data(fecha)
+        raw["hrv"] = hrv
+        resumen = (hrv or {}).get("hrvSummary") or {}
+        hrv_avg = resumen.get("lastNightAvg")
+        hrv_status = resumen.get("status")
+    except Exception as e:
+        logging.info(f"Wellness HRV no disponible para {fecha}: {e}")
+
+    try:
+        stats = client.get_stats(fecha)
+        raw["stats"] = stats
+        resting_hr = (stats or {}).get("restingHeartRate")
+    except Exception as e:
+        logging.info(f"Wellness stats no disponible para {fecha}: {e}")
+
+    with get_db(HIST_DB) as con:
+        con.execute("""
+            INSERT INTO garmin_wellness (fecha, body_battery_max, body_battery_min, sleep_score,
+                sleep_seg, stress_avg, hrv_status, hrv_avg_ms, resting_hr, raw_json, sincronizado)
+            VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'))
+            ON CONFLICT(fecha) DO UPDATE SET
+                body_battery_max=excluded.body_battery_max, body_battery_min=excluded.body_battery_min,
+                sleep_score=excluded.sleep_score, sleep_seg=excluded.sleep_seg,
+                stress_avg=excluded.stress_avg, hrv_status=excluded.hrv_status,
+                hrv_avg_ms=excluded.hrv_avg_ms, resting_hr=excluded.resting_hr,
+                raw_json=excluded.raw_json, sincronizado=excluded.sincronizado
+        """, (fecha, bb_max, bb_min, sleep_score, sleep_seg, stress_avg, hrv_status,
+              hrv_avg, resting_hr, json.dumps(raw)))
+
+    return {"fecha": fecha, "body_battery_max": bb_max, "body_battery_min": bb_min,
+            "sleep_score": sleep_score, "sleep_seg": sleep_seg, "stress_avg": stress_avg,
+            "hrv_status": hrv_status, "hrv_avg_ms": hrv_avg, "resting_hr": resting_hr}
+
+
+@training_bp.route("/api/garmin/wellness/probar", methods=["POST"])
+@login_required
+@modulo_required("training")
+def api_garmin_wellness_probar():
+    """Sincroniza wellness de una fecha (hoy por default) y devuelve tanto
+    los campos extraídos como el JSON crudo completo -- para poder ver de
+    entrada qué trae realmente tu cuenta/reloj. No se pudo probar en
+    desarrollo sin credenciales reales de Garmin (Fase 10)."""
+    data = request.json or {}
+    fecha = data.get("fecha") or date.today().isoformat()
+    try:
+        client = _conectar_garmin()
+        resultado = _sincronizar_wellness_dia(client, fecha)
+        with get_db(HIST_DB, row_factory=True) as con:
+            row = con.execute("SELECT raw_json FROM garmin_wellness WHERE fecha=?", (fecha,)).fetchone()
+        return jsonify({"ok": True, "extraido": resultado,
+                         "raw": json.loads(row["raw_json"]) if row else {}})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
+@training_bp.route("/api/training/peso", methods=["POST"])
+@login_required
+@modulo_required("training")
+def api_training_peso_guardar():
+    """Carga manual de peso corporal + \"cómo te sentiste\" del día (1-5).
+    Garmin no expone estado de ánimo en su API, por eso es manual -- ver
+    wellness (Body Battery/sueño/estrés/HRV) para las señales objetivas
+    que sí vienen de Garmin."""
+    data = request.json or {}
+    fecha = data.get("fecha") or date.today().isoformat()
+    peso_kg = data.get("peso_kg")
+    sensacion = data.get("sensacion")
+    if sensacion is not None:
+        try:
+            sensacion = int(sensacion)
+            if not (1 <= sensacion <= 5):
+                return jsonify({"ok": False, "error": "sensación debe ser 1-5."}), 400
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "sensación inválida."}), 400
+    nota = (data.get("nota") or "").strip()
+    with get_db(HIST_DB) as con:
+        con.execute("""
+            INSERT INTO entrenamiento_peso (fecha, peso_kg, sensacion, nota) VALUES (?,?,?,?)
+            ON CONFLICT(fecha) DO UPDATE SET peso_kg=excluded.peso_kg,
+                sensacion=excluded.sensacion, nota=excluded.nota
+        """, (fecha, peso_kg, sensacion, nota))
+    return jsonify({"ok": True})
+
+
+@training_bp.route("/api/training/peso")
+@login_required
+@modulo_required("training")
+def api_training_peso_list():
+    dias = int(request.args.get("dias", 30))
+    desde = (date.today() - timedelta(days=dias)).isoformat()
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [dict(r) for r in con.execute(
+            "SELECT * FROM entrenamiento_peso WHERE fecha >= ? ORDER BY fecha DESC", (desde,)).fetchall()]
+    return jsonify({"ok": True, "rows": rows})
 
 def set_credenciales_garmin(usuario: str, passwd: str):
     garmin_auth.set_credenciales_garmin(HIST_DB, app.secret_key, usuario, passwd)

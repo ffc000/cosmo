@@ -20,7 +20,8 @@ from datetime import datetime, date, timedelta
 from flask import request, jsonify, render_template, session
 
 from core import HIST_DB, login_required, modulo_required, get_db, notificar_telegram
-from blueprints.training import training_bp, _api_key, get_credenciales_garmin
+from blueprints.training import (training_bp, _api_key, get_credenciales_garmin,
+    _conectar_garmin, _sincronizar_wellness_dia, guardar_analisis, get_actividades)
 
 # ── BD ────────────────────────────────────────────────────────────────────────
 def init_training_db():
@@ -313,6 +314,134 @@ def _chequear_carga_semanal():
         threading.Event().wait(21600)  # cada 6 horas
 
 threading.Thread(target=_chequear_carga_semanal, daemon=True).start()
+
+
+# ── Análisis nocturno con IA (Fase 10) ────────────────────────────────────────
+def _armar_prompt_diario(fecha, peso_row, actividades_hoy, wellness, carga):
+    partes = [f"Analizá el día {fecha} de un atleta que entrena para Hyrox, con estos datos:\n"]
+
+    if peso_row:
+        if peso_row["fecha"] == fecha:
+            origen = "cargado hoy"
+        else:
+            origen = f"último registrado, del {peso_row['fecha']} -- no se cargó peso hoy"
+        partes.append(f"PESO CORPORAL: {peso_row['peso_kg']} kg ({origen}).")
+        if peso_row.get("sensacion"):
+            partes.append(f"Cómo se sintió ese día (1=mal, 5=muy bien): {peso_row['sensacion']}/5.")
+        if peso_row.get("nota"):
+            partes.append(f"Nota: {peso_row['nota']}")
+    else:
+        partes.append("PESO CORPORAL: sin registros todavía.")
+
+    if actividades_hoy:
+        partes.append(f"\nENTRENAMIENTOS DE HOY ({len(actividades_hoy)}):")
+        for a in actividades_hoy:
+            dur_min = round((a.get("duracion_seg") or 0) / 60)
+            partes.append(
+                f"- {a.get('nombre','')} ({a.get('tipo','')}), {dur_min} min, "
+                f"FC media {a.get('fc_media') or '—'}, {a.get('calorias') or '—'} kcal."
+                + (f" Nota real: {a['nota_real']}" if a.get("nota_real") else ""))
+    else:
+        partes.append("\nENTRENAMIENTOS DE HOY: ninguno registrado (día de descanso o sin sincronizar).")
+
+    if wellness:
+        partes.append(
+            f"\nWELLNESS DE HOY (Garmin): Body Battery {wellness.get('body_battery_min','—')}-"
+            f"{wellness.get('body_battery_max','—')}, sueño {round((wellness.get('sleep_seg') or 0)/3600,1)}h "
+            f"(score {wellness.get('sleep_score','—')}), estrés medio {wellness.get('stress_avg','—')}, "
+            f"HRV {wellness.get('hrv_avg_ms','—')}ms ({wellness.get('hrv_status','—')}), "
+            f"FC en reposo {wellness.get('resting_hr','—')}.")
+    else:
+        partes.append("\nWELLNESS DE HOY: no disponible (el reloj no lo reporta, o no se pudo sincronizar).")
+
+    if carga:
+        partes.append(
+            f"\nPLAN SEMANAL: semana {carga['semana_num']}{' (DESCARGA)' if carga['es_descarga'] else ''}, "
+            f"objetivo: {carga.get('objetivo','')}. Completadas {carga['completadas']}/{carga['planificadas']} "
+            f"sesiones planificadas esta semana.")
+
+    partes.append(
+        "\nHacé un análisis breve (4-6 líneas) de cómo viene el día de hoy en el contexto de la semana, "
+        "y una proyección corta: si sigue así, ¿cómo llega a fin de semana/al objetivo Hyrox? Señalá si ves "
+        "alguna señal de alarma (sobrecarga, mala recuperación, peso con tendencia rara) o si viene bien. "
+        "No inventes datos que no te di. Si falta información para opinar sobre algo, decilo en vez de asumir.")
+    return "\n".join(partes)
+
+
+def _llamar_ia_haiku(prompt, api_key):
+    """Mismo patrón (urllib directo, sin SDK) que ya usa training.py para
+    analizarSesion/analizarProgresion -- se replica acá en vez de importar
+    esas funciones, que están atadas a devolver un jsonify de Flask."""
+    payload = json.dumps({
+        "model": "claude-haiku-4-5-20251001", "max_tokens": 1024,
+        "messages": [{"role": "user", "content": prompt}]
+    }).encode()
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages", data=payload,
+        headers={"Content-Type": "application/json", "x-api-key": api_key, "anthropic-version": "2023-06-01"})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        result = json.loads(resp.read())
+    return result["content"][0]["text"]
+
+
+def _analisis_nocturno_diario():
+    """Cruza peso corporal (de hoy o el último cargado), entrenamientos del
+    día, wellness de Garmin (si el reloj lo reporta) y el estado del plan
+    semanal, y le pide a Claude un análisis + proyección corta. Corre una
+    vez por día, cerca de las 22hs (se chequea cada hora, dedup por fecha
+    vía garmin_config -- igual patrón que el resto de las alertas)."""
+    while True:
+        try:
+            ahora = datetime.now()
+            hoy = ahora.date().isoformat()
+            if ahora.hour == 22:
+                with get_db(HIST_DB, row_factory=True) as con:
+                    row = con.execute(
+                        "SELECT valor FROM garmin_config WHERE clave='ultimo_analisis_nocturno_fecha'").fetchone()
+                    ya_corrio_hoy = row and row["valor"] == hoy
+
+                if not ya_corrio_hoy:
+                    api_key = _api_key()
+                    if not api_key:
+                        logging.warning("Análisis nocturno: sin API key configurada, se salta hoy.")
+                    else:
+                        with get_db(HIST_DB, row_factory=True) as con:
+                            peso_row = con.execute(
+                                "SELECT * FROM entrenamiento_peso WHERE fecha <= ? ORDER BY fecha DESC LIMIT 1",
+                                (hoy,)).fetchone()
+                            peso_row = dict(peso_row) if peso_row else None
+
+                        actividades_hoy = [a for a in get_actividades(limit=20) if (a.get("fecha") or "").startswith(hoy)]
+
+                        wellness = None
+                        try:
+                            client = _conectar_garmin()
+                            wellness = _sincronizar_wellness_dia(client, hoy)
+                        except Exception as e:
+                            logging.info(f"Análisis nocturno: wellness no disponible hoy ({e}).")
+
+                        carga = _carga_semana_actual()
+
+                        prompt = _armar_prompt_diario(hoy, peso_row, actividades_hoy, wellness, carga)
+                        try:
+                            respuesta = _llamar_ia_haiku(prompt, api_key)
+                            guardar_analisis({"tipo": "diario", "fecha_desde": hoy, "fecha_hasta": hoy,
+                                               "prompt_usado": prompt, "respuesta": respuesta})
+                            notificar_telegram(f"🌙 Análisis del día ({hoy}):\n\n{respuesta[:3500]}")
+                        except Exception:
+                            logging.exception("Análisis nocturno: fall\u00f3 la llamada a la IA")
+
+                        with get_db(HIST_DB) as con:
+                            con.execute(
+                                "INSERT INTO garmin_config (clave,valor,modificado) VALUES "
+                                "('ultimo_analisis_nocturno_fecha',?,datetime('now')) "
+                                "ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor, modificado=excluded.modificado",
+                                (hoy,))
+        except Exception:
+            logging.exception("Error en el análisis nocturno diario")
+        threading.Event().wait(3600)  # revisa cada hora, corre solo a las 22hs
+
+threading.Thread(target=_analisis_nocturno_diario, daemon=True).start()
 
 # ── Rutas ─────────────────────────────────────────────────────────────────────
 @training_bp.route("/training")
