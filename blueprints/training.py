@@ -137,9 +137,24 @@ def init_garmin_db():
             hrv_status       TEXT,
             hrv_avg_ms       INTEGER,
             resting_hr       INTEGER,
+            total_steps      INTEGER,
+            active_kcal      INTEGER,
+            moderate_min     INTEGER,
+            vigorous_min     INTEGER,
             raw_json         TEXT,
             sincronizado     TEXT DEFAULT (datetime('now'))
         )""")
+        # Columnas agregadas después de que la tabla ya existía (mismo caso
+        # que nota_real más arriba) -- se suman para poder evaluar días SIN
+        # entrenamiento estructurado: cuánto se movió igual la persona en
+        # el día (pasos, calorías activas, minutos de intensidad), en vez
+        # de mirar solo Body Battery/sueño/estrés/HRV.
+        for _col, _tipo in (("total_steps","INTEGER"), ("active_kcal","INTEGER"),
+                            ("moderate_min","INTEGER"), ("vigorous_min","INTEGER")):
+            try:
+                con.execute(f"ALTER TABLE garmin_wellness ADD COLUMN {_col} {_tipo}")
+            except Exception:
+                pass  # ya existe
 
 init_garmin_db()
 
@@ -349,15 +364,20 @@ def _obtener_peso_garmin(client, fecha, dias_atras=60):
 
 
 def _sincronizar_wellness_dia(client, fecha):
-    """Trae Body Battery/sueño/estrés/HRV/FC en reposo de un día desde
-    Garmin y los guarda (Fase 10). Defensivo a propósito: cada endpoint en
-    su propio try/except -- si el reloj no soporta uno, que no tire abajo
+    """Trae Body Battery/sueño/estrés/HRV/FC en reposo + actividad general
+    del día (pasos, calorías activas, minutos de intensidad) de Garmin y
+    los guarda (Fase 10). Estos últimos importan sobre todo en días SIN
+    entrenamiento estructurado -- un día "de descanso" puede tener mucho
+    o poco movimiento igual, y eso es información real para el análisis,
+    no solo "no entrenó". Defensivo a propósito: cada endpoint en su
+    propio try/except -- si el reloj no soporta uno, que no tire abajo
     los demás -- y se guarda el JSON crudo completo en raw_json además de
     los campos extraídos (ver nota en el CREATE TABLE de garmin_wellness:
     no se pudo probar contra una cuenta real en desarrollo)."""
     raw = {}
     bb_max = bb_min = sleep_score = sleep_seg = stress_avg = hrv_avg = resting_hr = None
     hrv_status = None
+    total_steps = active_kcal = moderate_min = vigorous_min = None
 
     try:
         bb = client.get_body_battery(fecha)
@@ -398,27 +418,37 @@ def _sincronizar_wellness_dia(client, fecha):
     try:
         stats = client.get_stats(fecha)
         raw["stats"] = stats
-        resting_hr = (stats or {}).get("restingHeartRate")
+        stats = stats or {}
+        resting_hr = stats.get("restingHeartRate")
+        total_steps = stats.get("totalSteps")
+        active_kcal = stats.get("activeKilocalories")
+        moderate_min = stats.get("moderateIntensityMinutes")
+        vigorous_min = stats.get("vigorousIntensityMinutes")
     except Exception as e:
         logging.info(f"Wellness stats no disponible para {fecha}: {e}")
 
     with get_db(HIST_DB) as con:
         con.execute("""
             INSERT INTO garmin_wellness (fecha, body_battery_max, body_battery_min, sleep_score,
-                sleep_seg, stress_avg, hrv_status, hrv_avg_ms, resting_hr, raw_json, sincronizado)
-            VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'))
+                sleep_seg, stress_avg, hrv_status, hrv_avg_ms, resting_hr,
+                total_steps, active_kcal, moderate_min, vigorous_min, raw_json, sincronizado)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
             ON CONFLICT(fecha) DO UPDATE SET
                 body_battery_max=excluded.body_battery_max, body_battery_min=excluded.body_battery_min,
                 sleep_score=excluded.sleep_score, sleep_seg=excluded.sleep_seg,
                 stress_avg=excluded.stress_avg, hrv_status=excluded.hrv_status,
                 hrv_avg_ms=excluded.hrv_avg_ms, resting_hr=excluded.resting_hr,
+                total_steps=excluded.total_steps, active_kcal=excluded.active_kcal,
+                moderate_min=excluded.moderate_min, vigorous_min=excluded.vigorous_min,
                 raw_json=excluded.raw_json, sincronizado=excluded.sincronizado
-        """, (fecha, bb_max, bb_min, sleep_score, sleep_seg, stress_avg, hrv_status,
-              hrv_avg, resting_hr, json.dumps(raw)))
+        """, (fecha, bb_max, bb_min, sleep_score, sleep_seg, stress_avg, hrv_status, hrv_avg, resting_hr,
+              total_steps, active_kcal, moderate_min, vigorous_min, json.dumps(raw)))
 
     return {"fecha": fecha, "body_battery_max": bb_max, "body_battery_min": bb_min,
             "sleep_score": sleep_score, "sleep_seg": sleep_seg, "stress_avg": stress_avg,
-            "hrv_status": hrv_status, "hrv_avg_ms": hrv_avg, "resting_hr": resting_hr}
+            "hrv_status": hrv_status, "hrv_avg_ms": hrv_avg, "resting_hr": resting_hr,
+            "total_steps": total_steps, "active_kcal": active_kcal,
+            "moderate_min": moderate_min, "vigorous_min": vigorous_min}
 
 
 @training_bp.route("/api/garmin/wellness/probar", methods=["POST"])

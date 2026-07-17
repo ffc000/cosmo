@@ -352,6 +352,15 @@ def _armar_prompt_diario(fecha, peso_row, actividades_hoy, wellness, carga):
             f"(score {wellness.get('sleep_score','—')}), estrés medio {wellness.get('stress_avg','—')}, "
             f"HRV {wellness.get('hrv_avg_ms','—')}ms ({wellness.get('hrv_status','—')}), "
             f"FC en reposo {wellness.get('resting_hr','—')}.")
+        # Estos 4 importan sobre todo en días SIN entrenamiento estructurado
+        # -- un "día de descanso" puede tener mucho o poco movimiento igual
+        # (caminatas, mandados, etc.), y eso es información real: no es lo
+        # mismo un descanso sedentario que uno con actividad general alta.
+        partes.append(
+            f"Actividad general del día (más allá de sesiones estructuradas): "
+            f"{wellness.get('total_steps','—')} pasos, {wellness.get('active_kcal','—')} kcal activas, "
+            f"{wellness.get('moderate_min','—')} min de intensidad moderada, "
+            f"{wellness.get('vigorous_min','—')} min de intensidad vigorosa.")
     else:
         partes.append("\nWELLNESS DE HOY: no disponible (el reloj no lo reporta, o no se pudo sincronizar).")
 
@@ -360,6 +369,14 @@ def _armar_prompt_diario(fecha, peso_row, actividades_hoy, wellness, carga):
             f"\nPLAN SEMANAL: semana {carga['semana_num']}{' (DESCARGA)' if carga['es_descarga'] else ''}, "
             f"objetivo: {carga.get('objetivo','')}. Completadas {carga['completadas']}/{carga['planificadas']} "
             f"sesiones planificadas esta semana.")
+
+    if not actividades_hoy:
+        partes.append(
+            "\nHoy no hay entrenamiento estructurado registrado. Con los datos de wellness y actividad general "
+            "de arriba, opiná si el descanso parece justificado (ej. Body Battery bajo, mal sueño, HRV en baja, "
+            "poca actividad general que sugiere que el cuerpo lo necesitaba) o si los indicadores estaban bien y "
+            "el descanso fue por otro motivo (agenda, etc., algo que no podés saber vos). No asumas el motivo si "
+            "los datos no lo sugieren con claridad.")
 
     partes.append(
         "\nHacé un análisis breve (4-6 líneas) de cómo viene el día de hoy en el contexto de la semana, "
