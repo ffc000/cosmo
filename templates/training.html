@@ -207,6 +207,7 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
       <div class="nav-item" id="nav-carga" onclick="switchModule('garmin','carga')"><span class="nav-icon">📊</span><span class="nav-label">Carga semanal</span></div>
       <div class="nav-item" id="nav-comparar" onclick="switchModule('garmin','comparar')"><span class="nav-icon">🔁</span><span class="nav-label">Comparar sesiones</span></div>
       <div class="nav-item" id="nav-progresion" onclick="switchModule('garmin','progresion')"><span class="nav-icon">🤖</span><span class="nav-label">Análisis IA</span></div>
+      <div class="nav-item" id="nav-bienestar" onclick="switchModule('garmin','bienestar')"><span class="nav-icon">⚖️</span><span class="nav-label">Peso y Bienestar</span></div>
       <div class="nav-item" id="nav-config" onclick="switchModule('garmin','config')"><span class="nav-icon">⚙️</span><span class="nav-label">Configuración</span></div>
       <div class="nav-section">Plan</div>
       <div class="nav-item" id="nav-plan" onclick="switchModule('training','plan')"><span class="nav-icon">📅</span><span class="nav-label">Plan semanal</span></div>
@@ -414,6 +415,54 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
         <div class="card">
           <div class="card-title">Análisis anteriores</div>
           <div id="lista-analisis-prog"><p style="color:var(--muted);font-size:.82rem">Sin análisis guardados.</p></div>
+        </div>
+      </div>
+
+      <!-- Panel: Peso y Bienestar -->
+      <div class="panel" id="panel-bienestar">
+        <div class="card">
+          <div class="card-title">Registrar hoy</div>
+          <p style="font-size:.78rem;color:var(--muted);margin-bottom:1rem">
+            Si no cargás peso un día, el análisis nocturno usa el último que hayas registrado — no hace falta
+            cargar todos los días. El estado de ánimo es manual porque Garmin no lo reporta; sí trae Body
+            Battery/sueño/estrés/HRV si tu reloj los soporta (probalo abajo).
+          </p>
+          <div class="form-row cols3">
+            <div><label>Fecha</label><input type="date" id="peso-fecha"></div>
+            <div><label>Peso (kg)</label><input type="number" step="0.1" id="peso-kg" placeholder="78.4"></div>
+            <div><label>Cómo te sentiste (1-5)</label>
+              <select id="peso-sensacion">
+                <option value="">—</option>
+                <option value="1">1 — mal</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5 — muy bien</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div><label>Nota (opcional)</label><input type="text" id="peso-nota" placeholder="ej: dolor en el hombro, dormí mal, etc."></div>
+          </div>
+          <button class="btn btn-primary" onclick="guardarPeso()">Guardar</button>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Probar sincronización de wellness</div>
+          <p style="font-size:.78rem;color:var(--muted);margin-bottom:1rem">
+            Trae Body Battery/sueño/estrés/HRV/FC en reposo de Garmin para una fecha y muestra el resultado
+            crudo — así confirmamos qué reporta realmente tu cuenta/reloj (no se probó en desarrollo).
+          </p>
+          <div class="form-row cols2" style="align-items:flex-end">
+            <div><label>Fecha a probar</label><input type="date" id="wellness-fecha"></div>
+            <button class="btn btn-outline" onclick="probarWellness()">🔍 Probar</button>
+          </div>
+          <div id="wellness-resultado"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Historial de peso (últimos 30 días)</div>
+          <div id="peso-lista"><p style="color:var(--muted);font-size:.82rem">Sin registros todavía.</p></div>
         </div>
       </div>
 
@@ -743,6 +792,7 @@ const TOPBAR_TITLES = {
   carga:       'TRAINING / GARMIN — CARGA SEMANAL',
   comparar:    'TRAINING / GARMIN — COMPARAR',
   progresion:  'TRAINING / GARMIN — ANÁLISIS IA',
+  bienestar:   'TRAINING / GARMIN — PESO Y BIENESTAR',
   config:      'TRAINING / GARMIN — CONFIGURACIÓN',
   plan:        'TRAINING / PLAN POST-HYROX 2026',
   log:         'TRAINING / REGISTRO DE SESIONES',
@@ -787,6 +837,7 @@ function switchModule(mod, panel) {
   if (panel === 'carga')      cargarCargaSemanal();
   if (panel === 'comparar')   cargarComparacion();
   if (panel === 'progresion') cargarAnalisisPrev();
+  if (panel === 'bienestar')  cargarPeso();
   if (panel === 'config')     cargarConfig();
   if (panel === 'log')        { cargarLog(); cargarRutinasManuales(); }
 }
@@ -1319,6 +1370,70 @@ async function cargarAnalisisPrev() {
     </div>`).join('');
 }
 
+// ── Peso y Bienestar ─────────────────────────────────────────────────────────
+(function(){
+  const fp = document.getElementById('peso-fecha'), fw = document.getElementById('wellness-fecha');
+  const hoy = new Date().toISOString().slice(0,10);
+  if (fp && !fp.value) fp.value = hoy;
+  if (fw && !fw.value) fw.value = hoy;
+})();
+
+function guardarPeso() {
+  const fecha = document.getElementById('peso-fecha').value;
+  const peso_kg = document.getElementById('peso-kg').value;
+  const sensacion = document.getElementById('peso-sensacion').value;
+  const nota = document.getElementById('peso-nota').value;
+  if (!fecha) { alert('Falta la fecha.'); return; }
+  fetch('/api/training/peso', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({fecha, peso_kg: peso_kg || null, sensacion: sensacion || null, nota})
+  }).then(r => r.json()).then(d => {
+    if (!d.ok) { alert('Error: ' + d.error); return; }
+    document.getElementById('peso-nota').value = '';
+    cargarPeso();
+  });
+}
+
+function cargarPeso() {
+  fetch('/api/training/peso?dias=30').then(r => r.json()).then(d => {
+    const el = document.getElementById('peso-lista');
+    if (!d.ok || !d.rows.length) { el.innerHTML = '<p style="color:var(--muted);font-size:.82rem">Sin registros todavía.</p>'; return; }
+    el.innerHTML = `<table class="data-table"><thead><tr><th>Fecha</th><th>Peso</th><th>Sensación</th><th>Nota</th></tr></thead><tbody>` +
+      d.rows.map(r => `<tr>
+        <td style="font-family:var(--mono);font-size:.78rem">${escHtml(r.fecha)}</td>
+        <td>${r.peso_kg ? escHtml(String(r.peso_kg)) + ' kg' : '—'}</td>
+        <td>${r.sensacion ? '⭐'.repeat(r.sensacion) : '—'}</td>
+        <td style="font-size:.78rem;color:var(--muted)">${escHtml(r.nota || '—')}</td>
+      </tr>`).join('') + `</tbody></table>`;
+  });
+}
+
+function probarWellness() {
+  const fecha = document.getElementById('wellness-fecha').value;
+  const el = document.getElementById('wellness-resultado');
+  el.innerHTML = '<p style="color:var(--muted);font-size:.82rem">Consultando a Garmin...</p>';
+  fetch('/api/garmin/wellness/probar', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({fecha})
+  }).then(r => r.json()).then(d => {
+    if (!d.ok) { el.innerHTML = `<p style="color:var(--danger);font-size:.82rem">Error: ${escHtml(d.error)}</p>`; return; }
+    const ex = d.extraido;
+    el.innerHTML = `
+      <div style="background:var(--bg);border-radius:var(--radius-sm);padding:.8rem;margin-top:.8rem;font-size:.82rem">
+        <strong>Campos extraídos:</strong><br>
+        Body Battery: ${ex.body_battery_min ?? '—'}–${ex.body_battery_max ?? '—'} ·
+        Sueño: ${ex.sleep_score ?? '—'} pts (${ex.sleep_seg ? (ex.sleep_seg/3600).toFixed(1)+'h' : '—'}) ·
+        Estrés: ${ex.stress_avg ?? '—'} ·
+        HRV: ${ex.hrv_avg_ms ?? '—'}ms (${escHtml(ex.hrv_status || '—')}) ·
+        FC reposo: ${ex.resting_hr ?? '—'}
+      </div>
+      <details style="margin-top:.6rem">
+        <summary style="font-size:.76rem;color:var(--muted);cursor:pointer">Ver JSON crudo completo (para ajustar el parseo si algo no coincide)</summary>
+        <pre style="font-size:.68rem;overflow-x:auto;background:var(--bg);padding:.6rem;border-radius:var(--radius-sm);margin-top:.5rem">${escHtml(JSON.stringify(d.raw, null, 2))}</pre>
+      </details>`;
+  });
+}
+
 // ── Carga semanal ─────────────────────────────────────────────────────────────
 // ── Historial (calendario de actividades realizadas) ───────────────────────────
 let _histAnio = new Date().getFullYear();
@@ -1638,11 +1753,7 @@ function renderCalSemana() {
 // Stub para que Claude chat siga funcionando
 async function cargarSemanas() { cargarCalendario(); }
 
-function esc(s) {
-  return String(s ?? '')
-    .replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,' ')
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
+function esc(s) { return (s||'').replace(/'/g,"\\'").replace(/\n/g,' '); }
 // escHtml() ahora vive en common.js (compartida entre todas las plantillas).
 
 function editarSesion(id, desc, notas, dia, turno, fechaInicio) {
