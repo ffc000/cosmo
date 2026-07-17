@@ -74,6 +74,14 @@ def pct_f(a, total):
     if not total: return 0.0
     return round(100*float(a)/float(total), 1)
 def n(v): return int(v or 0)
+def pl(cantidad, singular, plural=None):
+    """Pluraliza según cantidad -- reemplaza los "país(es)"/"variable(s)"
+    con paréntesis sin resolver que quedaban en el texto de los informes
+    (encontrado en el consolidado, 17/07/2026). Uso: f"{cant} {pl(cant,
+    'variable', 'variables')}"."""
+    if plural is None:
+        plural = singular + "s"
+    return singular if n(cantidad) == 1 else plural
 def periodo_texto(anio, mes_d, mes_h):
     if mes_d == mes_h: return f"{MESES[mes_d]} {anio}"
     return f"{MESES[mes_d]} \u2013 {MESES[mes_h]} {anio}"

@@ -36,7 +36,7 @@ try:
 except ImportError:
     PIL_OK = False
 
-from generar_utils import PAISES, PAISES_CONSOLIDADO, fmt, pct, pct_f, n, periodo_texto, mes_label, mes_label_largo, color_semaforo, formatear_demora
+from generar_utils import PAISES, PAISES_CONSOLIDADO, fmt, pct, pct_f, n, pl, periodo_texto, mes_label, mes_label_largo, color_semaforo, formatear_demora
 from generar_graficos import (grafico_torta, grafico_barras_apiladas, grafico_lineas_pct,
     grafico_rechazos_cat, grafico_rechazos_mes, grafico_comparativo_meses, MPL_OK,
     grafico_consolidado_pais, grafico_consolidado_impoexpo, grafico_consolidado_cargado_lastre,
@@ -975,6 +975,47 @@ def _agrupar_por_dira(por_aduana):
     return filas
 
 
+def _asimetria_impoexpo_paises(por_pais, umbral_pct=65.0, min_operaciones=1000):
+    """Identifica países donde IMPO o EXPO domina fuertemente sobre el
+    otro -- el % del Resumen Ejecutivo es un promedio del TOTAL general, y
+    puede salir cerca de 50/50 aunque países individuales estén muy lejos
+    de eso (compensándose entre sí, ej. uno mayormente exportador y otro
+    mayormente importador). "OTRO/SIN DATO" queda afuera a propósito, no
+    es un país real. min_operaciones filtra países con muy poco volumen
+    (un 100% de 3 operaciones no dice nada). Devuelve una lista de
+    strings ("País: XX,X% importación/exportación"), vacía si ningún país
+    supera el umbral -- se recalcula en cada informe, no son valores fijos."""
+    avisos = []
+    for r in por_pais:
+        cod = r.get("PAIS")
+        if cod == "OTRO/SIN DATO":
+            continue
+        total = n(r.get("TOTAL", 0))
+        if total < min_operaciones:
+            continue
+        impo = n(r.get("IMPO", 0)); expo = n(r.get("EXPO", 0))
+        nombre = PAISES_CONSOLIDADO.get(cod, cod)
+        if pct_f(impo, total) >= umbral_pct:
+            avisos.append(f"{nombre} ({pct(impo, total)} importación)")
+        elif pct_f(expo, total) >= umbral_pct:
+            avisos.append(f"{nombre} ({pct(expo, total)} exportación)")
+    return avisos
+
+
+def _variable_control_dominante(por_var_control, total, umbral_pct=60.0):
+    """Si una variable de control concentra la mayoría de las operaciones,
+    devuelve (nombre, pct_texto) para comentarlo -- si no, None. Recalculado
+    en cada informe según los datos reales, no asume que siempre sea SINVC
+    (podría ser cualquier otra si la operatoria cambia)."""
+    if not por_var_control or not total:
+        return None
+    top = max(por_var_control, key=lambda r: n(r.get("TOTAL", 0)))
+    pct_top = pct_f(top.get("TOTAL", 0), total)
+    if pct_top < umbral_pct:
+        return None
+    return top["VAR_CONTROL"], pct(top.get("TOTAL", 0), total)
+
+
 def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_aduana,
                                por_var_control, comparacion_anual, carpeta, log_fn):
     periodo = _periodo_texto_fechas(fecha_d, fecha_h)
@@ -1059,7 +1100,7 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
     # 1. Operaciones por país
     _heading_indexado(doc, "1.  Operaciones por país", 1, 2)
     doc.add_paragraph(f"Durante el período se registraron {fmt(total)} operaciones distribuidas entre "
-                       f"{len(por_pais)} país(es)/agrupación(es).")
+                       f"{len(por_pais)} {pl(len(por_pais), 'país/agrupación', 'países/agrupaciones')}.")
     agregar_tabla_word(doc, ["PAÍS", "TOTAL", "IMPO", "EXPO", "CARGADO", "LASTRE"],
         [[PAISES_CONSOLIDADO.get(r["PAIS"], r["PAIS"]), fmt(r.get("TOTAL", 0)), fmt(r.get("IMPO", 0)),
           fmt(r.get("EXPO", 0)), fmt(r.get("CARGADO", 0)), fmt(r.get("LASTRE", 0))] for r in por_pais],
@@ -1070,6 +1111,11 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
     _heading_indexado(doc, "2.  Importación vs. Exportación", 1, 3)
     doc.add_paragraph(f"Del total de operaciones, {fmt(impo)} ({pct(impo, total)}) corresponden a "
                        f"importación y {fmt(expo)} ({pct(expo, total)}) a exportación.")
+    asimetrias = _asimetria_impoexpo_paises(por_pais)
+    if asimetrias:
+        doc.add_paragraph(
+            "Este porcentaje es un promedio del total general: individualmente, algunos países están "
+            "lejos del 50/50 (se compensan entre sí en el agregado) — " + ", ".join(asimetrias) + ".")
     if "impoexpo" in graficos: insertar_grafico(doc, graficos["impoexpo"], width_cm=11)
 
     # 3. Cargado vs. Lastre
@@ -1082,7 +1128,7 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
     # 4. Operaciones por aduana
     _heading_indexado(doc, "4.  Operaciones por aduana", 1, 5)
     doc.add_paragraph(
-        f"Se relevaron operaciones en {len(por_aduana)} aduana(s) durante el período. "
+        f"Se relevaron operaciones en {len(por_aduana)} {pl(len(por_aduana), 'aduana')} durante el período. "
         f"\"Demora media\" y \"En alerta\" son la misma métrica PAD (tiempo entre ingreso y salida) "
         f"que usa el informe \"Aduanas del país\" — se muestran acá para cruzar en una sola tabla "
         f"volumen de operaciones (SINTIA) con tiempos de desaduanamiento (PAD) por aduana.")
@@ -1117,9 +1163,21 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
     _heading_indexado(doc, "5.  Operaciones por variable de control", 1, 6)
     sin_dato = next((n(r.get("TOTAL", 0)) for r in por_var_control if r["VAR_CONTROL"] == "SIN VARIABLE DE CONTROL"), 0)
     doc.add_paragraph(
-        f"Se identificaron {len(por_var_control)} variable(s) de control distintas en el período."
-        + (f" {fmt(sin_dato)} operación(es) ({pct(sin_dato, total)}) no tienen variable de control "
-           f"registrada." if sin_dato else ""))
+        f"Se identificaron {len(por_var_control)} "
+        f"{pl(len(por_var_control), 'variable de control distinta', 'variables de control distintas')} en el período."
+        + (f" {fmt(sin_dato)} {pl(sin_dato, 'operación', 'operaciones')} ({pct(sin_dato, total)}) no "
+           f"{pl(sin_dato, 'tiene', 'tienen')} variable de control registrada." if sin_dato else ""))
+    dominante = _variable_control_dominante(por_var_control, total)
+    if dominante:
+        var_nombre, var_pct = dominante
+        if var_nombre == "SINVC":
+            doc.add_paragraph(
+                f"El {var_pct} de las operaciones no pasó por ningún criterio de selectividad (SINVC) — "
+                f"solo una minoría fue seleccionada por algún criterio operativo, aleatorio o determinístico.")
+        else:
+            doc.add_paragraph(
+                f"\"{var_nombre}\" concentra el {var_pct} de las operaciones, muy por encima del resto "
+                f"de las variables de control del período.")
     agregar_tabla_word(doc, ["VARIABLE DE CONTROL", "TOTAL", "%"],
         [[r["VAR_CONTROL"], fmt(r.get("TOTAL", 0)), pct(r.get("TOTAL", 0), total)] for r in por_var_control],
         col_widths=[7, 2.5, 2])
