@@ -36,6 +36,15 @@ training_bp = Blueprint("training", __name__)
 # ══════════════════════════════════════════════════════════════════════════════
 
 GARMIN_DIR = "/data/garmin"
+# Fase 11: Garmin bloquea el login por Cloudflare cada tanto (más común
+# desde IPs de datacenter, como este droplet) -- la propia librería
+# garminconnect recomienda esto: guardar la sesión (tokenstore) después
+# del primer login exitoso y reusarla, en vez de loguearse con
+# usuario/contraseña en cada llamada. Eso evita pegarle al endpoint de
+# login (el que Cloudflare bloquea) casi siempre -- solo se vuelve a usar
+# usuario/contraseña si el token cacheado ya no sirve. Carpeta separada de
+# GARMIN_DIR (que son los .fit descargados) para no mezclar.
+GARMIN_TOKENSTORE = "/data/garmin_tokens"
 os.makedirs(GARMIN_DIR, exist_ok=True)
 
 # ── Tipos de actividad normalizados ───────────────────────────────────────────
@@ -256,15 +265,19 @@ def get_credenciales_garmin():
 def _conectar_garmin():
     """Login a Garmin Connect, mismo patrón que usa el sync de actividades
     (sincronizar_garmin) -- extraído acá para no duplicarlo en el sync de
-    wellness y en el job nocturno de análisis (training_plan.py)."""
+    wellness y en el job nocturno de análisis (training_plan.py). Usa
+    tokenstore (ver GARMIN_TOKENSTORE) para reusar la sesión entre
+    llamadas en vez de loguearse con usuario/contraseña cada vez -- eso es
+    lo que dispara el bloqueo de Cloudflare en el login (Fase 11)."""
     from garminconnect import Garmin
     g_user, g_pass = get_credenciales_garmin()
     if not g_user: g_user = os.environ.get("GARMIN_USER", "")
     if not g_pass: g_pass = os.environ.get("GARMIN_PASS", "")
     if not g_user or not g_pass:
         raise RuntimeError("Credenciales Garmin no configuradas.")
+    os.makedirs(GARMIN_TOKENSTORE, exist_ok=True)
     client = Garmin(g_user, g_pass)
-    client.login()
+    client.login(tokenstore=GARMIN_TOKENSTORE)
     return client
 
 
@@ -789,8 +802,9 @@ def _sync_worker(job_id: str, user: str, modo: str, semana_offset: int = 0):
             return
 
         _sync_status[job_id]["estado"] = "conectando"
+        os.makedirs(GARMIN_TOKENSTORE, exist_ok=True)
         client = Garmin(g_user, g_pass)
-        client.login()
+        client.login(tokenstore=GARMIN_TOKENSTORE)
         _sync_status[job_id]["estado"] = "descargando"
 
         if modo == "semana":
@@ -1433,7 +1447,8 @@ def _descargar_detalle_garmin(act_id):
         raise RuntimeError("Credenciales Garmin no configuradas")
 
     client = Garmin(g_user, g_pass)
-    client.login()
+    os.makedirs(GARMIN_TOKENSTORE, exist_ok=True)
+    client.login(tokenstore=GARMIN_TOKENSTORE)
     detalle = client.get_activity_details(int(act_id))
 
     descriptores = detalle.get("metricDescriptors", []) or []
