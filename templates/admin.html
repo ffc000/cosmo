@@ -572,7 +572,13 @@ function uploadXHR(fId,url,pId,bId,wId,mId){
   const fd=new FormData();fd.append('file',file);const xhr=new XMLHttpRequest();xhr.open('POST',url);
   xhr.setRequestHeader('X-CSRFToken', document.querySelector('meta[name="csrf-token"]').content);
   document.getElementById(wId).style.display='block';
+  document.getElementById(pId).textContent='Subiendo... 0%';
+  document.getElementById(bId).style.width='0%';
   showMsg(mId,'','');
+  xhr.timeout = 600000; // 10 min -- generoso a propósito (un .sql de un año entero puede tardar), pero si ni con eso responde, al menos avisa en vez de quedar colgado sin feedback
+  xhr.addEventListener('timeout',()=>{
+    showMsg(mId,'✗ El servidor no respondió en 10 minutos. Puede que el archivo sea muy grande, o que se haya colgado de verdad -- revisá el estado de la base antes de reintentar (por si ya se procesó parcialmente).','err');
+  });
   xhr.upload.addEventListener('progress',e=>{
     if(e.lengthComputable){
       const p=Math.round(e.loaded/e.total*100);
