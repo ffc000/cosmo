@@ -311,7 +311,16 @@ def correr_queries_consolidado(ruta_db, fecha_d, fecha_h, log_fn, hist_db=None):
         log_fn("Corriendo queries...")
         # El país se deduce del MIC igual que en correr_queries() (MIC LIKE
         # '%XX%'), no hay columna de país propia en DAT_<año>.
-        casos_pais = " ".join(f"WHEN MIC LIKE '%{cod}%' THEN '{cod}'" for cod in PAISES_CONSOLIDADO)
+        #
+        # YPFB (Yacimientos Petrolíferos Fiscales Bolivianos, la petrolera
+        # estatal de Bolivia) es un caso especial: encontrado en producción
+        # (17/07/2026) que explica el 70% de los MIC que caían en "OTRO/SIN
+        # DATO" con letras -- "YPFB" no contiene la secuencia "BO" así que
+        # el detector genérico no lo agarraba. Se chequea ANTES que el CASE
+        # genérico (aunque en este caso puntual el orden no cambia el
+        # resultado, ya que "YPFB" no matchea ningún otro código de país).
+        casos_pais = "WHEN MIC LIKE '%YPFB%' THEN 'BO' " + \
+            " ".join(f"WHEN MIC LIKE '%{cod}%' THEN '{cod}'" for cod in PAISES_CONSOLIDADO)
         expr_pais = f"CASE {casos_pais} ELSE 'OTRO/SIN DATO' END"
 
         agregados_sql = """
