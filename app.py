@@ -38,6 +38,7 @@ from core import (
     login_required, admin_required, modulo_required, finanzas_owner_required,
     tiene_permiso_admin, registrar_sesion, actualizar_sesion, token_revocado,
 )
+from db_utils import dat_actual_subquery
 
 # get_api_key ahora se importa de core.py (más abajo, junto con contexto_repositorio)
 APP_USER      = os.environ.get("APP_USER",    "cosmo")
@@ -1690,45 +1691,78 @@ def _procesar_csv(tmp_path, tabla, log, modo="reemplazar", username="?"):
                         headers = [col_normalize.get(h, h) for h in headers]
                         insert_sql = None
                         if modo == "agregar" and tabla_existe:
-                            # OPERACION_PAD_EXT (+ MIC + TIPO_REGISTRO) es el
-                            # identificador único real de una operación (dato
-                            # confirmado en conversación 13/07/2026) -- el
-                            # archivo semanal trae el semestre ENTERO
-                            # acumulado, no solo lo nuevo, así que reinsertar
-                            # una operación ya vista es normal y esperado
-                            # (puede venir con el estado actualizado, ej.
-                            # pasó de pendiente a SAL). OR REPLACE hace que
-                            # eso actualice la fila existente en vez de
-                            # duplicarla o de romper por violar el índice
-                            # único. El índice se crea ACÁ, antes de
-                            # insertar nada -- antes se creaba recién al
-                            # final, con lo cual nunca llegaba a hacer nada
-                            # durante el insert (y si había datos repetidos,
-                            # la creación del índice fallaba en silencio,
-                            # dejando la tabla sin el índice Y con los
-                            # duplicados adentro).
-                            log.append("Modo agregar: se actualizan operaciones ya existentes "
-                                       "(por OPERACION_PAD_EXT) y se suman las nuevas.")
+                            # Historial de estados (decisión 17/07/2026): una
+                            # operación (OPERACION_PAD_EXT+MIC+TIPO_REGISTRO)
+                            # pasa por varios estados (ULT_ESTADO) a lo largo
+                            # del tiempo, y ahora se quiere poder analizar
+                            # cuánto tarda en pasar de uno a otro -- para eso
+                            # hace falta CONSERVAR cada estado como fila
+                            # propia, no pisarlo. INSERT OR REPLACE (como
+                            # estaba antes) hacía exactamente lo contrario:
+                            # cada carga semanal pisaba el estado anterior de
+                            # la operación, perdiendo el historial.
+                            #
+                            # Lo único que sigue sin querer duplicarse es una
+                            # fila 100% idéntica a una ya cargada (el archivo
+                            # semanal trae el semestre entero acumulado, así
+                            # que la gran mayoría de las filas de cada carga
+                            # ya estaban Y no cambiaron nada -- esas sí hay
+                            # que descartarlas, o la tabla crecería sin
+                            # sentido cada semana). Para eso se arma una
+                            # columna calculada con el contenido completo de
+                            # la fila (todas las columnas del CSV, NULLs
+                            # normalizados con COALESCE para que dos filas
+                            # con el mismo campo vacío sigan comparando
+                            # igual) y un índice ÚNICO sobre esa huella --
+                            # INSERT OR IGNORE descarta la fila si ya existe
+                            # una con exactamente ese contenido, e inserta
+                            # como fila NUEVA cualquier cosa que cambió
+                            # (nuevo estado incluido), sin pisar la anterior.
+                            log.append("Modo agregar: se conserva el historial de estados -- solo se "
+                                       "descartan filas 100% idénticas a una ya cargada; cualquier "
+                                       "cambio (ej. nuevo ULT_ESTADO) se guarda como fila nueva.")
                             try:
-                                cur.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{tabla}_key "
+                                # Índice normal (no único) sobre la clave de operación --
+                                # ya no garantiza unicidad, pero se mantiene para que
+                                # las queries que agrupan/filtran por operación sigan
+                                # siendo rápidas (ver generar_queries.py).
+                                cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{tabla}_key "
                                            f"ON {tabla}(OPERACION_PAD_EXT, MIC, TIPO_REGISTRO)")
                             except Exception as e:
-                                log.append(f"⚠ No se pudo asegurar el índice único antes de insertar: {e}")
+                                log.append(f"⚠ No se pudo asegurar el índice de operación: {e}")
+                            hash_expr = " || '|' || ".join(f'COALESCE("{h}", \'\')' for h in headers)
+                            try:
+                                cur.execute(f'ALTER TABLE {tabla} ADD COLUMN _hash_fila TEXT '
+                                           f'GENERATED ALWAYS AS ({hash_expr}) VIRTUAL')
+                            except Exception as e:
+                                if "duplicate column name" not in str(e).lower():
+                                    log.append(f"⚠ No se pudo agregar la columna de huella de contenido: {e}")
+                            try:
+                                cur.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{tabla}_hashfila "
+                                           f"ON {tabla}(_hash_fila)")
+                            except Exception as e:
+                                log.append(f"⚠ No se pudo asegurar el índice único de contenido: {e}")
                             cols_quoted = ", ".join(f'"{h}"' for h in headers)
                             placeholders = ", ".join(["?" for _ in headers])
-                            insert_sql = f"INSERT OR REPLACE INTO {tabla} ({cols_quoted}) VALUES ({placeholders})"
+                            insert_sql = f"INSERT OR IGNORE INTO {tabla} ({cols_quoted}) VALUES ({placeholders})"
                         else:
                             cur.execute(f"DROP TABLE IF EXISTS {tabla}")
                             cols_def = ", ".join([f'"{h}" TEXT' for h in headers])
                             cur.execute(f"CREATE TABLE {tabla} ({cols_def})")
                             try:
-                                cur.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{tabla}_key "
+                                cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{tabla}_key "
                                            f"ON {tabla}(OPERACION_PAD_EXT, MIC, TIPO_REGISTRO)")
+                                hash_expr = " || '|' || ".join(f'COALESCE("{h}", \'\')' for h in headers)
+                                cur.execute(f'ALTER TABLE {tabla} ADD COLUMN _hash_fila TEXT '
+                                           f'GENERATED ALWAYS AS ({hash_expr}) VIRTUAL')
+                                cur.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{tabla}_hashfila "
+                                           f"ON {tabla}(_hash_fila)")
                             except Exception as e:
-                                log.append(f"⚠ No se pudo crear el índice único: {e}")
+                                log.append(f"⚠ No se pudo crear el índice/columna de contenido único: {e}")
                             log.append(f"Columnas: {len(headers)} — tabla creada, insertando...")
+                            cols_quoted = ", ".join(f'"{h}"' for h in headers)
                             placeholders = ", ".join(["?" for _ in headers])
-                            insert_sql = f"INSERT OR REPLACE INTO {tabla} VALUES ({placeholders})"
+                            insert_sql = f"INSERT OR IGNORE INTO {tabla} ({cols_quoted}) VALUES ({placeholders})"
                         con.commit()
                         continue
                     vals = [v.strip() for v in line.split(";")]
@@ -1750,24 +1784,21 @@ def _procesar_csv(tmp_path, tabla, log, modo="reemplazar", username="?"):
             total_despues = cur.execute(f"SELECT COUNT(*) FROM {tabla}").fetchone()[0]
             if modo == "agregar" and tabla_existe:
                 nuevas = total_despues - total_antes
-                actualizadas = inserted - nuevas
-                log.append(f"  {inserted:,} filas del archivo procesadas: {nuevas:,} operaciones nuevas, "
-                          f"{actualizadas:,} actualizadas (ya existían, se refrescó su estado). "
-                          f"Total en la tabla ahora: {total_despues:,}.")
+                descartadas = inserted - nuevas
+                log.append(f"  {inserted:,} filas del archivo procesadas: {nuevas:,} filas nuevas "
+                          f"(operaciones nuevas o cambios de estado), {descartadas:,} descartadas "
+                          f"por ser idénticas a una ya cargada. Total en la tabla ahora: {total_despues:,}.")
             else:
                 log.append(f"  {inserted:,} filas insertadas en total. Calculando fechas ISO...")
             for col in ["FECHA_INGRESO_ISO","FECHA_TRANS_ISO"]:
                 try: cur.execute(f"ALTER TABLE {tabla} ADD COLUMN {col} TEXT")
                 except: pass
-            # Antes esto actualizaba por rango de rowid (rowid_inicio..rowid_fin
-            # de las filas recién insertadas). Con INSERT OR REPLACE eso ya no
-            # sirve: reemplazar una fila existente la borra y la vuelve a
-            # insertar con un rowid NUEVO, no necesariamente contiguo con las
-            # demás filas de este import -- el rango calculado de antemano
-            # podía quedar desalineado. Ahora se apunta directamente a "toda
-            # fila que todavía no tiene la fecha ISO calculada", que es
-            # exactamente el conjunto correcto sin importar cómo haya
-            # quedado el rowid.
+            # WHERE FECHA_INGRESO_ISO IS NULL apunta exactamente a las filas
+            # nuevas de este import (las columnas ISO no se insertan --
+            # quedan NULL hasta este paso) sin importar el rowid que les
+            # haya tocado. Con INSERT OR IGNORE las filas ya existentes
+            # nunca se tocan (mantienen su rowid y su ISO ya calculado), así
+            # que este filtro sigue siendo exactamente el conjunto correcto.
             rango = cur.execute(f"SELECT MIN(rowid), MAX(rowid) FROM {tabla} WHERE FECHA_INGRESO_ISO IS NULL").fetchone()
             if rango and rango[0] is not None:
                 rowid_min, rowid_max = rango
@@ -2637,11 +2668,14 @@ def _resolver_from_dat(anio_param):
     - Una lista separada por comas (ej. "2025,2026"): une esos años puntuales.
 
     Devuelve (from_sql, descripcion). from_sql es lo que va después de
-    "FROM " en cualquier query existente -- nombre de tabla simple si es un
-    solo año, o una subquery con alias si son varios -- así las queries que
-    ya existían siguen funcionando sin cambios, solo pasándoles este valor
-    en vez de armar "DAT_{anio}" a mano. descripcion es para mostrar/loguear
-    (ej. "2026" o "2025+2026").
+    "FROM " en cualquier query existente -- SIEMPRE una subquery (ver
+    dat_actual_subquery en db_utils.py), nunca el nombre de tabla pelado,
+    incluso para un solo año -- así cualquier consumidor ve "1 fila =
+    1 operación" (la del estado más reciente), sin importar que la tabla de
+    base tenga el historial completo de estados de cada operación. Las
+    queries que ya existían siguen funcionando sin cambios, solo pasándoles
+    este valor en vez de armar "DAT_{anio}" a mano. descripcion es para
+    mostrar/loguear (ej. "2026" o "2025+2026").
 
     Si se piden varios años, la unión SOLO usa las columnas presentes en
     TODAS las tablas involucradas -- evita romper si un año tiene columnas
@@ -2670,14 +2704,14 @@ def _resolver_from_dat(anio_param):
             anio_unico = _dt.date.today().year
         if anio_unico < 2000 or anio_unico > 2100:
             anio_unico = _dt.date.today().year
-        return f"DAT_{anio_unico}", str(anio_unico)
+        return dat_actual_subquery(f"DAT_{anio_unico}"), str(anio_unico)
 
     if not anios:
         anio_unico = _dt.date.today().year
-        return f"DAT_{anio_unico}", str(anio_unico)
+        return dat_actual_subquery(f"DAT_{anio_unico}"), str(anio_unico)
 
     if len(anios) == 1:
-        return f"DAT_{anios[0]}", str(anios[0])
+        return dat_actual_subquery(f"DAT_{anios[0]}"), str(anios[0])
 
     tablas = [f"DAT_{a}" for a in anios]
     columnas_por_tabla = {t: set(_columnas_de_tabla(t)) for t in tablas}
@@ -2700,7 +2734,10 @@ def _resolver_from_dat(anio_param):
 
     orden_base = [c for c in _columnas_de_tabla(tablas[0]) if c in comunes]
     cols_sql = ", ".join(f'"{c}"' for c in orden_base)
-    selects = " UNION ALL ".join(f'SELECT {cols_sql} FROM {t}' for t in tablas)
+    # dat_actual_subquery se aplica a CADA tabla individual antes de unir
+    # (rowid, que usa para desempatar, solo existe en tablas reales -- no
+    # tendría sentido aplicarlo después de la unión).
+    selects = " UNION ALL ".join(f'SELECT {cols_sql} FROM {dat_actual_subquery(t)}' for t in tablas)
     descripcion = "+".join(str(a) for a in anios)
     return f"({selects}) AS DAT_COMBINADO", descripcion
 
@@ -2844,10 +2881,16 @@ def sintia_dashboard():
         with get_db(DB_PATH, timeout=10) as con:
             cur = con.cursor()
             anio = _dt.date.today().year
-            tabla = f"DAT_{anio}"
-            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,))
+            tabla_real = f"DAT_{anio}"
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla_real,))
             if not cur.fetchone():
-                return jsonify({"ok": False, "error": f"Tabla {tabla} no encontrada."})
+                return jsonify({"ok": False, "error": f"Tabla {tabla_real} no encontrada."})
+            # Vista deduplicada (1 fila = 1 operación, la del estado más
+            # reciente) -- ver dat_actual_subquery en db_utils.py. El
+            # dashboard muestra KPIs de "cómo está la operatoria ahora", no
+            # historial, así que corresponde acá igual que en el resto de
+            # los paneles de SINTIA.
+            tabla = dat_actual_subquery(tabla_real)
 
             hoy = _dt.date.today()
             hoy_iso = hoy.isoformat()
