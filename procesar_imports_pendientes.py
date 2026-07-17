@@ -33,6 +33,7 @@ import time
 import shutil
 import logging
 import subprocess
+import threading
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -48,32 +49,68 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 def _correr_sqlite_import(db_path, tmp_sql_path, timeout=7200):
     """Corre un .sql contra db_path via el binario sqlite3, anteponiendo
     PRAGMA synchronous=OFF / journal_mode=MEMORY (acelera mucho imports
-    grandes, evita fsync por escritura). Copia idéntica de
-    app.py::_correr_sqlite_import -- duplicada a propósito para que este
-    script no dependa de importar app.py (que arma toda la app Flask y
-    exige SECRET_KEY apenas se lo importa; ver docstring de db_utils.py
-    sobre por qué los scripts "sin Flask" evitan eso). Si se cambia acá,
-    cambiar también la de app.py.
+    grandes, evita fsync por escritura).
 
-    Timeout default de 2hs -- mucho más generoso que el que se podía usar
-    corriendo dentro de una request HTTP, porque acá no hay gunicorn ni
-    navegador esperando del otro lado."""
+    Implementación con threads en vez de proc.communicate(): escribimos el
+    archivo a stdin en streaming (para no cargarlo entero en RAM) desde el
+    thread principal, mientras dos threads aparte drenan stdout/stderr en
+    paralelo. Drenarlos en paralelo (no después) es necesario para evitar
+    un deadlock real: si sqlite3 escribe suficiente a stderr (ej. muchos
+    errores de constraint) mientras nosotros seguimos escribiéndole stdin,
+    el buffer de stderr se llena, sqlite3 se bloquea esperando que alguien
+    lo lea, y nosotros nos bloqueamos escribiendo stdin -- los dos
+    esperándose mutuamente. Cerrar stdin nosotros mismos (para que sqlite3
+    vea el EOF) y DESPUÉS llamar a proc.communicate() no funciona: cerrar
+    stdin a mano y que communicate() también intente tocarlo después tira
+    'ValueError: I/O operation on closed file' (encontrado en producción,
+    17/07/2026) -- por eso acá se usa proc.wait() en vez de communicate()."""
     proc = subprocess.Popen(
         ["sqlite3", db_path],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True,
     )
+
+    stderr_chunks = []
+
+    def _drenar_stderr():
+        for linea in proc.stderr:
+            stderr_chunks.append(linea)
+
+    def _drenar_stdout():
+        for _ in proc.stdout:
+            pass  # no interesa el contenido, pero hay que leerlo para no bloquear al proceso
+
+    hilo_err = threading.Thread(target=_drenar_stderr, daemon=True)
+    hilo_out = threading.Thread(target=_drenar_stdout, daemon=True)
+    hilo_err.start()
+    hilo_out.start()
+
     try:
         proc.stdin.write("PRAGMA synchronous=OFF;\nPRAGMA journal_mode=MEMORY;\n")
         with open(tmp_sql_path, "r", encoding="utf-8", errors="replace") as fh:
             shutil.copyfileobj(fh, proc.stdin)
-        proc.stdin.close()
-        _stdout, stderr = proc.communicate(timeout=timeout)
+    except BrokenPipeError:
+        # sqlite3 ya cortó por su cuenta (típicamente terminó con error
+        # antes de que le mandáramos todo el archivo) -- no es un problema
+        # nuestro, el returncode/stderr de abajo van a contar qué pasó.
+        pass
+    finally:
+        try:
+            proc.stdin.close()
+        except (BrokenPipeError, ValueError):
+            pass
+
+    try:
+        proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         proc.kill()
-        proc.communicate()
+        proc.wait()
         raise
-    return proc.returncode, stderr
+    finally:
+        hilo_err.join(timeout=5)
+        hilo_out.join(timeout=5)
+
+    return proc.returncode, "".join(stderr_chunks)
 
 
 def procesar_uno():
