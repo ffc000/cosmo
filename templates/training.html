@@ -434,6 +434,15 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
       <!-- Panel: Peso y Bienestar -->
       <div class="panel" id="panel-bienestar">
         <div class="card">
+          <div class="card-title">Peso objetivo</div>
+          <div class="form-row cols2" style="align-items:flex-end;margin-bottom:.4rem">
+            <div><label>Objetivo (kg)</label><input type="number" step="0.1" id="peso-objetivo-kg" placeholder="ej: 95"></div>
+            <button class="btn btn-outline btn-sm" onclick="guardarPesoObjetivo()">Guardar</button>
+          </div>
+          <div id="peso-objetivo-progreso" style="font-size:.82rem;color:var(--muted)"></div>
+        </div>
+
+        <div class="card">
           <div class="card-title">Cómo te sentiste hoy</div>
           <p style="font-size:.78rem;color:var(--muted);margin-bottom:1rem">
             El peso corporal se toma automáticamente de Garmin Connect (cargalo ahí, no acá) — el análisis
@@ -483,6 +492,19 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
           </p>
           <div id="peso-sync-msg"></div>
           <div id="peso-lista"><p style="color:var(--muted);font-size:.82rem">Sin registros todavía.</p></div>
+        </div>
+
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:.6rem">
+            <div class="card-title" style="margin:0">Historial de wellness</div>
+            <button class="btn btn-outline btn-sm" id="btn-sync-wellness" onclick="sincronizarHistorialWellness()">🔄 Sincronizar historial completo</button>
+          </div>
+          <p style="font-size:.72rem;color:var(--muted);margin-bottom:.6rem">
+            A diferencia del peso, Garmin no tiene un pedido "de rango" para Body Battery/sueño/estrés/HRV —
+            hay que pedir día por día, así que esto tarda unos minutos (corre en segundo plano, podés navegar
+            a otra pantalla mientras).
+          </p>
+          <div id="wellness-sync-msg"></div>
         </div>
 
         <div class="card">
@@ -862,7 +884,7 @@ function switchModule(mod, panel) {
   if (panel === 'carga')      cargarCargaSemanal();
   if (panel === 'comparar')   cargarComparacion();
   if (panel === 'progresion') cargarAnalisisPrev();
-  if (panel === 'bienestar')  { cargarPeso(); cargarAnalisisDiario(); }
+  if (panel === 'bienestar')  { cargarPesoObjetivo().then(cargarPeso); cargarAnalisisDiario(); }
   if (panel === 'config')     cargarConfig();
   if (panel === 'log')        { cargarLog(); cargarRutinasManuales(); }
 }
@@ -1439,7 +1461,41 @@ function cargarPeso() {
         <td>${r.sensacion ? '⭐'.repeat(r.sensacion) : '—'}</td>
         <td style="font-size:.78rem;color:var(--muted)">${escHtml(r.nota || '—')}</td>
       </tr>`).join('') + `</tbody></table>`;
+    const conPeso = d.rows.find(r => r.peso_kg);
+    _actualizarProgresoPesoObjetivo(conPeso ? conPeso.peso_kg : null);
   });
+}
+
+function cargarPesoObjetivo() {
+  return fetch('/api/training/peso/objetivo').then(r => r.json()).then(d => {
+    if (d.ok && d.peso_objetivo_kg) {
+      document.getElementById('peso-objetivo-kg').value = d.peso_objetivo_kg;
+    }
+  });
+}
+
+function guardarPesoObjetivo() {
+  const valor = document.getElementById('peso-objetivo-kg').value;
+  fetch('/api/training/peso/objetivo', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({peso_objetivo_kg: valor || null})
+  }).then(r => r.json()).then(d => {
+    if (!d.ok) { alert('Error: ' + d.error); return; }
+    cargarPeso();
+  });
+}
+
+function _actualizarProgresoPesoObjetivo(pesoActual) {
+  const el = document.getElementById('peso-objetivo-progreso');
+  const objetivo = parseFloat(document.getElementById('peso-objetivo-kg').value);
+  if (!el) return;
+  if (!objetivo) { el.innerHTML = 'Cargá un objetivo para ver el progreso.'; return; }
+  if (!pesoActual) { el.innerHTML = `Objetivo: ${objetivo} kg — todavía sin peso registrado para comparar.`; return; }
+  const dif = (pesoActual - objetivo);
+  const texto = dif > 0 ? `Faltan ${dif.toFixed(1)} kg para llegar a ${objetivo} kg` :
+                dif < 0 ? `Ya estás ${Math.abs(dif).toFixed(1)} kg por debajo de ${objetivo} kg` :
+                `¡Estás exactamente en tu objetivo (${objetivo} kg)!`;
+  el.innerHTML = `Peso más reciente: <strong>${pesoActual} kg</strong> · ${texto}`;
 }
 
 function sincronizarHistorialPeso() {
@@ -1450,6 +1506,32 @@ function sincronizarHistorialPeso() {
       if (!d.ok) { msg.innerHTML = `<p style="color:var(--danger);font-size:.82rem">Error: ${escHtml(d.error)}</p>`; return; }
       msg.innerHTML = `<p style="color:var(--accent2);font-size:.82rem">✓ ${d.guardados} registro(s) sincronizado(s).</p>`;
       cargarPeso();
+    });
+}
+
+function sincronizarHistorialWellness() {
+  const msg = document.getElementById('wellness-sync-msg');
+  const btn = document.getElementById('btn-sync-wellness');
+  btn.disabled = true;
+  msg.innerHTML = '<p style="color:var(--muted);font-size:.82rem">Iniciando...</p>';
+  fetch('/api/training/wellness/sincronizar_historial', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{"dias":90}'})
+    .then(r => r.json()).then(d => {
+      if (!d.ok) { msg.innerHTML = `<p style="color:var(--danger);font-size:.82rem">Error: ${escHtml(d.error)}</p>`; btn.disabled = false; return; }
+      const iv = setInterval(() => {
+        fetch(`/api/training/wellness/sincronizar_historial/${d.job_id}`).then(r => r.json()).then(s => {
+          if (!s.ok) { clearInterval(iv); msg.innerHTML = `<p style="color:var(--danger);font-size:.82rem">Error consultando el progreso.</p>`; btn.disabled = false; return; }
+          msg.innerHTML = `<p style="color:var(--muted);font-size:.82rem">Sincronizando... ${s.hecho}/${s.total} días</p>`;
+          if (s.estado === 'listo') {
+            clearInterval(iv);
+            msg.innerHTML = `<p style="color:var(--accent2);font-size:.82rem">✓ Listo -- ${s.total} días revisados.</p>`;
+            btn.disabled = false;
+          } else if (s.estado === 'error') {
+            clearInterval(iv);
+            msg.innerHTML = `<p style="color:var(--danger);font-size:.82rem">Error: ${escHtml(s.error)}</p>`;
+            btn.disabled = false;
+          }
+        });
+      }, 2000);
     });
 }
 
