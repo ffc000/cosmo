@@ -7,6 +7,7 @@ profesionalización).
 import os
 import re
 import logging
+import statistics
 from datetime import datetime
 
 try:
@@ -35,11 +36,11 @@ try:
 except ImportError:
     PIL_OK = False
 
-from generar_utils import PAISES, PAISES_CONSOLIDADO, fmt, pct, pct_f, n, periodo_texto, mes_label, mes_label_largo, color_semaforo
+from generar_utils import PAISES, PAISES_CONSOLIDADO, fmt, pct, pct_f, n, periodo_texto, mes_label, mes_label_largo, color_semaforo, formatear_demora
 from generar_graficos import (grafico_torta, grafico_barras_apiladas, grafico_lineas_pct,
     grafico_rechazos_cat, grafico_rechazos_mes, grafico_comparativo_meses, MPL_OK,
     grafico_consolidado_pais, grafico_consolidado_impoexpo, grafico_consolidado_cargado_lastre,
-    grafico_consolidado_aduana, grafico_consolidado_var_control)
+    grafico_consolidado_aduana, grafico_consolidado_var_control, grafico_comparacion_interanual)
 from generar_ia import calcular_frases, limpiar_salida_ia
 from generar_queries import calcular_totales
 
@@ -316,13 +317,32 @@ def _agregar_encabezado(doc, direccion):
         r1.bold = True; r1.font.size = Pt(14); r1.font.color.rgb = _AZUL_HEADER
 
     _borde_tabla_lado(tabla, "bottom", "1F4E79", 6)
-def kpi_box(doc, kpis):
+def kpi_box(doc, kpis, col_width_cm=None):
+    """col_width_cm: ancho fijo por columna (cm). Si no se pasa, se reparte
+    16cm (ancho útil aprox. de la página con los márgenes de este informe)
+    entre la cantidad de KPIs.
+
+    Antes esto no fijaba ancho de columna ni autofit=False -- Word (y
+    algunos visores) autoajustaban las columnas según el contenido de TODAS
+    las celdas, y un valor largo como "2.517.790" (9 caracteres) en una
+    tabla de 5 columnas terminaba cortado en dos líneas ("2.517.79" / "0")
+    porque no hay espacio en la palabra para partir -- encontrado en el
+    informe consolidado, 17/07/2026. Con ancho fijo y suficiente (además de
+    autofit=False, que si no Word puede seguir angostando columnas al
+    abrir/guardar) el número entra en una sola línea."""
     table=doc.add_table(rows=1,cols=len(kpis)); table.alignment=WD_TABLE_ALIGNMENT.CENTER
+    table.autofit = False
+    w = col_width_cm or (16 / len(kpis))
     for i,(label,valor,sub) in enumerate(kpis):
         cell=table.rows[0].cells[i]; set_cell_bg(cell,"EBF2FA")
+        cell.width = Cm(w)
         p1=cell.paragraphs[0]; p1.alignment=WD_ALIGN_PARAGRAPH.CENTER
         p1.add_run(f"{label}\n").font.size=Pt(8)
-        r2=p1.add_run(f"{valor}\n"); r2.bold=True; r2.font.size=Pt(16); r2.font.color.rgb=RGBColor(0x1F,0x3D,0x64)
+        # Números largos (8+ dígitos con separadores, ej. "2.517.790") con
+        # una fuente más chica para bajar el riesgo de que no entren en el
+        # ancho de columna ni con autofit=False.
+        tam_valor = Pt(12) if len(str(valor)) >= 9 else Pt(16)
+        r2=p1.add_run(f"{valor}\n"); r2.bold=True; r2.font.size=tam_valor; r2.font.color.rgb=RGBColor(0x1F,0x3D,0x64)
         r3=p1.add_run(sub); r3.font.size=Pt(8); r3.font.color.rgb=RGBColor(0x60,0x60,0x60)
     doc.add_paragraph()
 
@@ -888,6 +908,66 @@ def _periodo_texto_fechas(fecha_d, fecha_h):
     h = datetime.strptime(fecha_h, "%Y-%m-%d").strftime("%d/%m/%Y")
     return f"{d} a {h}" if d != h else d
 
+def _alertas_demora_aduanas(por_aduana, umbral_pct_alerta=5.0, factor_outlier_demora=3.0):
+    """Identifica aduanas con demora media muy por encima del resto del
+    grupo, o con un porcentaje alto de operaciones "en alerta" (superaron
+    el umbral PAD). No inventa un criterio nuevo -- reusa
+    DEMORA_MEDIA_DIAS/EN_ALERTA_PAD que ya calcula
+    correr_queries_consolidado() (ese promedio ya excluye los outliers más
+    extremos, > umbral_alerta_dias, así que un valor alto acá es "elevado
+    pero no descartado", no un caso aislado).
+
+    factor_outlier_demora: cuántas veces la MEDIANA del grupo tiene que ser
+    la demora de una aduana para marcarla (mediana en vez de promedio,
+    justamente para no dejar que un par de aduanas muy lentas arrastren el
+    punto de comparación).
+    umbral_pct_alerta: % de operaciones en alerta a partir del cual se
+    marca, independientemente de si la demora media también es alta.
+
+    Devuelve una lista de strings (uno por aduana marcada) para insertar
+    como texto en el informe. Lista vacía si ninguna aduana se destaca."""
+    con_datos = [r for r in por_aduana if r.get("DEMORA_MEDIA_DIAS") is not None and n(r.get("TOTAL", 0)) > 0]
+    if not con_datos:
+        return []
+    mediana = statistics.median(r["DEMORA_MEDIA_DIAS"] for r in con_datos)
+    avisos = []
+    for r in con_datos:
+        nombre = r.get("ADUANA_NOMBRE", r["ADUANA"])
+        total = n(r.get("TOTAL", 0))
+        en_alerta = n(r.get("EN_ALERTA_PAD", 0))
+        pct_alerta = pct_f(en_alerta, total)
+        demora = r["DEMORA_MEDIA_DIAS"]
+        es_outlier_demora = mediana > 0 and demora >= mediana * factor_outlier_demora
+        es_alto_pct_alerta = pct_alerta >= umbral_pct_alerta
+        if not (es_outlier_demora or es_alto_pct_alerta):
+            continue
+        partes = []
+        if es_outlier_demora:
+            partes.append(f"demora media de {formatear_demora(demora)} (mediana del resto: {formatear_demora(mediana)})")
+        if es_alto_pct_alerta:
+            partes.append(f"{pct(en_alerta, total)} de sus operaciones en alerta ({fmt(en_alerta)} de {fmt(total)})")
+        avisos.append(f"{nombre}: " + " y ".join(partes) + ".")
+    return avisos
+
+
+def _agrupar_por_dira(por_aduana):
+    """Subtotales por DIRA (región) a partir de las filas por_aduana, para
+    mostrar antes del detalle aduana por aduana -- 26 aduanas sueltas sin
+    agrupar es difícil de escanear; las ~6 DIRA dan una vista de más alto
+    nivel primero. Ordenado por TOTAL descendente, igual criterio que la
+    tabla de detalle. Aduanas sin DIRA asignada quedan agrupadas en
+    "Sin DIRA asignada" en vez de desaparecer."""
+    por_dira = {}
+    for r in por_aduana:
+        dira = r.get("DIRA_NOMBRE") or "Sin DIRA asignada"
+        acc = por_dira.setdefault(dira, {"TOTAL": 0, "IMPO": 0, "EXPO": 0, "CARGADO": 0, "LASTRE": 0})
+        for campo in ("TOTAL", "IMPO", "EXPO", "CARGADO", "LASTRE"):
+            acc[campo] += n(r.get(campo, 0))
+    filas = [{"DIRA": dira, **vals} for dira, vals in por_dira.items()]
+    filas.sort(key=lambda f: f["TOTAL"], reverse=True)
+    return filas
+
+
 def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_aduana,
                                por_var_control, comparacion_anual, carpeta, log_fn):
     periodo = _periodo_texto_fechas(fecha_d, fecha_h)
@@ -904,6 +984,7 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
             ("cargalast",  lambda: grafico_consolidado_cargado_lastre(cargado, lastre)),
             ("aduana",     lambda: grafico_consolidado_aduana(por_aduana)),
             ("varcontrol", lambda: grafico_consolidado_var_control(por_var_control)),
+            ("interanual", lambda: grafico_comparacion_interanual(comparacion_anual)),
         ]:
             try: graficos[nombre] = fn()
             except Exception as e: log_fn(f"  Gr\u00e1fico {nombre}: {e}")
@@ -998,6 +1079,23 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
         f"\"Demora media\" y \"En alerta\" son la misma métrica PAD (tiempo entre ingreso y salida) "
         f"que usa el informe \"Aduanas del país\" — se muestran acá para cruzar en una sola tabla "
         f"volumen de operaciones (SINTIA) con tiempos de desaduanamiento (PAD) por aduana.")
+
+    por_dira = _agrupar_por_dira(por_aduana)
+    if len(por_dira) > 1:
+        doc.add_paragraph().add_run("Subtotales por DIRA").bold = True
+        agregar_tabla_word(doc, ["DIRA", "TOTAL", "IMPO", "EXPO", "CARGADO", "LASTRE"],
+            [[f["DIRA"], fmt(f["TOTAL"]), fmt(f["IMPO"]), fmt(f["EXPO"]), fmt(f["CARGADO"]), fmt(f["LASTRE"])]
+             for f in por_dira],
+            col_widths=[4.5, 2.2, 2.0, 2.0, 2.2, 2.0])
+
+    avisos_demora = _alertas_demora_aduanas(por_aduana)
+    if avisos_demora:
+        p_alerta = doc.add_paragraph()
+        p_alerta.add_run("⚠ Aduanas con demora fuera de lo habitual: ").bold = True
+        for aviso in avisos_demora:
+            doc.add_paragraph(aviso, style="List Bullet")
+
+    doc.add_paragraph().add_run("Detalle por aduana").bold = True
     agregar_tabla_word(doc, ["ADUANA", "DIRA", "TOTAL", "IMPO", "EXPO", "CARGADO", "LASTRE",
                               "DEMORA MEDIA", "EN ALERTA"],
         [[r.get("ADUANA_NOMBRE", r["ADUANA"]), r.get("DIRA_NOMBRE", "—"), fmt(r.get("TOTAL", 0)),
@@ -1038,6 +1136,7 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
                if r["variacion_pct"] is not None else "—")]
              for r in comparacion_anual],
             col_widths=[4, 3, 3, 3])
+        if "interanual" in graficos: insertar_grafico(doc, graficos["interanual"], width_cm=11)
         indice_anexo = 8
 
     # Anexo — Glosario (mismo que el informe SINTIA estándar)
@@ -1051,6 +1150,12 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
         ("Cargado", "Camión con mercadería declarada en el MIC-DTA."),
         ("Lastre", "Camión sin carga (vacío) en el circuito."),
         ("Variable de control", "Criterio/regla de selectividad aplicado a la operación en SINTIA."),
+        ("SINVC", "Sin variable de control asignada — la operación no fue seleccionada por ningún criterio de selectividad."),
+        ("OPERA", "Variable de control aplicada por decisión operativa (no aleatoria ni determinística)."),
+        ("ALEAT", "Variable de control aplicada por sorteo aleatorio."),
+        ("DETER", "Variable de control aplicada por regla determinística (criterio fijo, no aleatorio)."),
+        ("DIRA", "Dirección Regional Aduanera — agrupa varias aduanas bajo una misma jurisdicción regional."),
+        ("OTRO/SIN DATO", "Operaciones cuyo MIC no permitió identificar el país emisor con el criterio de detección actual (ver Sección 1)."),
     ]
     for sigla, desc in glosario_items:
         gp = doc.add_paragraph()
@@ -1096,11 +1201,35 @@ def _generar_excel_consolidado(fecha_d, fecha_h, version, totales, por_pais, por
     add_sheet("Por País", ["País", "Total", "Impo", "Expo", "Cargado", "Lastre"],
         [[PAISES_CONSOLIDADO.get(r["PAIS"], r["PAIS"]), n(r.get("TOTAL", 0)), n(r.get("IMPO", 0)),
           n(r.get("EXPO", 0)), n(r.get("CARGADO", 0)), n(r.get("LASTRE", 0))] for r in por_pais])
+
+    por_dira = _agrupar_por_dira(por_aduana)
+    if len(por_dira) > 1:
+        add_sheet("Por DIRA", ["DIRA", "Total", "Impo", "Expo", "Cargado", "Lastre"],
+            [[f["DIRA"], f["TOTAL"], f["IMPO"], f["EXPO"], f["CARGADO"], f["LASTRE"]] for f in por_dira])
+
+    # Misma detección que en el Word (_alertas_demora_aduanas) pero acá se
+    # anota fila por fila en vez de como párrafo -- una columna "Alerta"
+    # con el motivo, vacía si la aduana no se destaca.
+    con_datos_demora = [r for r in por_aduana if r.get("DEMORA_MEDIA_DIAS") is not None and n(r.get("TOTAL", 0)) > 0]
+    mediana_demora = statistics.median(r["DEMORA_MEDIA_DIAS"] for r in con_datos_demora) if con_datos_demora else 0
+
+    def _motivo_alerta(r):
+        if r.get("DEMORA_MEDIA_DIAS") is None or not n(r.get("TOTAL", 0)):
+            return ""
+        total = n(r.get("TOTAL", 0)); en_alerta = n(r.get("EN_ALERTA_PAD", 0))
+        pct_alerta = pct_f(en_alerta, total)
+        motivos = []
+        if mediana_demora > 0 and r["DEMORA_MEDIA_DIAS"] >= mediana_demora * 3:
+            motivos.append("demora muy por encima de la mediana")
+        if pct_alerta >= 5.0:
+            motivos.append(f"{pct(en_alerta, total)} en alerta")
+        return "; ".join(motivos)
+
     add_sheet("Por Aduana", ["Aduana", "DIRA", "Total", "Impo", "Expo", "Cargado", "Lastre",
-                              "Demora media PAD", "En alerta PAD"],
+                              "Demora media PAD", "En alerta PAD", "Alerta"],
         [[r.get("ADUANA_NOMBRE", r["ADUANA"]), r.get("DIRA_NOMBRE", "—"), n(r.get("TOTAL", 0)),
           n(r.get("IMPO", 0)), n(r.get("EXPO", 0)), n(r.get("CARGADO", 0)), n(r.get("LASTRE", 0)),
-          r.get("DEMORA_MEDIA_FMT") or "—", n(r.get("EN_ALERTA_PAD", 0))]
+          r.get("DEMORA_MEDIA_FMT") or "—", n(r.get("EN_ALERTA_PAD", 0)), _motivo_alerta(r)]
          for r in por_aduana])
     add_sheet("Por Variable de Control", ["Variable de Control", "Total", "%"],
         [[r["VAR_CONTROL"], n(r.get("TOTAL", 0)), pct(r.get("TOTAL", 0), total)] for r in por_var_control])

@@ -125,6 +125,33 @@ def grafico_comparativo_meses(datos_ult, datos_ant, per_ult, per_ant):
         if v>0: ax.text(bar.get_x()+bar.get_width()/2,v+v*0.02,fmt(v),ha='center',va='bottom',fontsize=8)
     fig.tight_layout(); return fig_to_bytes(fig)
 
+def grafico_comparacion_interanual(comparacion_anual):
+    """Barras agrupadas mes a mes, año actual vs año anterior -- mismo
+    estilo que grafico_comparativo_meses (arriba), pero para la serie
+    completa de meses cerrados en vez de un único mes. Ver
+    comparacion_anual_meses_completos en generar_queries.py para el shape
+    de `comparacion_anual` (uno de sus items: mes_label, anio_actual,
+    total_actual, anio_anterior, total_anterior)."""
+    if not comparacion_anual: return None
+    labels = [r["mes_label"][:3] for r in comparacion_anual]
+    anio_act = comparacion_anual[0]["anio_actual"]; anio_ant = comparacion_anual[0]["anio_anterior"]
+    vals_ant = [n(r["total_anterior"]) if r["total_anterior"] is not None else 0 for r in comparacion_anual]
+    vals_act = [n(r["total_actual"]) for r in comparacion_anual]
+    x = range(len(labels)); w = 0.35
+    fig, ax = plt.subplots(figsize=(7, 4), facecolor='white')
+    b1 = ax.bar([i - w/2 for i in x], vals_ant, w, label=str(anio_ant), color='#ADB5BD', edgecolor='white')
+    b2 = ax.bar([i + w/2 for i in x], vals_act, w, label=str(anio_act), color=C_TRANS, edgecolor='white')
+    ax.set_xticks(list(x)); ax.set_xticklabels(labels, fontsize=9)
+    ax.set_ylabel("Operaciones", fontsize=9)
+    ax.set_title(f"Comparación interanual: {anio_ant} vs {anio_act} (meses cerrados)", fontsize=11, fontweight='bold')
+    ax.legend(fontsize=9); ax.yaxis.grid(True, alpha=0.3); ax.set_axisbelow(True)
+    ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+    for bar in list(b1) + list(b2):
+        v = int(bar.get_height())
+        if v > 0: ax.text(bar.get_x()+bar.get_width()/2, v+v*0.01, fmt(v), ha='center', va='bottom', fontsize=7)
+    fig.tight_layout(); return fig_to_bytes(fig)
+
+
 # ── Gráficos del informe consolidado multi-país (Fase 7) ─────────────────────
 def grafico_consolidado_pais(por_pais):
     """Barras horizontales: total de operaciones por país."""
