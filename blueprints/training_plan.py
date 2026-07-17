@@ -22,7 +22,7 @@ from flask import request, jsonify, render_template, session
 from core import HIST_DB, login_required, modulo_required, get_db, notificar_telegram
 from blueprints.training import (training_bp, _api_key, get_credenciales_garmin,
     _conectar_garmin, _sincronizar_wellness_dia, _sincronizar_actividades_dia,
-    _obtener_peso_garmin, guardar_analisis, get_actividades, GARMIN_TOKENSTORE)
+    _obtener_peso_garmin, guardar_analisis, get_actividades, get_analisis, GARMIN_TOKENSTORE)
 
 # ── BD ────────────────────────────────────────────────────────────────────────
 def init_training_db():
@@ -360,7 +360,7 @@ def _workout_programado_garmin(client, fecha):
 
 def _armar_prompt_matutino(fecha_ayer, fecha_hoy, dia_ayer, dia_hoy, peso_row,
                             actividades_ayer, actividades_semana, wellness_ayer, wellness_hoy,
-                            workout_hoy_garmin, sesiones_hoy_plan, carga):
+                            workout_hoy_garmin, sesiones_hoy_plan, carga, progresion_reciente=None):
     """Fase 11: cambió el enfoque de 'analizar hoy a la noche' a 'analizar
     ayer + la semana + recomendar para hoy, listo a la mañana' -- correr a
     la noche no tenía sentido para el sueño (la noche todavía no pasó) ni
@@ -450,6 +450,15 @@ def _armar_prompt_matutino(fecha_ayer, fecha_hoy, dia_ayer, dia_hoy, peso_row,
         partes.append(
             f"\nPROGRAMADO PARA HOY ({dia_hoy} {fecha_hoy}): NO hay ninguna sesión cargada, ni en Garmin "
             f"Connect ni en el plan interno. No hay ninguna sesión real que analizar hoy.")
+
+    if progresion_reciente:
+        resumen = progresion_reciente.get("respuesta", "")[:600]
+        partes.append(
+            f"\nÚLTIMO ANÁLISIS DE PROGRESIÓN (del {progresion_reciente.get('creado','')[:10]}, hecho aparte, "
+            f"mirando una racha de sesiones del mismo tipo): {resumen}"
+            f"{'...' if len(progresion_reciente.get('respuesta',''))>600 else ''}\n"
+            f"Si es relevante, podés referenciarlo en tu análisis (ej. si confirma o contradice una tendencia), "
+            f"pero no es obligatorio si no aporta a lo de hoy.")
 
     partes.append(
         "\nDame TRES cosas, cada una en su propio párrafo corto:\n"
@@ -584,10 +593,25 @@ def _analisis_matutino_diario():
                             except Exception as e:
                                 logging.info(f"Análisis diario: no se pudo traer el calendario de Garmin ({e}).")
 
+                        # Análisis de Progresión más reciente, si es de los
+                        # últimos 14 días -- así el análisis diario puede
+                        # construir sobre lo que ya se vio ahí (antes eran
+                        # dos sistemas de IA que nunca se cruzaban).
+                        progresion_reciente = None
+                        try:
+                            ultimos = get_analisis(tipo="progresion")
+                            if ultimos:
+                                creado = ultimos[0].get("creado", "")
+                                if creado and (ahora.date() - datetime.strptime(creado[:10], "%Y-%m-%d").date()).days <= 14:
+                                    progresion_reciente = ultimos[0]
+                        except Exception:
+                            logging.exception("Análisis diario: no se pudo leer el último análisis de progresión")
+
                         prompt = _armar_prompt_matutino(ayer, hoy, dia_ayer, dia_hoy, peso_row,
                                                          actividades_ayer, actividades_semana,
                                                          wellness_ayer, wellness_hoy,
-                                                         workout_hoy_garmin, sesiones_hoy_plan, carga)
+                                                         workout_hoy_garmin, sesiones_hoy_plan, carga,
+                                                         progresion_reciente)
                         try:
                             respuesta = _llamar_ia_haiku(prompt, api_key)
                             guardar_analisis({"tipo": "diario", "fecha_desde": ayer, "fecha_hasta": hoy,

@@ -1227,11 +1227,52 @@ def api_config_set():
     logging.info(f"GARMIN CONFIG SET | user={session.get('username')} | garmin_usuario={usuario}")
     return jsonify({"ok": True})
 
+@training_bp.route("/api/training/tendencias_diarias")
+@login_required
+@modulo_required("training")
+def api_tendencias_diarias():
+    """Serie temporal DIARIA (peso + wellness) -- a diferencia de
+    /api/garmin/tendencias (una fila por ACTIVIDAD, ciego en días de
+    descanso), esto trae una fila por DÍA CALENDARIO independientemente de
+    si hubo entrenamiento, cruzando entrenamiento_peso y garmin_wellness
+    (Fase 11: ninguna de las dos tablas estaba conectada a "Tendencias")."""
+    dias = int(request.args.get("dias", 90))
+    desde = (date.today() - timedelta(days=dias)).isoformat()
+    with get_db(HIST_DB, row_factory=True) as con:
+        pesos = {r["fecha"]: dict(r) for r in con.execute(
+            "SELECT * FROM entrenamiento_peso WHERE fecha >= ?", (desde,)).fetchall()}
+        wellness = {r["fecha"]: dict(r) for r in con.execute(
+            "SELECT * FROM garmin_wellness WHERE fecha >= ?", (desde,)).fetchall()}
+    fechas = sorted(set(pesos) | set(wellness))
+    serie = []
+    for f in fechas:
+        p = pesos.get(f, {})
+        w = wellness.get(f, {})
+        serie.append({
+            "fecha": f,
+            "peso_kg": p.get("peso_kg"),
+            "sensacion": p.get("sensacion"),
+            "body_battery_min": w.get("body_battery_min"),
+            "body_battery_max": w.get("body_battery_max"),
+            "sleep_score": w.get("sleep_score"),
+            "sleep_horas": round((w.get("sleep_seg") or 0) / 3600, 1) if w.get("sleep_seg") else None,
+            "stress_avg": w.get("stress_avg"),
+            "hrv_avg_ms": w.get("hrv_avg_ms"),
+            "resting_hr": w.get("resting_hr"),
+            "total_steps": w.get("total_steps"),
+        })
+    return jsonify({"ok": True, "rows": serie})
+
+
 @training_bp.route("/api/garmin/carga_semanal")
 @login_required
 @modulo_required("training")
 def api_carga_semanal():
-    """ATL (fatiga aguda 7d) y CTL (forma crónica 42d) basados en carga diaria."""
+    """ATL (fatiga aguda 7d) y CTL (forma crónica 42d) basados en carga diaria.
+    Suma también HRV/Body Battery promedio por semana (Fase 11) -- para
+    poder ver en el mismo gráfico si, cuando la carga sube mucho, la
+    recuperación empieza a bajar (la pregunta que ATL/CTL/TSB solos no
+    contestan: no dicen nada de cómo está respondiendo el cuerpo)."""
     with get_db(HIST_DB, row_factory=True) as con:
         rows = con.execute("""
             SELECT DATE(fecha) as dia,
@@ -1241,9 +1282,13 @@ def api_carga_semanal():
             WHERE fecha >= DATE('now', '-90 days')
             GROUP BY dia ORDER BY dia
         """).fetchall()
+        wellness_rows = con.execute(
+            "SELECT fecha, hrv_avg_ms, body_battery_max, body_battery_min FROM garmin_wellness "
+            "WHERE fecha >= DATE('now', '-90 days')").fetchall()
 
     from datetime import date, timedelta
     datos = {r["dia"]: {"carga": r["carga"], "sesiones": r["sesiones"]} for r in rows}
+    wellness_por_dia = {r["fecha"]: dict(r) for r in wellness_rows}
 
     semanas = []
     hoy = date.today()
@@ -1257,10 +1302,14 @@ def api_carga_semanal():
             datos.get((lunes + timedelta(days=d)).isoformat(), {}).get("sesiones", 0)
             for d in range(7)
         )
+        hrv_sem = [wellness_por_dia.get((lunes + timedelta(days=d)).isoformat(), {}).get("hrv_avg_ms")
+                   for d in range(7)]
+        hrv_sem = [v for v in hrv_sem if v is not None]
         semanas.append({
             "semana": lunes.isoformat(),
             "carga": round(carga_sem, 1),
             "sesiones": sesiones_sem,
+            "hrv_prom": round(sum(hrv_sem) / len(hrv_sem), 1) if hrv_sem else None,
         })
 
     # ATL (7d) y CTL (42d) — promedio móvil
