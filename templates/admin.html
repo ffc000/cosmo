@@ -317,6 +317,32 @@ select option{background:var(--surface)}
           <div id="tablas-detalle-content">Cargando...</div>
         </div>
         <div class="card">
+          <div class="card-title">Consola SQL (solo lectura)</div>
+          <p style="font-size:.72rem;color:var(--muted);margin-bottom:.6rem">
+            Solo <code>SELECT</code>/<code>WITH</code> — no se pueden insertar, actualizar ni borrar datos desde acá.
+            Máximo 2000 filas por consulta.
+          </p>
+          <div style="display:flex;gap:.6rem;align-items:center;margin-bottom:.5rem;flex-wrap:wrap">
+            <label style="font-size:.8rem;display:flex;align-items:center;gap:.3rem">
+              Base:
+              <select id="sql-console-base" style="padding:.3rem .5rem;border-radius:4px;border:1px solid var(--border,#ccc)">
+                <option value="pad">pad.db (DAT_*, RECHAZOS)</option>
+                <option value="historial">historial.db (usuarios, ref_*, etc.)</option>
+              </select>
+            </label>
+            <label style="font-size:.8rem;display:flex;align-items:center;gap:.3rem">
+              Límite:
+              <input type="number" id="sql-console-limite" value="500" min="1" max="2000" style="width:5rem;padding:.3rem .5rem;border-radius:4px;border:1px solid var(--border,#ccc)">
+            </label>
+          </div>
+          <textarea id="sql-console-query" rows="5" placeholder="SELECT COUNT(*) FROM DAT_2025_actual;"
+            style="width:100%;font-family:monospace;font-size:.82rem;padding:.6rem;border-radius:4px;border:1px solid var(--border,#ccc);resize:vertical"></textarea>
+          <button class="btn btn-primary btn-sm" id="btn-sql-console-run" style="margin-top:.6rem">▶ Ejecutar</button>
+          <span id="sql-console-status" style="font-size:.78rem;margin-left:.6rem;color:var(--muted)"></span>
+          <div id="sql-console-error" style="margin-top:.5rem;font-size:.82rem;color:var(--danger,#c0392b)"></div>
+          <div id="sql-console-result" style="margin-top:.6rem;overflow-x:auto"></div>
+        </div>
+        <div class="card">
           <div class="card-title">Carga inicial</div>
           <div style="display:flex;gap:.75rem;margin-bottom:.75rem;flex-wrap:wrap">
             <button class="btn btn-outline btn-sm" id="tab-bd-sql-btn" onclick="switchBdTab('sql')" style="border-color:var(--accent);color:var(--accent);background:var(--accent-light)">📄 Importar SQL</button>
@@ -698,6 +724,44 @@ function consultarEstadoAgregarSql(jobId){
 }
 document.getElementById('btn-upload-db').addEventListener('click',()=>uploadXHR('file-db','/api/upload-db','pct-db','bar-db','progress-db','msg-db'));
 document.getElementById('btn-upload-rech-sql').addEventListener('click',()=>uploadXHR('file-rech-sql','/api/import-rechazos-sql','pct-rech-sql','bar-rech-sql','progress-rech-sql','msg-rech-sql'));
+
+// ── Consola SQL de solo lectura ──
+document.getElementById('btn-sql-console-run').addEventListener('click', ()=>{
+  const query = document.getElementById('sql-console-query').value.trim();
+  const base = document.getElementById('sql-console-base').value;
+  const limite = parseInt(document.getElementById('sql-console-limite').value) || 500;
+  const errEl = document.getElementById('sql-console-error');
+  const resEl = document.getElementById('sql-console-result');
+  const statusEl = document.getElementById('sql-console-status');
+  const btn = document.getElementById('btn-sql-console-run');
+  errEl.textContent=''; resEl.innerHTML=''; statusEl.textContent='';
+  if(!query){ errEl.textContent='Escribí una consulta primero.'; return; }
+  btn.disabled=true; btn.textContent='Ejecutando...'; statusEl.textContent='';
+  fetch('/api/admin/sql-query',{
+    method:'POST', headers:{'Content-Type':'application/json',
+      'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content},
+    body: JSON.stringify({query, base, limite})
+  }).then(r=>r.json()).then(d=>{
+    btn.disabled=false; btn.textContent='▶ Ejecutar';
+    if(!d.ok){ errEl.textContent='✗ '+d.error; return; }
+    statusEl.textContent = `${d.rows.length} fila(s) en ${d.duracion_seg}s` + (d.truncado ? ` — cortado en ${d.rows.length} (subí el límite o agregá LIMIT a tu consulta si necesitás más)` : '');
+    if(!d.rows.length){ resEl.innerHTML='<p style="color:var(--muted);font-size:.82rem">Sin resultados.</p>'; return; }
+    let html = '<table style="border-collapse:collapse;width:100%;font-size:.78rem"><thead><tr>';
+    for(const c of d.cols) html += `<th style="border:1px solid var(--border,#ccc);padding:.3rem .5rem;background:var(--accent-light,#eef);text-align:left;position:sticky;top:0">${c}</th>`;
+    html += '</tr></thead><tbody>';
+    for(const row of d.rows){
+      html += '<tr>';
+      for(const val of row) html += `<td style="border:1px solid var(--border,#ccc);padding:.3rem .5rem;white-space:nowrap">${val===null?'<em style="color:var(--muted)">NULL</em>':String(val)}</td>`;
+      html += '</tr>';
+    }
+    html += '</tbody></table>';
+    resEl.innerHTML = html;
+  }).catch(e=>{
+    btn.disabled=false; btn.textContent='▶ Ejecutar';
+    errEl.textContent='Error de red: '+e.message;
+  });
+});
+
 function switchBdTab(t){
   document.getElementById('bd-panel-sql').style.display=t==='sql'?'block':'none';
   document.getElementById('bd-panel-agregar').style.display=t==='agregar'?'block':'none';
