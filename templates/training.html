@@ -320,15 +320,16 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
             <div>
               <label>Parámetros a graficar</label>
               <select id="tend-metricas" multiple size="1" onchange="renderTendencias()" style="height:auto">
+                <optgroup label="Por actividad">
                 <option value="fc_media" selected>FC media</option>
                 <option value="fc_max">FC máxima</option>
                 <option value="tss">TSS</option>
                 <option value="vo2max">VO2max</option>
                 <option value="aerobic_te">TE Aeróbico</option>
                 <option value="anaerobic_te">TE Anaeróbico</option>
-                <option value="hrv_weekly_avg">HRV semanal</option>
-                <option value="body_battery_drained">Body Battery gastada</option>
-                <option value="stress_durante">Estrés medio</option>
+                <option value="hrv_weekly_avg">HRV semanal (de la actividad)</option>
+                <option value="body_battery_drained">Body Battery gastada (de la actividad)</option>
+                <option value="stress_durante">Estrés medio (de la actividad)</option>
                 <option value="load_primario">Carga</option>
                 <option value="tiempo_recuperacion">Recuperación (h)</option>
                 <option value="cadencia">Cadencia</option>
@@ -338,6 +339,18 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
                 <option value="stride_length">Long. zancada</option>
                 <option value="ftp">FTP</option>
                 <option value="swolf">SWOLF</option>
+                </optgroup>
+                <optgroup label="Diario (con o sin entrenamiento)">
+                <option value="diaria__peso_kg">Peso corporal (kg)</option>
+                <option value="diaria__body_battery_max">Body Battery máx (diario)</option>
+                <option value="diaria__body_battery_min">Body Battery mín (diario)</option>
+                <option value="diaria__sleep_score">Sueño (score)</option>
+                <option value="diaria__sleep_horas">Sueño (horas)</option>
+                <option value="diaria__stress_avg">Estrés medio (diario)</option>
+                <option value="diaria__hrv_avg_ms">HRV (ms, diario)</option>
+                <option value="diaria__resting_hr">FC en reposo</option>
+                <option value="diaria__total_steps">Pasos totales</option>
+                </optgroup>
               </select>
             </div>
           </div>
@@ -1565,36 +1578,69 @@ let _tendRows = [];
 let _chartTend = null;
 const TEND_COLORS = ['#3B82F6','#EF4444','#10B981','#F59E0B','#8B5CF6','#EC4899','#06B6D4','#84CC16'];
 
+let _tendRowsDiarias = [];
+
 async function cargarTendencias() {
   const tipo = document.getElementById('tend-tipo').value;
   const dias = parseInt(document.getElementById('tend-periodo').value, 10);
   let qs = `tipo=${tipo}`;
+  let diasParaDiarias = 90;
   if (dias > 0) {
-    const hasta = new Date();
-    const desde = new Date(); desde.setDate(desde.getDate() - dias);
-    qs += `&desde=${desde.toISOString().substring(0,10)}&hasta=${hasta.toISOString().substring(0,10)}&limit=500`;
+    // Fecha local, no UTC -- toISOString() convierte a UTC y de noche en
+    // Argentina corría la fecha un día (mismo bug que ya se corrigió en
+    // Peso y Bienestar).
+    const hasta = _fechaLocalISO();
+    const desdeD = new Date(); desdeD.setDate(desdeD.getDate() - dias);
+    const desde = _fechaLocalISO(desdeD);
+    qs += `&desde=${desde}&hasta=${hasta}&limit=500`;
+    diasParaDiarias = dias;
   } else {
     qs += `&limit=2000`; // histórico completo
+    diasParaDiarias = 3650;
   }
-  const d = await (await fetch(`/api/garmin/tendencias?${qs}`)).json();
-  if (!d.ok) return;
-  _tendRows = d.rows || [];
+  const [d, dDiaria] = await Promise.all([
+    fetch(`/api/garmin/tendencias?${qs}`).then(r => r.json()),
+    fetch(`/api/training/tendencias_diarias?dias=${diasParaDiarias}`).then(r => r.json()),
+  ]);
+  if (d.ok) _tendRows = d.rows || [];
+  if (dDiaria.ok) _tendRowsDiarias = dDiaria.rows || [];
   renderTendencias();
 }
 
 function renderTendencias() {
   const sel = document.getElementById('tend-metricas');
   const metricas = Array.from(sel.selectedOptions).map(o => o.value);
-  const labels = _tendRows.map(r => r.fecha);
-  const datasets = metricas.map((m, i) => ({
-    label: sel.querySelector(`option[value="${m}"]`).textContent,
-    data: _tendRows.map(r => r[m]),
-    borderColor: TEND_COLORS[i % TEND_COLORS.length],
-    backgroundColor: TEND_COLORS[i % TEND_COLORS.length],
-    spanGaps: true,
-    tension: .25,
-    yAxisID: i === 0 ? 'y' : 'y' + i,
-  }));
+
+  // Eje de fechas unificado -- las métricas "por actividad" y las
+  // "diarias" (peso/wellness) no necesariamente tienen las mismas fechas
+  // (un día de descanso no tiene actividad, pero sí puede tener wellness).
+  const usaDiarias = metricas.some(m => m.startsWith('diaria__'));
+  const usaActividad = metricas.some(m => !m.startsWith('diaria__'));
+  let labels;
+  if (usaDiarias && usaActividad) {
+    labels = Array.from(new Set([..._tendRows.map(r => r.fecha), ..._tendRowsDiarias.map(r => r.fecha)])).sort();
+  } else if (usaDiarias) {
+    labels = _tendRowsDiarias.map(r => r.fecha);
+  } else {
+    labels = _tendRows.map(r => r.fecha);
+  }
+  const porFechaActividad = Object.fromEntries(_tendRows.map(r => [r.fecha, r]));
+  const porFechaDiaria = Object.fromEntries(_tendRowsDiarias.map(r => [r.fecha, r]));
+
+  const datasets = metricas.map((m, i) => {
+    const esDiaria = m.startsWith('diaria__');
+    const campo = esDiaria ? m.replace('diaria__', '') : m;
+    const fuente = esDiaria ? porFechaDiaria : porFechaActividad;
+    return {
+      label: sel.querySelector(`option[value="${m}"]`).textContent,
+      data: labels.map(f => (fuente[f] ? fuente[f][campo] : null)),
+      borderColor: TEND_COLORS[i % TEND_COLORS.length],
+      backgroundColor: TEND_COLORS[i % TEND_COLORS.length],
+      spanGaps: true,
+      tension: .25,
+      yAxisID: i === 0 ? 'y' : 'y' + i,
+    };
+  });
 
   const scales = { x: { ticks: { maxTicksLimit: 12 } } };
   metricas.forEach((m, i) => {
@@ -1626,15 +1672,23 @@ async function cargarCargaSemanal() {
   const labels = d.semanas.map(s => s.semana.substring(5));
   const cargas = d.semanas.map(s => s.carga);
   const sesions= d.semanas.map(s => s.sesiones);
+  const hrv    = d.semanas.map(s => s.hrv_prom);
+  const hayHrv = hrv.some(v => v !== null && v !== undefined);
   const ctx = document.getElementById('canvas-carga').getContext('2d');
   if (_chartCarga) _chartCarga.destroy();
+  const datasets = [
+    { label:'Carga semanal', data:cargas, backgroundColor:'rgba(26,86,219,.65)', borderColor:'rgba(26,86,219,1)', borderWidth:1, yAxisID:'y' },
+    { label:'Sesiones', data:sesions, type:'line', borderColor:'rgba(217,119,6,1)', backgroundColor:'rgba(217,119,6,.1)', pointRadius:4, tension:0.3, yAxisID:'y2' },
+  ];
+  const scales = { y:{position:'left',title:{display:true,text:'Carga'}}, y2:{position:'right',title:{display:true,text:'Sesiones'},grid:{drawOnChartArea:false}} };
+  if (hayHrv) {
+    datasets.push({ label:'HRV promedio (recuperación)', data:hrv, type:'line', spanGaps:true, borderColor:'rgba(5,150,105,1)', backgroundColor:'rgba(5,150,105,.1)', pointRadius:3, borderDash:[5,3], tension:0.3, yAxisID:'y3' });
+    scales.y3 = { position:'right', title:{display:true,text:'HRV (ms)'}, grid:{drawOnChartArea:false}, offset:true };
+  }
   _chartCarga = new Chart(ctx, {
     type:'bar',
-    data:{ labels, datasets:[
-      { label:'Carga semanal', data:cargas, backgroundColor:'rgba(26,86,219,.65)', borderColor:'rgba(26,86,219,1)', borderWidth:1, yAxisID:'y' },
-      { label:'Sesiones', data:sesions, type:'line', borderColor:'rgba(217,119,6,1)', backgroundColor:'rgba(217,119,6,.1)', pointRadius:4, tension:0.3, yAxisID:'y2' }
-    ]},
-    options:{ responsive:true, maintainAspectRatio:false, interaction:{mode:'index'}, scales:{ y:{position:'left',title:{display:true,text:'Carga'}}, y2:{position:'right',title:{display:true,text:'Sesiones'},grid:{drawOnChartArea:false}} }, plugins:{legend:{position:'bottom'}} }
+    data:{ labels, datasets },
+    options:{ responsive:true, maintainAspectRatio:false, interaction:{mode:'index'}, scales, plugins:{legend:{position:'bottom'}} }
   });
 }
 
