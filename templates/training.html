@@ -356,7 +356,7 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
             </div>
           </div>
           <div style="font-size:.68rem;color:var(--muted);margin-bottom:.5rem">Ctrl/Cmd + click para seleccionar varios parámetros a la vez.</div>
-          <div style="width:100%;overflow-x:auto;height:320px"><canvas id="canvas-tendencias"></canvas></div>
+          <div style="width:100%;overflow-x:auto;height:320px;position:relative"><canvas id="canvas-tendencias" style="position:absolute;width:100%;height:100%"></canvas></div>
         </div>
       </div>
 
@@ -369,7 +369,7 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
             <div class="stat-card"><div class="stat-val" id="carga-ctl">—</div><div class="stat-lbl">CTL — Forma (42d)</div></div>
             <div class="stat-card"><div class="stat-val" id="carga-tsb">—</div><div class="stat-lbl">TSB — Frescura</div></div>
           </div>
-          <div style="width:100%;overflow-x:auto;height:280px"><canvas id="canvas-carga"></canvas></div>
+          <div style="width:100%;overflow-x:auto;height:280px;position:relative"><canvas id="canvas-carga" style="position:absolute;width:100%;height:100%"></canvas></div>
           <div style="font-size:.72rem;color:var(--muted);margin-top:.5rem">ATL &gt; CTL = fatiga acumulada · TSB positivo = frescura · TSB negativo = bajo forma</div>
         </div>
       </div>
@@ -546,7 +546,7 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
 
         <div class="card">
           <div class="card-title">Tendencia</div>
-          <canvas id="canvas-antro-tendencia" height="90"></canvas>
+          <div style="width:100%;overflow-x:auto;height:280px;position:relative"><canvas id="canvas-antro-tendencia" style="position:absolute;width:100%;height:100%"></canvas></div>
         </div>
 
         <div class="card">
@@ -1777,7 +1777,7 @@ function cargarAntropometria() {
           { label: 'Peso (kg)', data: cron.map(r => r.peso_kg), borderColor: 'rgba(26,86,219,1)', backgroundColor:'rgba(26,86,219,.1)', yAxisID: 'y2', borderDash: [5,3], tension: .25 },
         ]
       },
-      options: { responsive: true, maintainAspectRatio: false, interaction: {mode:'index', intersect:false},
+      options: { responsive: true, maintainAspectRatio: false, resizeDelay: 100, interaction: {mode:'index', intersect:false},
         scales: { y: {position:'left', title:{display:true,text:'% Grasa'}}, y2: {position:'right', title:{display:true,text:'kg'}, grid:{drawOnChartArea:false}} },
         plugins: { legend: {position:'bottom'} } }
     });
@@ -1930,7 +1930,7 @@ function renderTendencias() {
   _chartTend = new Chart(ctx, {
     type: 'line',
     data: { labels, datasets },
-    options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, scales, plugins: { legend: { position: 'bottom' } } }
+    options: { responsive: true, maintainAspectRatio: false, resizeDelay: 100, interaction: { mode: 'index', intersect: false }, scales, plugins: { legend: { position: 'bottom' } } }
   });
 }
 
@@ -1966,7 +1966,7 @@ async function cargarCargaSemanal() {
   _chartCarga = new Chart(ctx, {
     type:'bar',
     data:{ labels, datasets },
-    options:{ responsive:true, maintainAspectRatio:false, interaction:{mode:'index'}, scales, plugins:{legend:{position:'bottom'}} }
+    options:{ responsive:true, maintainAspectRatio:false, resizeDelay:100, interaction:{mode:'index'}, scales, plugins:{legend:{position:'bottom'}} }
   });
 }
 
