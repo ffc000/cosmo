@@ -421,15 +421,14 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
       <!-- Panel: Peso y Bienestar -->
       <div class="panel" id="panel-bienestar">
         <div class="card">
-          <div class="card-title">Registrar hoy</div>
+          <div class="card-title">Cómo te sentiste hoy</div>
           <p style="font-size:.78rem;color:var(--muted);margin-bottom:1rem">
-            Si no cargás peso un día, el análisis nocturno usa el último que hayas registrado — no hace falta
-            cargar todos los días. El estado de ánimo es manual porque Garmin no lo reporta; sí trae Body
-            Battery/sueño/estrés/HRV si tu reloj los soporta (probalo abajo).
+            El peso corporal se toma automáticamente de Garmin Connect (cargalo ahí, no acá) — el análisis
+            nocturno lo trae solo cada noche, y si no hay carga de hoy usa el último que hayas registrado en
+            Garmin. Acá solo se anota lo que Garmin no reporta: cómo te sentiste y una nota libre.
           </p>
-          <div class="form-row cols3">
+          <div class="form-row cols2">
             <div><label>Fecha</label><input type="date" id="peso-fecha"></div>
-            <div><label>Peso (kg)</label><input type="number" step="0.1" id="peso-kg" placeholder="78.4"></div>
             <div><label>Cómo te sentiste (1-5)</label>
               <select id="peso-sensacion">
                 <option value="">—</option>
@@ -1380,13 +1379,12 @@ async function cargarAnalisisPrev() {
 
 function guardarPeso() {
   const fecha = document.getElementById('peso-fecha').value;
-  const peso_kg = document.getElementById('peso-kg').value;
   const sensacion = document.getElementById('peso-sensacion').value;
   const nota = document.getElementById('peso-nota').value;
   if (!fecha) { alert('Falta la fecha.'); return; }
   fetch('/api/training/peso', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({fecha, peso_kg: peso_kg || null, sensacion: sensacion || null, nota})
+    body: JSON.stringify({fecha, sensacion: sensacion || null, nota})
   }).then(r => r.json()).then(d => {
     if (!d.ok) { alert('Error: ' + d.error); return; }
     document.getElementById('peso-nota').value = '';
@@ -1418,8 +1416,12 @@ function probarWellness() {
   }).then(r => r.json()).then(d => {
     if (!d.ok) { el.innerHTML = `<p style="color:var(--danger);font-size:.82rem">Error: ${escHtml(d.error)}</p>`; return; }
     const ex = d.extraido;
+    const pesoTxt = d.peso && d.peso.peso_kg
+      ? `${d.peso.peso_kg} kg (${d.peso.fecha === document.getElementById('wellness-fecha').value ? 'de hoy' : 'último registrado, del ' + escHtml(d.peso.fecha)})`
+      : 'sin datos en Garmin para los últimos 60 días';
     el.innerHTML = `
       <div style="background:var(--bg);border-radius:var(--radius-sm);padding:.8rem;margin-top:.8rem;font-size:.82rem">
+        <strong>Peso (Garmin):</strong> ${pesoTxt}<br><br>
         <strong>Campos extraídos:</strong><br>
         Body Battery: ${ex.body_battery_min ?? '—'}–${ex.body_battery_max ?? '—'} ·
         Sueño: ${ex.sleep_score ?? '—'} pts (${ex.sleep_seg ? (ex.sleep_seg/3600).toFixed(1)+'h' : '—'}) ·
@@ -1428,8 +1430,12 @@ function probarWellness() {
         FC reposo: ${ex.resting_hr ?? '—'}
       </div>
       <details style="margin-top:.6rem">
-        <summary style="font-size:.76rem;color:var(--muted);cursor:pointer">Ver JSON crudo completo (para ajustar el parseo si algo no coincide)</summary>
+        <summary style="font-size:.76rem;color:var(--muted);cursor:pointer">Ver JSON crudo completo (wellness)</summary>
         <pre style="font-size:.68rem;overflow-x:auto;background:var(--bg);padding:.6rem;border-radius:var(--radius-sm);margin-top:.5rem">${escHtml(JSON.stringify(d.raw, null, 2))}</pre>
+      </details>
+      <details style="margin-top:.4rem">
+        <summary style="font-size:.76rem;color:var(--muted);cursor:pointer">Ver JSON crudo completo (peso)</summary>
+        <pre style="font-size:.68rem;overflow-x:auto;background:var(--bg);padding:.6rem;border-radius:var(--radius-sm);margin-top:.5rem">${escHtml(JSON.stringify(d.raw_peso, null, 2))}</pre>
       </details>`;
   });
 }
