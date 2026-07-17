@@ -14,11 +14,11 @@ def _armar_dat_para_informe(app_module):
     con.execute("DROP TABLE IF EXISTS DAT_2026")
     con.execute("""CREATE TABLE DAT_2026 (
         ADUANA TEXT, MIC TEXT, EST_MIC TEXT, CARGADO TEXT, TIPO_REGISTRO TEXT,
-        FECHA_INGRESO_ISO TEXT, ULT_ESTADO TEXT, FECHA_ULT_INT TEXT
+        FECHA_INGRESO_ISO TEXT, ULT_ESTADO TEXT, FECHA_ULT_INT TEXT, OPERACION_PAD_EXT TEXT
     )""")
-    con.executemany("INSERT INTO DAT_2026 VALUES (?,?,?,?,?,?,?,?)", [
-        ("601", "MIC1", "TRANS", "SI", "I", "2026-07-01 08:00", "SAL", "01-07-2026 10:00:00"),  # 2h
-        ("601", "MIC2", "TRANS", "SI", "I", "2026-07-02 08:00", "SAL", "07-07-2026 13:00:00"),  # outlier
+    con.executemany("INSERT INTO DAT_2026 VALUES (?,?,?,?,?,?,?,?,?)", [
+        ("601", "MIC1", "TRANS", "SI", "I", "2026-07-01 08:00", "SAL", "01-07-2026 10:00:00", "OP1"),  # 2h
+        ("601", "MIC2", "TRANS", "SI", "I", "2026-07-02 08:00", "SAL", "07-07-2026 13:00:00", "OP2"),  # outlier
     ])
     con.commit(); con.close()
 
@@ -168,12 +168,12 @@ def _armar_dat_con_y_sin_alerta(app_module):
     con.execute("DROP TABLE IF EXISTS DAT_2026")
     con.execute("""CREATE TABLE DAT_2026 (
         ADUANA TEXT, MIC TEXT, EST_MIC TEXT, CARGADO TEXT, TIPO_REGISTRO TEXT,
-        FECHA_INGRESO_ISO TEXT, ULT_ESTADO TEXT, FECHA_ULT_INT TEXT
+        FECHA_INGRESO_ISO TEXT, ULT_ESTADO TEXT, FECHA_ULT_INT TEXT, OPERACION_PAD_EXT TEXT
     )""")
-    con.executemany("INSERT INTO DAT_2026 VALUES (?,?,?,?,?,?,?,?)", [
-        ("601", "MIC1", "TRANS", "SI", "I", "2026-06-01 08:00", "SAL", "01-06-2026 10:00:00"),  # 2h, normal
-        ("601", "MIC2", "TRANS", "SI", "I", "2026-07-01 08:00", "SAL", "07-07-2026 13:00:00"),  # 6 días, alerta
-        ("602", "MIC3", "TRANS", "SI", "I", "2026-07-01 08:00", "SAL", "01-07-2026 09:00:00"),  # 1h, sin alerta
+    con.executemany("INSERT INTO DAT_2026 VALUES (?,?,?,?,?,?,?,?,?)", [
+        ("601", "MIC1", "TRANS", "SI", "I", "2026-06-01 08:00", "SAL", "01-06-2026 10:00:00", "OP1"),  # 2h, normal
+        ("601", "MIC2", "TRANS", "SI", "I", "2026-07-01 08:00", "SAL", "07-07-2026 13:00:00", "OP2"),  # 6 días, alerta
+        ("602", "MIC3", "TRANS", "SI", "I", "2026-07-01 08:00", "SAL", "01-07-2026 09:00:00", "OP3"),  # 1h, sin alerta
     ])
     con.commit(); con.close()
 
@@ -217,11 +217,12 @@ def test_word_sin_ninguna_alerta_no_agrega_la_seccion(client, test_user, app_mod
     con.execute("DROP TABLE IF EXISTS DAT_2026")
     con.execute("""CREATE TABLE DAT_2026 (
         ADUANA TEXT, MIC TEXT, EST_MIC TEXT, CARGADO TEXT, TIPO_REGISTRO TEXT,
-        FECHA_INGRESO_ISO TEXT, ULT_ESTADO TEXT, FECHA_ULT_INT TEXT
+        FECHA_INGRESO_ISO TEXT, ULT_ESTADO TEXT, FECHA_ULT_INT TEXT, OPERACION_PAD_EXT TEXT
     )""")
-    con.execute("INSERT INTO DAT_2026 VALUES (?,?,?,?,?,?,?,?)",
-        ("601", "MIC1", "TRANS", "SI", "I", "2026-07-01 08:00", "SAL", "01-07-2026 10:00:00"))
+    con.execute("INSERT INTO DAT_2026 VALUES (?,?,?,?,?,?,?,?,?)",
+        ("601", "MIC1", "TRANS", "SI", "I", "2026-07-01 08:00", "SAL", "01-07-2026 10:00:00", "OP1"))
     con.commit(); con.close()
+
     con = sqlite3.connect(app_module.HIST_DB)
     con.execute("DELETE FROM ref_aduanas"); con.execute("DELETE FROM ref_dira")
     con.execute("INSERT INTO ref_dira VALUES ('MIS', 'DIRA Misiones', 1)")
@@ -266,11 +267,12 @@ def test_excel_sin_ninguna_alerta_no_crea_la_hoja(client, test_user, app_module)
     con.execute("DROP TABLE IF EXISTS DAT_2026")
     con.execute("""CREATE TABLE DAT_2026 (
         ADUANA TEXT, MIC TEXT, EST_MIC TEXT, CARGADO TEXT, TIPO_REGISTRO TEXT,
-        FECHA_INGRESO_ISO TEXT, ULT_ESTADO TEXT, FECHA_ULT_INT TEXT
+        FECHA_INGRESO_ISO TEXT, ULT_ESTADO TEXT, FECHA_ULT_INT TEXT, OPERACION_PAD_EXT TEXT
     )""")
-    con.execute("INSERT INTO DAT_2026 VALUES (?,?,?,?,?,?,?,?)",
-        ("601", "MIC1", "TRANS", "SI", "I", "2026-07-01 08:00", "SAL", "01-07-2026 10:00:00"))
+    con.execute("INSERT INTO DAT_2026 VALUES (?,?,?,?,?,?,?,?,?)",
+        ("601", "MIC1", "TRANS", "SI", "I", "2026-07-01 08:00", "SAL", "01-07-2026 10:00:00", "OP1"))
     con.commit(); con.close()
+
     con = sqlite3.connect(app_module.HIST_DB)
     con.execute("DELETE FROM ref_aduanas"); con.execute("DELETE FROM ref_dira")
     con.execute("INSERT INTO ref_dira VALUES ('MIS', 'DIRA Misiones', 1)")
