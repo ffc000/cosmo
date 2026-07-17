@@ -3,8 +3,9 @@ generar_queries.py — Extracción de datos SQL para el informe SINTIA.
 Extraído de generar.py (Fase 3 de profesionalización).
 """
 import re
+from datetime import datetime
 from db_utils import get_db
-from generar_utils import CAT_LIKE, PAISES, PAISES_CONSOLIDADO, n, fmt, mes_label_largo, formatear_demora
+from generar_utils import CAT_LIKE, PAISES, PAISES_CONSOLIDADO, MESES, n, fmt, mes_label_largo, formatear_demora
 
 def _sql_case_categorias(campo="mensaje"):
     """CASE WHEN reutilizable para categorización de rechazos."""
@@ -162,6 +163,59 @@ _FECHA_ULT_INT_ISO = (
 )
 UMBRAL_ALERTA_DIAS_CONSOLIDADO = 10  # mismo default que el informe "Aduanas del país"
 
+def comparacion_anual_meses_completos(con):
+    """Comparación año contra año, mes por mes, de TODOS los países --
+    solo de los meses del año en curso que ya terminaron (no compara el
+    mes actual, que está a medio transcurrir y daría una comparación
+    injusta contra el mismo mes completo del año anterior).
+
+    Se basa en la fecha real del sistema (no en el rango fecha_d/fecha_h
+    del informe): es una foto de "cómo venimos este año vs el año pasado",
+    independiente del período que se haya elegido para el resto del
+    informe consolidado.
+
+    Devuelve una lista de dicts (uno por mes completo transcurrido):
+      mes, mes_label, anio_actual, total_actual, anio_anterior,
+      total_anterior, variacion_pct (None si no hay tabla DAT_<año-1>).
+    Lista vacía en enero (ningún mes del año en curso terminó todavía) o
+    si ni siquiera existe la tabla del año actual."""
+    hoy = datetime.today()
+    anio_actual = hoy.year
+    anio_anterior = anio_actual - 1
+    ultimo_mes_completo = hoy.month - 1  # el mes en curso no cuenta, todavía no terminó
+    if ultimo_mes_completo < 1:
+        return []
+
+    tabla_actual = f"DAT_{anio_actual}"
+    tabla_anterior = f"DAT_{anio_anterior}"
+    existe = lambda t: bool(con.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (t,)).fetchone())
+    if not existe(tabla_actual):
+        return []
+    hay_anio_anterior = existe(tabla_anterior)
+
+    def total_mes(tabla, periodo):
+        row = con.execute(
+            f"SELECT COUNT(*) FROM {tabla} WHERE strftime('%Y-%m',FECHA_INGRESO_ISO)=?",
+            (periodo,)).fetchone()
+        return row[0] if row else 0
+
+    resultado = []
+    for mes in range(1, ultimo_mes_completo + 1):
+        mm = f"{mes:02d}"
+        total_actual = total_mes(tabla_actual, f"{anio_actual}-{mm}")
+        total_anterior = total_mes(tabla_anterior, f"{anio_anterior}-{mm}") if hay_anio_anterior else None
+        variacion_pct = (round(100 * (total_actual - total_anterior) / total_anterior, 1)
+                          if total_anterior else None)
+        resultado.append({
+            "mes": mm, "mes_label": MESES.get(mm, mm),
+            "anio_actual": anio_actual, "total_actual": total_actual,
+            "anio_anterior": anio_anterior, "total_anterior": total_anterior,
+            "variacion_pct": variacion_pct,
+        })
+    return resultado
+
+
 def _tablas_dat_en_rango(con, fecha_d, fecha_h):
     """Nombres de tabla DAT_<año> que intersectan [fecha_d, fecha_h]
     (fechas en formato YYYY-MM-DD). Solo incluye las que existen en la BD --
@@ -216,11 +270,14 @@ def correr_queries_consolidado(ruta_db, fecha_d, fecha_h, log_fn, hist_db=None):
     ref_aduanas/ref_dira). Si no se pasa (ej. tests, o si esa base no está
     disponible), por_aduana queda solo con el código -- no rompe.
 
-    Devuelve (totales, por_pais, por_aduana, por_var_control):
+    Devuelve (totales, por_pais, por_aduana, por_var_control, comparacion_anual):
       totales: dict con TOTAL, IMPO, EXPO, CARGADO, LASTRE (agregado general)
       por_pais / por_aduana / por_var_control: listas de dicts, mismo shape
       que totales pero agrupadas (por_var_control solo trae TOTAL, no tiene
       sentido desglosar impo/expo/cargado/lastre otra vez ahí).
+      comparacion_anual: ver comparacion_anual_meses_completos() -- año
+      actual vs año anterior, mes a mes, solo meses ya terminados. No
+      depende de fecha_d/fecha_h, es siempre "a hoy".
     """
     if not re.match(r'^\d{4}-\d{2}-\d{2}$', fecha_d) or not re.match(r'^\d{4}-\d{2}-\d{2}$', fecha_h):
         raise ValueError(f"Fechas inválidas: '{fecha_d}' a '{fecha_h}'. Formato esperado: YYYY-MM-DD.")
@@ -282,6 +339,8 @@ def correr_queries_consolidado(ruta_db, fecha_d, fecha_h, log_fn, hist_db=None):
             GROUP BY COALESCE(NULLIF(TRIM(VAR_CONTROL),''),'SIN VARIABLE DE CONTROL') ORDER BY TOTAL DESC
         """, params)
 
+        comparacion_anual = comparacion_anual_meses_completos(con)
+
     cat_aduanas, cat_diras = _catalogo_aduanas_dira(hist_db)
     for r in por_aduana:
         r["DEMORA_MEDIA_FMT"] = formatear_demora(r.get("DEMORA_MEDIA_DIAS"))
@@ -295,4 +354,4 @@ def correr_queries_consolidado(ruta_db, fecha_d, fecha_h, log_fn, hist_db=None):
         r["DIRA_NOMBRE"] = cat_diras.get(dira_indice, "Sin DIRA asignada") if dira_indice else "Sin DIRA asignada"
 
     log_fn("✓ Queries completadas")
-    return totales, por_pais, por_aduana, por_var_control
+    return totales, por_pais, por_aduana, por_var_control, comparacion_anual

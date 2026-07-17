@@ -889,7 +889,7 @@ def _periodo_texto_fechas(fecha_d, fecha_h):
     return f"{d} a {h}" if d != h else d
 
 def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_aduana,
-                               por_var_control, carpeta, log_fn):
+                               por_var_control, comparacion_anual, carpeta, log_fn):
     periodo = _periodo_texto_fechas(fecha_d, fecha_h)
     nombre_archivo = f"Informe_SINTIA_Consolidado_{fecha_d}_{fecha_h}_v{version}.docx"
     total = n(totales.get("TOTAL", 0)); impo = n(totales.get("IMPO", 0)); expo = n(totales.get("EXPO", 0))
@@ -949,6 +949,7 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
         (1, "3.  Cargado vs. Lastre"),
         (1, "4.  Operaciones por aduana"),
         (1, "5.  Operaciones por variable de control"),
+    ] + ([(1, "6.  Comparación interanual (meses cerrados)")] if comparacion_anual else []) + [
         (1, "Anexo — Glosario de siglas"),
     ])
 
@@ -1019,9 +1020,29 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
         col_widths=[7, 2.5, 2])
     if "varcontrol" in graficos: insertar_grafico(doc, graficos["varcontrol"])
 
+    # 6. Comparación interanual (condicional -- solo si hay al menos un mes
+    # cerrado del año en curso para comparar; ver comparacion_anual_meses_completos)
+    indice_anexo = 7
+    if comparacion_anual:
+        doc.add_page_break()
+        _heading_indexado(doc, "6.  Comparación interanual (meses cerrados)", 1, 7)
+        anio_act = comparacion_anual[0]["anio_actual"]; anio_ant = comparacion_anual[0]["anio_anterior"]
+        doc.add_paragraph(
+            f"Comparación mes a mes entre {anio_act} y {anio_ant}, considerando únicamente los meses "
+            f"de {anio_act} que ya terminaron (no se incluye el mes en curso, cuya cifra todavía está "
+            f"a medio transcurrir y no es comparable contra un mes completo).")
+        agregar_tabla_word(doc, ["MES", f"{anio_ant}", f"{anio_act}", "VAR. %"],
+            [[r["mes_label"], fmt(r["total_anterior"]) if r["total_anterior"] is not None else "—",
+              fmt(r["total_actual"]),
+              (f"{'+' if r['variacion_pct'] >= 0 else ''}{r['variacion_pct']}%".replace(".", ",")
+               if r["variacion_pct"] is not None else "—")]
+             for r in comparacion_anual],
+            col_widths=[4, 3, 3, 3])
+        indice_anexo = 8
+
     # Anexo — Glosario (mismo que el informe SINTIA estándar)
     doc.add_page_break()
-    _heading_indexado(doc, "Anexo — Glosario de siglas", 1, 7)
+    _heading_indexado(doc, "Anexo — Glosario de siglas", 1, indice_anexo)
     glosario_items = [
         ("SINTIA", "Sistema de Información Aduanera — registro y control de la operatoria del circuito."),
         ("PAD", "Portal Aduanero — sistema central de registro de ingreso/egreso terrestre."),
@@ -1042,7 +1063,7 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
 
 
 def _generar_excel_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_aduana,
-                                por_var_control, carpeta, log_fn):
+                                por_var_control, comparacion_anual, carpeta, log_fn):
     wb = openpyxl.Workbook(); wb.remove(wb.active)
     HDR_FILL = PatternFill("solid", fgColor="1F3864"); HDR_FONT = Font(bold=True, color="FFFFFF", size=10)
     ALT_FILL = PatternFill("solid", fgColor="EEF2F7"); NORM_FONT = Font(size=10)
@@ -1083,6 +1104,14 @@ def _generar_excel_consolidado(fecha_d, fecha_h, version, totales, por_pais, por
          for r in por_aduana])
     add_sheet("Por Variable de Control", ["Variable de Control", "Total", "%"],
         [[r["VAR_CONTROL"], n(r.get("TOTAL", 0)), pct(r.get("TOTAL", 0), total)] for r in por_var_control])
+
+    if comparacion_anual:
+        anio_act = comparacion_anual[0]["anio_actual"]; anio_ant = comparacion_anual[0]["anio_anterior"]
+        add_sheet("Comparación Interanual", ["Mes", f"{anio_ant}", f"{anio_act}", "Var. %"],
+            [[r["mes_label"], r["total_anterior"] if r["total_anterior"] is not None else "—",
+              r["total_actual"],
+              (f"{r['variacion_pct']}%".replace(".", ",") if r["variacion_pct"] is not None else "—")]
+             for r in comparacion_anual])
 
     nombre = f"Informe_SINTIA_Consolidado_{fecha_d}_{fecha_h}_v{version}.xlsx"
     ruta = os.path.join(carpeta, nombre); wb.save(ruta); log_fn("✓ Planilla Excel generada")
