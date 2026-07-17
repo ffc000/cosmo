@@ -604,9 +604,6 @@ function uploadXHR(fId,url,pId,bId,wId,mId){
   xhr.addEventListener('error',()=>{
     showMsg(mId,'✗ Error de red — la conexión se cortó antes de terminar. Revisá el estado de la base antes de reintentar (por si el archivo era muy grande y ya se procesó parcialmente).','err');
   });
-  xhr.addEventListener('timeout',()=>{
-    showMsg(mId,'✗ Se agotó el tiempo de espera. Revisá el estado de la base antes de reintentar.','err');
-  });
   xhr.send(fd);
 }
 document.getElementById('btn-upload-sql').addEventListener('click',()=>uploadXHR('file-sql','/api/import-sql','pct-sql','bar-sql','progress-sql','msg-sql'));
