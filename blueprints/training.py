@@ -417,6 +417,55 @@ def _sincronizar_historial_peso(client, dias=90):
     return guardados
 
 
+# ── Backfill de historial de wellness (Fase 11) ──────────────────────────────
+# A diferencia del peso (que tiene get_weigh_ins, un solo pedido para todo
+# un rango), Garmin no tiene un endpoint de rango para Body Battery/sueño/
+# estrés/HRV -- hay que pedir día por día. Con 90 días eso son ~90
+# llamadas seguidas a la API, unos cuantos minutos -- no puede ser una
+# request HTTP normal (se colgaría/expiraría), así que corre en background
+# con polling de progreso, mismo patrón que el sync de actividades
+# (_sync_status).
+_wellness_backfill_status = {}
+
+def _sincronizar_historial_wellness_worker(job_id, dias):
+    _wellness_backfill_status[job_id] = {"estado": "corriendo", "hecho": 0, "total": dias, "error": None}
+    try:
+        client = _conectar_garmin()
+        hoy = date.today()
+        for i in range(dias):
+            fecha = (hoy - timedelta(days=i)).isoformat()
+            try:
+                _sincronizar_wellness_dia(client, fecha)
+            except Exception as e:
+                logging.info(f"Backfill wellness: {fecha} falló ({e}), sigue con el resto.")
+            _wellness_backfill_status[job_id]["hecho"] = i + 1
+        _wellness_backfill_status[job_id]["estado"] = "listo"
+    except Exception as e:
+        _wellness_backfill_status[job_id]["estado"] = "error"
+        _wellness_backfill_status[job_id]["error"] = str(e)
+
+
+@training_bp.route("/api/training/wellness/sincronizar_historial", methods=["POST"])
+@login_required
+@modulo_required("training")
+def api_wellness_sincronizar_historial():
+    data = request.json or {}
+    dias = min(int(data.get("dias", 90)), 180)  # tope duro -- 180 días ya son ~180 llamadas a Garmin
+    job_id = str(uuid.uuid4())[:8]
+    threading.Thread(target=_sincronizar_historial_wellness_worker, args=(job_id, dias), daemon=True).start()
+    return jsonify({"ok": True, "job_id": job_id})
+
+
+@training_bp.route("/api/training/wellness/sincronizar_historial/<job_id>")
+@login_required
+@modulo_required("training")
+def api_wellness_sincronizar_historial_status(job_id):
+    estado = _wellness_backfill_status.get(job_id)
+    if not estado:
+        return jsonify({"ok": False, "error": "Job no encontrado."}), 404
+    return jsonify({"ok": True, **estado})
+
+
 def _sincronizar_wellness_dia(client, fecha):
     """Trae Body Battery/sueño/estrés/HRV/FC en reposo + actividad general
     del día (pasos, calorías activas, minutos de intensidad) de Garmin y
@@ -571,6 +620,40 @@ def api_training_peso_list():
         rows = [dict(r) for r in con.execute(
             "SELECT * FROM entrenamiento_peso WHERE fecha >= ? ORDER BY fecha DESC", (desde,)).fetchall()]
     return jsonify({"ok": True, "rows": rows})
+
+
+@training_bp.route("/api/training/peso/objetivo", methods=["GET"])
+@login_required
+@modulo_required("training")
+def api_training_peso_objetivo_get():
+    with get_db(HIST_DB, row_factory=True) as con:
+        row = con.execute("SELECT valor FROM garmin_config WHERE clave='peso_objetivo_kg'").fetchone()
+    return jsonify({"ok": True, "peso_objetivo_kg": float(row["valor"]) if row and row["valor"] else None})
+
+
+@training_bp.route("/api/training/peso/objetivo", methods=["POST"])
+@login_required
+@modulo_required("training")
+def api_training_peso_objetivo_set():
+    """Peso objetivo (Fase 11) -- guardado en garmin_config (clave-valor
+    genérica que ya existía) para no sumar una tabla nueva por un solo
+    número. Se usa para mostrar progreso en Peso y Bienestar y como
+    contexto en el análisis diario con IA."""
+    data = request.json or {}
+    valor = data.get("peso_objetivo_kg")
+    with get_db(HIST_DB) as con:
+        if valor in (None, ""):
+            con.execute("DELETE FROM garmin_config WHERE clave='peso_objetivo_kg'")
+        else:
+            try:
+                valor = float(valor)
+            except (TypeError, ValueError):
+                return jsonify({"ok": False, "error": "Peso objetivo inválido."}), 400
+            con.execute(
+                "INSERT INTO garmin_config (clave,valor,modificado) VALUES ('peso_objetivo_kg',?,datetime('now')) "
+                "ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor, modificado=excluded.modificado",
+                (str(valor),))
+    return jsonify({"ok": True})
 
 
 @training_bp.route("/api/training/peso/sincronizar", methods=["POST"])
