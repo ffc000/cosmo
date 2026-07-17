@@ -94,7 +94,7 @@ def _fecha_ult_int_iso_expr(col="FECHA_ULT_INT"):
 _FECHA_ULT_INT_ISO_EXPR = _fecha_ult_int_iso_expr()
 
 
-def dat_actual_subquery(tabla, alias=None):
+def dat_actual_subquery(tabla, alias=None, con=None, db_path=None):
     """Subquery SQL: "última fila" por operación (OPERACION_PAD_EXT + MIC +
     TIPO_REGISTRO) de una tabla DAT_<año> -- para usar en cualquier FROM
     donde antes se ponía el nombre de tabla directo.
@@ -114,6 +114,22 @@ def dat_actual_subquery(tabla, alias=None):
     historial/tiempo-entre-estados en sí (que sí necesita TODAS las filas)
     no se usa esto, se consulta la tabla directamente.
 
+    Proyecta EXPLÍCITAMENTE las columnas reales de la tabla (consultadas
+    con PRAGMA table_info) en vez de un SELECT * a secas -- un SELECT *
+    ingenuo sobre "SELECT *, ROW_NUMBER() ... AS _rn ... WHERE _rn=1" deja
+    pasar la columna interna _rn hacia afuera (encontrado en producción,
+    17/07/2026: aparecía como columna fantasma en "Consultar DAT").
+
+    Para el PRAGMA hace falta una conexión: si el caller ya tiene una
+    abierta (con), se reusa esa -- IMPORTANTE pasarla cuando se tenga,
+    porque generar_queries.py recibe `ruta_db` como parámetro (puede no
+    ser el mismo archivo que db_utils.DB_PATH, ej. en tests con una base
+    temporal); usar el DB_PATH global ahí consultaría el schema de la base
+    equivocada. Si no se pasa `con` (ej. algunos call-sites de app.py que
+    todavía no abrieron una conexión en ese punto), se abre una propia de
+    vida corta contra `db_path` (o DB_PATH si tampoco se especifica) --
+    ahí sí es seguro porque en app.py DB_PATH siempre es el global real.
+
     `tabla` tiene que ser el nombre real de una tabla (ej. "DAT_2026"), no
     ya una subquery -- si se necesita combinar varios años, aplicar esto a
     CADA tabla individual antes de unirlas (rowid solo existe en tablas
@@ -124,8 +140,14 @@ def dat_actual_subquery(tabla, alias=None):
     `FROM {tabla}` sigan funcionando igual solo cambiando ese valor, sin
     tocar el resto de su SQL)."""
     alias = alias or tabla
+    if con is not None:
+        columnas = [r[1] for r in con.execute(f"PRAGMA table_info({tabla})").fetchall()]
+    else:
+        with get_db(db_path or DB_PATH) as con2:
+            columnas = [r[1] for r in con2.execute(f"PRAGMA table_info({tabla})").fetchall()]
+    cols_sql = ", ".join(f'"{c}"' for c in columnas)
     return (
-        f"(SELECT * FROM ("
+        f"(SELECT {cols_sql} FROM ("
         f"SELECT *, ROW_NUMBER() OVER ("
         f"PARTITION BY OPERACION_PAD_EXT, MIC, TIPO_REGISTRO "
         f"ORDER BY {_FECHA_ULT_INT_ISO_EXPR} DESC, rowid DESC"

@@ -2890,7 +2890,7 @@ def sintia_dashboard():
             # dashboard muestra KPIs de "cómo está la operatoria ahora", no
             # historial, así que corresponde acá igual que en el resto de
             # los paneles de SINTIA.
-            tabla = dat_actual_subquery(tabla_real)
+            tabla = dat_actual_subquery(tabla_real, con=con)
 
             hoy = _dt.date.today()
             hoy_iso = hoy.isoformat()

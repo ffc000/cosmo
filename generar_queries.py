@@ -51,12 +51,6 @@ def correr_queries(ruta_db, pais, anio, mes_d, mes_h, log_fn):
     if not re.match(r'^\d{4}$', str(anio)):
         raise ValueError(f"Año inválido: {anio!r}")
     tabla_real = f"DAT_{anio}"
-    # Vista deduplicada (1 fila = 1 operación, la de estado más reciente) --
-    # ver dat_actual_subquery en db_utils.py. Necesaria desde que
-    # _procesar_csv conserva el historial completo de estados en vez de
-    # pisarlo (decisión 17/07/2026): sin esto, cualquier COUNT(*) acá
-    # contaría de más a cada operación que pasó por varios estados.
-    tabla = dat_actual_subquery(tabla_real)
     desde = f"{anio}-{mes_d}"; hasta = f"{anio}-{mes_h}"; like = f"%{pais}%"
     # per_ult = último mes del período seleccionado (mes_h), no el último mes del sistema
     mes_ult = mes_h  # el período termina en mes_h
@@ -66,12 +60,21 @@ def correr_queries(ruta_db, pais, anio, mes_d, mes_h, log_fn):
     log_fn("Conectando a la BD...")
     with get_db(ruta_db, row_factory=True) as con:
         cur = con.cursor()
+        # Vista deduplicada (1 fila = 1 operación, la de estado más
+        # reciente) -- ver dat_actual_subquery en db_utils.py. Necesaria
+        # desde que _procesar_csv conserva el historial completo de
+        # estados en vez de pisarlo (decisión 17/07/2026): sin esto,
+        # cualquier COUNT(*) acá contaría de más a cada operación que
+        # pasó por varios estados. con=con para que el PRAGMA interno
+        # consulte la MISMA base que ruta_db (no el DB_PATH global, que
+        # en tests puede ser otro archivo).
+        tabla = dat_actual_subquery(tabla_real, con=con)
         def q(sql, params=()):
             cur.execute(sql, params)
             return [dict(r) for r in cur.fetchall()]
         anio_ant = str(int(anio)-1); tabla_ant_real = f"DAT_{anio_ant}"
         tiene_anio_ant = bool(q("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla_ant_real,)))
-        tabla_ant = dat_actual_subquery(tabla_ant_real)
+        tabla_ant = dat_actual_subquery(tabla_ant_real, con=con)
         log_fn("Corriendo queries...")
         totales = q(f"""
             SELECT
@@ -106,7 +109,7 @@ def correr_queries(ruta_db, pais, anio, mes_d, mes_h, log_fn):
                     nromic_vistos.add(fila.get("NroMic"))
                     rechazos_ej.append(fila)
         def totales_mes(periodo):
-            anio_p = periodo[:4]; tabla_p = dat_actual_subquery(f"DAT_{anio_p}")
+            anio_p = periodo[:4]; tabla_p = dat_actual_subquery(f"DAT_{anio_p}", con=con)
             rows = q(f"""SELECT SUM(CASE WHEN EST_MIC='TRANS' THEN 1 ELSE 0 END) AS trans, SUM(CASE WHEN EST_MIC='NO TRANS' THEN 1 ELSE 0 END) AS no_trans, SUM(CASE WHEN EST_MIC='TRANS TARD' THEN 1 ELSE 0 END) AS tardio, COUNT(*) AS total FROM {tabla_p} WHERE MIC LIKE ? AND strftime('%Y-%m',FECHA_INGRESO_ISO)=?""", (like, periodo))
             return rows[0] if rows else {}
         datos_ult = totales_mes(per_ult)
@@ -203,7 +206,7 @@ def comparacion_anual_meses_completos(con):
 
     def total_mes(tabla, periodo):
         row = con.execute(
-            f"SELECT COUNT(*) FROM {dat_actual_subquery(tabla)} WHERE strftime('%Y-%m',FECHA_INGRESO_ISO)=?",
+            f"SELECT COUNT(*) FROM {dat_actual_subquery(tabla, con=con)} WHERE strftime('%Y-%m',FECHA_INGRESO_ISO)=?",
             (periodo,)).fetchone()
         return row[0] if row else 0
 
@@ -252,7 +255,7 @@ def _union_dat_rango(con, tablas, columnas):
     for t in tablas:
         cols_t = _columnas_tabla(con, t)  # PRAGMA necesita el nombre real, no la subquery
         proyeccion = ", ".join(c if c in cols_t else f"NULL AS {c}" for c in columnas)
-        selects.append(f"SELECT {proyeccion} FROM {dat_actual_subquery(t)}")
+        selects.append(f"SELECT {proyeccion} FROM {dat_actual_subquery(t, con=con)}")
     return "(" + " UNION ALL ".join(selects) + ")"
 
 def _catalogo_aduanas_dira(hist_db):
