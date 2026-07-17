@@ -329,19 +329,26 @@ def kpi_box(doc, kpis, col_width_cm=None):
     porque no hay espacio en la palabra para partir -- encontrado en el
     informe consolidado, 17/07/2026. Con ancho fijo y suficiente (además de
     autofit=False, que si no Word puede seguir angostando columnas al
-    abrir/guardar) el número entra en una sola línea."""
+    abrir/guardar) el número entra en una sola línea.
+
+    El tamaño de fuente del valor se calcula UNA vez para TODA la fila (en
+    base al valor más largo de todos los KPIs), no por KPI individual --
+    la primera versión de este fix decidía el tamaño por separado para
+    cada uno, y en una fila con la mayoría de valores largos y uno corto
+    (ej. "2.517.790"/"1.265.071"/"1.252.719"/"1.788.694" de 9 caracteres
+    junto a "729.095" de 7), ese uno quedaba en letra visiblemente más
+    grande que el resto -- se veía como un error de formato en vez de una
+    fila pareja (encontrado en el mismo informe, misma fecha)."""
     table=doc.add_table(rows=1,cols=len(kpis)); table.alignment=WD_TABLE_ALIGNMENT.CENTER
     table.autofit = False
     w = col_width_cm or (16 / len(kpis))
+    largo_max = max(len(str(valor)) for _, valor, _ in kpis)
+    tam_valor = Pt(12) if largo_max >= 9 else Pt(16)
     for i,(label,valor,sub) in enumerate(kpis):
         cell=table.rows[0].cells[i]; set_cell_bg(cell,"EBF2FA")
         cell.width = Cm(w)
         p1=cell.paragraphs[0]; p1.alignment=WD_ALIGN_PARAGRAPH.CENTER
         p1.add_run(f"{label}\n").font.size=Pt(8)
-        # Números largos (8+ dígitos con separadores, ej. "2.517.790") con
-        # una fuente más chica para bajar el riesgo de que no entren en el
-        # ancho de columna ni con autofit=False.
-        tam_valor = Pt(12) if len(str(valor)) >= 9 else Pt(16)
         r2=p1.add_run(f"{valor}\n"); r2.bold=True; r2.font.size=tam_valor; r2.font.color.rgb=RGBColor(0x1F,0x3D,0x64)
         r3=p1.add_run(sub); r3.font.size=Pt(8); r3.font.color.rgb=RGBColor(0x60,0x60,0x60)
     doc.add_paragraph()
