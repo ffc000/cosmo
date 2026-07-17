@@ -503,9 +503,10 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
           <p style="font-size:.72rem;color:var(--muted);margin-bottom:.6rem">
             A diferencia del peso, Garmin no tiene un pedido "de rango" para Body Battery/sueño/estrés/HRV —
             hay que pedir día por día, así que esto tarda unos minutos (corre en segundo plano, podés navegar
-            a otra pantalla mientras).
+            a otra pantalla mientras). Esto es lo que ya está guardado y es lo que usa el análisis nocturno.
           </p>
           <div id="wellness-sync-msg"></div>
+          <div id="wellness-lista" style="margin-top:.6rem"><p style="color:var(--muted);font-size:.82rem">Sin datos todavía.</p></div>
         </div>
 
         <div class="card">
@@ -927,7 +928,7 @@ function switchModule(mod, panel) {
   if (panel === 'carga')      cargarCargaSemanal();
   if (panel === 'comparar')   cargarComparacion();
   if (panel === 'progresion') cargarAnalisisPrev();
-  if (panel === 'bienestar')  { cargarPesoObjetivo().then(cargarPeso); cargarAnalisisDiario(); }
+  if (panel === 'bienestar')  { cargarPesoObjetivo().then(cargarPeso); cargarAnalisisDiario(); cargarWellness(); }
   if (panel === 'antro')      cargarAntropometria();
   if (panel === 'config')     cargarConfig();
   if (panel === 'log')        { cargarLog(); cargarRutinasManuales(); }
@@ -1553,6 +1554,29 @@ function sincronizarHistorialPeso() {
     });
 }
 
+function cargarWellness() {
+  fetch('/api/training/tendencias_diarias?dias=30').then(r => r.json()).then(d => {
+    const el = document.getElementById('wellness-lista');
+    const conDatos = (d.rows || []).filter(r => r.body_battery_max != null || r.sleep_score != null || r.stress_avg != null || r.hrv_avg_ms != null);
+    if (!d.ok || !conDatos.length) {
+      el.innerHTML = '<p style="color:var(--muted);font-size:.82rem">Sin datos todavía -- probá "Sincronizar historial completo" arriba, o esperá a que corra el análisis de mañana.</p>';
+      return;
+    }
+    el.innerHTML = `<table class="data-table"><thead><tr>
+        <th>Fecha</th><th>Body Battery</th><th>Sueño</th><th>Estrés</th><th>HRV</th><th>FC reposo</th><th>Pasos</th>
+      </tr></thead><tbody>` +
+      conDatos.slice().reverse().map(r => `<tr>
+        <td style="font-family:var(--mono);font-size:.78rem">${escHtml(r.fecha)}</td>
+        <td>${r.body_battery_min ?? '—'}–${r.body_battery_max ?? '—'}</td>
+        <td>${r.sleep_horas ?? '—'}h${r.sleep_score ? ' ('+r.sleep_score+' pts)' : ''}</td>
+        <td>${r.stress_avg ?? '—'}</td>
+        <td>${r.hrv_avg_ms ?? '—'}ms</td>
+        <td>${r.resting_hr ?? '—'}</td>
+        <td>${r.total_steps ?? '—'}</td>
+      </tr>`).join('') + `</tbody></table>`;
+  });
+}
+
 function sincronizarHistorialWellness() {
   const msg = document.getElementById('wellness-sync-msg');
   const btn = document.getElementById('btn-sync-wellness');
@@ -1569,6 +1593,7 @@ function sincronizarHistorialWellness() {
             clearInterval(iv);
             msg.innerHTML = `<p style="color:var(--accent2);font-size:.82rem">✓ Listo -- ${s.total} días revisados.</p>`;
             btn.disabled = false;
+            cargarWellness();
           } else if (s.estado === 'error') {
             clearInterval(iv);
             msg.innerHTML = `<p style="color:var(--danger);font-size:.82rem">Error: ${escHtml(s.error)}</p>`;
