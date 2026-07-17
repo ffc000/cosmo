@@ -26,6 +26,7 @@ Al terminar (haya salido bien o mal) borra el .sql y el .json de metadata
 /api/import-sql-agregar/estado y se borra apenas se lee una vez.
 """
 import os
+import re
 import sys
 import json
 import glob
@@ -37,7 +38,7 @@ import threading
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from db_utils import DB_PATH, get_db  # noqa: E402 -- sin dependencia de Flask, ver db_utils.py
+from db_utils import DB_PATH, get_db, refrescar_tabla_actual  # noqa: E402 -- sin dependencia de Flask, ver db_utils.py
 
 PENDING_DIR = os.path.join(os.path.dirname(DB_PATH), "pending_imports")
 LOCK_PATH = os.path.join(PENDING_DIR, ".lock")
@@ -155,6 +156,20 @@ def procesar_uno():
                 resultado.update(ok=False, error=stderr[:500])
                 logging.error(f"job={job_id} falló: {stderr[:500]}")
             else:
+                # Materializar {tabla}_actual para cada tabla DAT_<año> que
+                # este .sql haya tocado -- si no se hace acá, dashboard/
+                # Consultar DAT/informes recalculan la deduplicación en
+                # cada consulta (lento en tablas grandes, ver
+                # refrescar_tabla_actual en db_utils.py). No fatal si
+                # falla: dat_actual() cae de vuelta al cálculo al vuelo.
+                for t in sorted(tablas_en_sql):
+                    if re.match(r'^DAT_\d{4}$', t):
+                        try:
+                            with get_db(DB_PATH) as con_mat:
+                                refrescar_tabla_actual(t, con_mat)
+                            logging.info(f"job={job_id} | {t}_actual materializada")
+                        except Exception as e:
+                            logging.warning(f"job={job_id} | no se pudo materializar {t}_actual: {e}")
                 size = round(os.path.getsize(DB_PATH) / (1024**3), 2)
                 resultado.update(ok=True, size_gb=size, tablas=sorted(tablas_en_sql))
                 logging.info(f"job={job_id} OK | tablas={sorted(tablas_en_sql)} | size={size}GB")

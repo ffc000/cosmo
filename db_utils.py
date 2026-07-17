@@ -154,3 +154,70 @@ def dat_actual_subquery(tabla, alias=None, con=None, db_path=None):
         f") AS _rn FROM {tabla}"
         f") WHERE _rn = 1) AS {alias}"
     )
+
+
+def refrescar_tabla_actual(tabla, con):
+    """(Re)crea {tabla}_actual -- versión MATERIALIZADA (tabla real, no
+    subquery) de "1 fila = 1 operación, la más reciente" de una tabla
+    DAT_<año>.
+
+    Por qué existe (17/07/2026): dat_actual_subquery() de arriba resuelve
+    esto con una window function calculada AL VUELO en cada query -- correcto,
+    pero en las tablas reales (cientos de miles/millones de filas) sale caro:
+    medido ~2-4 segundos POR QUERY en el droplet de producción (1 vCPU/1GB).
+    El dashboard solo hace ~9 queries de este tipo por carga de página --
+    eso fue lo que tumbó el sitio con 502 (nginx corta la respuesta antes de
+    que termine). Materializar el resultado UNA VEZ por import (esta
+    función) y que el resto del día se lea de una tabla real e indexada
+    (dat_actual() de abajo) baja esas queries a milisegundos.
+
+    Se llama UNA vez al final de cada import que pueda haber tocado la
+    tabla -- ver _procesar_csv en app.py (CSV) y
+    procesar_imports_pendientes.py (cron de .sql) -- nunca en el camino de
+    lectura de una request. `con` es una conexión ya abierta contra la
+    misma base que `tabla`."""
+    tabla_actual = f"{tabla}_actual"
+    columnas = [r[1] for r in con.execute(f"PRAGMA table_info({tabla})").fetchall()]
+    cols_sql = ", ".join(f'"{c}"' for c in columnas)
+    con.execute(f"DROP TABLE IF EXISTS {tabla_actual}")
+    con.execute(f"""
+        CREATE TABLE {tabla_actual} AS
+        SELECT {cols_sql} FROM (
+            SELECT *, ROW_NUMBER() OVER (
+                PARTITION BY OPERACION_PAD_EXT, MIC, TIPO_REGISTRO
+                ORDER BY {_FECHA_ULT_INT_ISO_EXPR} DESC, rowid DESC
+            ) AS _rn FROM {tabla}
+        ) WHERE _rn = 1
+    """)
+    # Mismos índices que ya usa la tabla cruda (ver _procesar_csv) -- esta
+    # tabla _actual es la que en la práctica van a leer dashboard/Consultar
+    # DAT/informes, necesita los mismos índices para filtrar rápido.
+    for nombre, col in [("fecha", "FECHA_INGRESO_ISO"), ("estado", "EST_MIC"), ("aduana", "ADUANA")]:
+        if col in columnas:
+            con.execute(f"CREATE INDEX IF NOT EXISTS idx_{tabla_actual}_{nombre} ON {tabla_actual}({col})")
+    con.commit()
+
+
+def dat_actual(tabla, con=None, db_path=None):
+    """Devuelve qué usar en un FROM para "1 fila = 1 operación, la más
+    reciente" de una tabla DAT_<año> -- SIEMPRE preferir esta función
+    sobre dat_actual_subquery() directamente en código nuevo.
+
+    Si ya existe la tabla materializada {tabla}_actual (ver
+    refrescar_tabla_actual), devuelve su nombre tal cual -- rápida, tabla
+    real e indexada. Si todavía no existe (ej. justo después de migrar una
+    tabla y antes del primer refresh), cae de vuelta a
+    dat_actual_subquery() -- más lenta pero sigue siendo correcta, para no
+    romper mientras se pone al día. Mismos parámetros con/db_path que
+    dat_actual_subquery -- ver ahí el porqué."""
+    tabla_actual = f"{tabla}_actual"
+    if con is not None:
+        existe = con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla_actual,)).fetchone()
+    else:
+        with get_db(db_path or DB_PATH) as con2:
+            existe = con2.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla_actual,)).fetchone()
+    if existe:
+        return tabla_actual
+    return dat_actual_subquery(tabla, con=con, db_path=db_path)

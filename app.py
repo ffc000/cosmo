@@ -38,7 +38,7 @@ from core import (
     login_required, admin_required, modulo_required, finanzas_owner_required,
     tiene_permiso_admin, registrar_sesion, actualizar_sesion, token_revocado,
 )
-from db_utils import dat_actual_subquery
+from db_utils import dat_actual, refrescar_tabla_actual
 
 # get_api_key ahora se importa de core.py (más abajo, junto con contexto_repositorio)
 APP_USER      = os.environ.get("APP_USER",    "cosmo")
@@ -1828,7 +1828,20 @@ def _procesar_csv(tmp_path, tabla, log, modo="reemplazar", username="?"):
             except: pass
             try: cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{tabla}_aduana ON {tabla}(ADUANA)")
             except: pass
-            con.commit(); con.close()
+            con.commit()
+            log.append("Materializando vista de operación actual (para que el dashboard/Consultar "
+                       "DAT/informes no tengan que recalcularla en cada consulta)...")
+            try:
+                refrescar_tabla_actual(tabla, con)
+                log.append(f"✓ {tabla}_actual actualizada")
+            except Exception as e:
+                # No es fatal -- dat_actual() cae de vuelta al cálculo al
+                # vuelo (más lento, pero correcto) si esta tabla no está.
+                # Mejor que el import completo falle acá que dejar la carga
+                # a medias por esto.
+                log.append(f"⚠ No se pudo materializar {tabla}_actual: {e} (las consultas van a "
+                           f"seguir funcionando, pero más lentas hasta el próximo import)")
+            con.close()
             log.append(f"✓ {tabla}: fechas ISO calculadas, índices creados")
             _registrar_modificacion_tabla(tabla, username, modo, inserted)
 
@@ -2704,14 +2717,14 @@ def _resolver_from_dat(anio_param):
             anio_unico = _dt.date.today().year
         if anio_unico < 2000 or anio_unico > 2100:
             anio_unico = _dt.date.today().year
-        return dat_actual_subquery(f"DAT_{anio_unico}"), str(anio_unico)
+        return dat_actual(f"DAT_{anio_unico}"), str(anio_unico)
 
     if not anios:
         anio_unico = _dt.date.today().year
-        return dat_actual_subquery(f"DAT_{anio_unico}"), str(anio_unico)
+        return dat_actual(f"DAT_{anio_unico}"), str(anio_unico)
 
     if len(anios) == 1:
-        return dat_actual_subquery(f"DAT_{anios[0]}"), str(anios[0])
+        return dat_actual(f"DAT_{anios[0]}"), str(anios[0])
 
     tablas = [f"DAT_{a}" for a in anios]
     columnas_por_tabla = {t: set(_columnas_de_tabla(t)) for t in tablas}
@@ -2737,7 +2750,7 @@ def _resolver_from_dat(anio_param):
     # dat_actual_subquery se aplica a CADA tabla individual antes de unir
     # (rowid, que usa para desempatar, solo existe en tablas reales -- no
     # tendría sentido aplicarlo después de la unión).
-    selects = " UNION ALL ".join(f'SELECT {cols_sql} FROM {dat_actual_subquery(t)}' for t in tablas)
+    selects = " UNION ALL ".join(f'SELECT {cols_sql} FROM {dat_actual(t)}' for t in tablas)
     descripcion = "+".join(str(a) for a in anios)
     return f"({selects}) AS DAT_COMBINADO", descripcion
 
@@ -2890,7 +2903,7 @@ def sintia_dashboard():
             # dashboard muestra KPIs de "cómo está la operatoria ahora", no
             # historial, así que corresponde acá igual que en el resto de
             # los paneles de SINTIA.
-            tabla = dat_actual_subquery(tabla_real, con=con)
+            tabla = dat_actual(tabla_real, con=con)
 
             hoy = _dt.date.today()
             hoy_iso = hoy.isoformat()
