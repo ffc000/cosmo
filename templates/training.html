@@ -1437,7 +1437,11 @@ function probarWellness() {
         Sueño: ${ex.sleep_score ?? '—'} pts (${ex.sleep_seg ? (ex.sleep_seg/3600).toFixed(1)+'h' : '—'}) ·
         Estrés: ${ex.stress_avg ?? '—'} ·
         HRV: ${ex.hrv_avg_ms ?? '—'}ms (${escHtml(ex.hrv_status || '—')}) ·
-        FC reposo: ${ex.resting_hr ?? '—'}
+        FC reposo: ${ex.resting_hr ?? '—'}<br>
+        Actividad general: ${ex.total_steps ?? '—'} pasos ·
+        ${ex.active_kcal ?? '—'} kcal activas ·
+        ${ex.moderate_min ?? '—'} min moderada ·
+        ${ex.vigorous_min ?? '—'} min vigorosa
       </div>
       <details style="margin-top:.6rem">
         <summary style="font-size:.76rem;color:var(--muted);cursor:pointer">Ver JSON crudo completo (wellness)</summary>
