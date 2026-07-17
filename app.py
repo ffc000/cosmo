@@ -1369,9 +1369,21 @@ def import_sql_agregar():
 
     tablas_existentes = set()
     if os.path.exists(DB_PATH):
-        with get_db(DB_PATH) as con:
-            tablas_existentes = {r[0] for r in con.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        try:
+            with get_db(DB_PATH) as con:
+                tablas_existentes = {r[0] for r in con.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        except Exception as e:
+            # Típicamente "database is locked" (un import anterior quedó a
+            # mitad de camino y dejó un -journal/-wal residual) o "file is
+            # not a database" (la BD quedó corrupta por un import cortado
+            # a la fuerza). En ambos casos hace falta revisar el archivo a
+            # mano en el servidor antes de reintentar -- no tiene sentido
+            # seguir con el import si ni siquiera se puede leer la base.
+            return jsonify({"ok": False, "error":
+                f"No se pudo leer la base actual antes de importar ({e}). Si un import anterior "
+                f"quedó a mitad de camino puede haber dejado un archivo -journal o -wal residual "
+                f"junto a {DB_PATH} -- revisalo en el servidor antes de reintentar."})
 
     colision = tablas_en_sql & tablas_existentes
     if colision:

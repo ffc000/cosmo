@@ -93,6 +93,25 @@ def _manejar_400_generico(e):
         return jsonify({"ok": False, "error": "Solicitud inválida."}), 400
     return e
 
+@app.errorhandler(500)
+def _manejar_500_generico(e):
+    """Mismo criterio que _manejar_csrf_error/_manejar_400_generico: sin
+    esto, cualquier excepción no capturada explícitamente dentro de una
+    vista (ej. una consulta a la BD que falla, un archivo corrupto, un
+    sqlite3 "database is locked") le devolvía al frontend la página HTML
+    de error por default de Flask/Werkzeug en vez de JSON -- mismo síntoma
+    de 'Unexpected token <' que ya se había resuelto para CSRFError y 400,
+    pero acá seguía sin cubrirse. También loguea el traceback completo:
+    antes, un 500 así no dejaba ningún rastro en los logs del servicio más
+    allá del genérico de Werkzeug, haciendo casi imposible diagnosticarlo
+    a distancia con solo lo que el usuario ve en pantalla."""
+    logging.exception("500 no manejado")
+    if request.path.startswith("/api/"):
+        return jsonify({"ok": False, "error":
+            "Error interno del servidor. Quedó registrado en el log de journalctl -u sintia "
+            "con el detalle -- si se repite, mandá esas líneas."}), 500
+    return e
+
 # storage_uri: en memoria por defecto (sirve con 1 solo worker). Si se corre con
 # más de un worker (gunicorn -w >1), cada worker llevaría su propia cuenta y el
 # límite dejaría de cumplirse — en ese caso definir RATELIMIT_STORAGE_URI=redis://...
