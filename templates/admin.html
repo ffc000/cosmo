@@ -576,7 +576,22 @@ function uploadXHR(fId,url,pId,bId,wId,mId){
   document.getElementById(bId).style.width='0%';
   showMsg(mId,'','');
   xhr.timeout = 3600000; // 60 min -- alineado con el timeout del backend (subprocess de sqlite3 en app.py), para que el navegador no avise "colgado" mientras el import sigue corriendo de verdad en el servidor
+
+  // La sesión vence a los 10 min de inactividad (ver core.py) y un import
+  // grande puede tardar más que eso -- sin esto, el usuario está activo
+  // esperando pero la cookie de sesión vence igual a mitad del upload y
+  // termina en "token de seguridad vencido" aunque el import haya sido
+  // exitoso. Este ping cada 4 min (bien por debajo de los 10) renueva la
+  // sesión mientras dura la subida/procesamiento. Se corta solo cuando
+  // termina el xhr (éxito, error o timeout).
+  const keepAlive = setInterval(()=>{
+    fetch('/api/ping', {method:'POST', credentials:'same-origin',
+      headers:{'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content}}).catch(()=>{});
+  }, 240000);
+  const detenerKeepAlive = ()=>clearInterval(keepAlive);
+
   xhr.addEventListener('timeout',()=>{
+    detenerKeepAlive();
     showMsg(mId,'✗ El servidor no respondió en 60 minutos. Puede que el archivo sea muy grande, o que se haya colgado de verdad -- revisá el estado de la base antes de reintentar (por si ya se procesó parcialmente).','err');
   });
   xhr.upload.addEventListener('progress',e=>{
@@ -588,6 +603,7 @@ function uploadXHR(fId,url,pId,bId,wId,mId){
     }
   });
   xhr.addEventListener('load',()=>{
+    detenerKeepAlive();
     let r;
     try { r=JSON.parse(xhr.responseText); }
     catch(e) {
@@ -602,6 +618,7 @@ function uploadXHR(fId,url,pId,bId,wId,mId){
     }
   });
   xhr.addEventListener('error',()=>{
+    detenerKeepAlive();
     showMsg(mId,'✗ Error de red — la conexión se cortó antes de terminar. Revisá el estado de la base antes de reintentar (por si el archivo era muy grande y ya se procesó parcialmente).','err');
   });
   xhr.send(fd);
