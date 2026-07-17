@@ -208,6 +208,7 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
       <div class="nav-item" id="nav-comparar" onclick="switchModule('garmin','comparar')"><span class="nav-icon">🔁</span><span class="nav-label">Comparar sesiones</span></div>
       <div class="nav-item" id="nav-progresion" onclick="switchModule('garmin','progresion')"><span class="nav-icon">🤖</span><span class="nav-label">Análisis IA</span></div>
       <div class="nav-item" id="nav-bienestar" onclick="switchModule('garmin','bienestar')"><span class="nav-icon">⚖️</span><span class="nav-label">Peso y Bienestar</span></div>
+      <div class="nav-item" id="nav-antro" onclick="switchModule('garmin','antro')"><span class="nav-icon">📐</span><span class="nav-label">Composición Corporal</span></div>
       <div class="nav-item" id="nav-config" onclick="switchModule('garmin','config')"><span class="nav-icon">⚙️</span><span class="nav-label">Configuración</span></div>
       <div class="nav-section">Plan</div>
       <div class="nav-item" id="nav-plan" onclick="switchModule('training','plan')"><span class="nav-icon">📅</span><span class="nav-label">Plan semanal</span></div>
@@ -510,6 +511,47 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
         <div class="card">
           <div class="card-title">Historial de análisis diarios</div>
           <div id="lista-analisis-diario"><p style="color:var(--muted);font-size:.82rem">Sin análisis guardados todavía.</p></div>
+        </div>
+      </div>
+
+      <!-- Panel: Composición Corporal (antropometría ISAK) -->
+      <div class="panel" id="panel-antro">
+        <div class="card">
+          <div class="card-title">Subir informe de composición corporal (PDF)</div>
+          <p style="font-size:.78rem;color:var(--muted);margin-bottom:1rem">
+            Se lee automáticamente (peso, diámetros, perímetros, pliegues, 5 masas, somatotipo) y te lo muestro
+            para revisar antes de guardar — nada se guarda directo sin que lo confirmes.
+          </p>
+          <div class="form-row cols2" style="align-items:flex-end">
+            <div><label>Archivo PDF</label><input type="file" id="antro-pdf-input" accept=".pdf"></div>
+            <button class="btn btn-primary" onclick="subirAntropometriaPDF()">Subir y leer</button>
+          </div>
+          <div id="antro-upload-msg"></div>
+          <button class="btn btn-outline btn-sm" style="margin-top:.6rem" onclick="iniciarCargaManualAntro()">+ Cargar manualmente (sin PDF)</button>
+        </div>
+
+        <div class="card" id="antro-revision-card" style="display:none">
+          <div class="card-title">Revisar antes de guardar</div>
+          <div id="antro-no-reconocidos"></div>
+          <div class="form-row cols2">
+            <div><label>Fecha de medición</label><input type="date" id="antro-fecha"></div>
+            <div><label>Número de medición</label><input type="number" id="antro-numero"></div>
+          </div>
+          <div id="antro-form-secciones"></div>
+          <div style="display:flex;gap:.5rem;margin-top:1rem">
+            <button class="btn btn-primary" onclick="guardarAntropometria()">✓ Confirmar y guardar</button>
+            <button class="btn btn-outline" onclick="cancelarRevisionAntro()">Cancelar</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Tendencia</div>
+          <canvas id="canvas-antro-tendencia" height="90"></canvas>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Historial de mediciones</div>
+          <div id="antro-historial"><p style="color:var(--muted);font-size:.82rem">Sin mediciones cargadas todavía.</p></div>
         </div>
       </div>
 
@@ -840,6 +882,7 @@ const TOPBAR_TITLES = {
   comparar:    'TRAINING / GARMIN — COMPARAR',
   progresion:  'TRAINING / GARMIN — ANÁLISIS IA',
   bienestar:   'TRAINING / GARMIN — PESO Y BIENESTAR',
+  antro:       'TRAINING / GARMIN — COMPOSICIÓN CORPORAL',
   config:      'TRAINING / GARMIN — CONFIGURACIÓN',
   plan:        'TRAINING / PLAN POST-HYROX 2026',
   log:         'TRAINING / REGISTRO DE SESIONES',
@@ -885,6 +928,7 @@ function switchModule(mod, panel) {
   if (panel === 'comparar')   cargarComparacion();
   if (panel === 'progresion') cargarAnalisisPrev();
   if (panel === 'bienestar')  { cargarPesoObjetivo().then(cargarPeso); cargarAnalisisDiario(); }
+  if (panel === 'antro')      cargarAntropometria();
   if (panel === 'config')     cargarConfig();
   if (panel === 'log')        { cargarLog(); cargarRutinasManuales(); }
 }
@@ -1585,6 +1629,158 @@ function probarWellness() {
         <summary style="font-size:.76rem;color:var(--muted);cursor:pointer">Ver JSON crudo completo (peso)</summary>
         <pre style="font-size:.68rem;overflow-x:auto;background:var(--bg);padding:.6rem;border-radius:var(--radius-sm);margin-top:.5rem">${escHtml(JSON.stringify(d.raw_peso, null, 2))}</pre>
       </details>`;
+  });
+}
+
+// ── Composición Corporal (antropometría ISAK) ────────────────────────────────
+const ANTRO_SECCIONES = [
+  {sec: 'Básicos', campos: [['peso_kg','Peso (kg)'],['talla_cm','Talla (cm)'],['talla_sentado_cm','Talla sentado (cm)']]},
+  {sec: 'Diámetros (cm)', campos: [['diam_biacromial','Biacromial'],['diam_torax_transverso','Tórax transverso'],
+    ['diam_torax_anteroposterior','Tórax anteroposterior'],['diam_biiliocrestideo','Bi-iliocrestídeo'],
+    ['diam_humeral','Humeral'],['diam_femoral','Femoral']]},
+  {sec: 'Perímetros (cm)', campos: [['perim_cabeza','Cabeza'],['perim_brazo_relajado','Brazo relajado'],
+    ['perim_brazo_flexionado','Brazo flexionado'],['perim_antebrazo','Antebrazo'],['perim_torax','Tórax mesoesternal'],
+    ['perim_cintura','Cintura'],['perim_caderas','Caderas'],['perim_muslo_superior','Muslo superior'],
+    ['perim_muslo_medial','Muslo medial'],['perim_pantorrilla','Pantorrilla']]},
+  {sec: 'Pliegues cutáneos (mm)', campos: [['pliegue_triceps','Tríceps'],['pliegue_subescapular','Subescapular'],
+    ['pliegue_supraespinal','Supraespinal'],['pliegue_abdominal','Abdominal'],['pliegue_muslo_medial','Muslo medial'],
+    ['pliegue_pantorrilla','Pantorrilla']]},
+  {sec: '5 Masas (Kerr, 1988)', campos: [['masa_adiposa_pct','Adiposa %'],['masa_adiposa_kg','Adiposa (kg)'],
+    ['masa_muscular_pct','Muscular %'],['masa_muscular_kg','Muscular (kg)'],['masa_residual_pct','Residual %'],
+    ['masa_residual_kg','Residual (kg)'],['masa_osea_pct','Ósea %'],['masa_osea_kg','Ósea (kg)'],
+    ['masa_piel_pct','Piel %'],['masa_piel_kg','Piel (kg)']]},
+  {sec: 'Somatotipo (Heath & Carter)', campos: [['somato_endo','Endomorfia'],['somato_meso','Mesomorfia'],['somato_ecto','Ectomorfia']]},
+  {sec: 'Otros', campos: [['imc','IMC (kg/m²)']]},
+];
+
+function _renderFormularioAntro(valores) {
+  valores = valores || {};
+  const cont = document.getElementById('antro-form-secciones');
+  cont.innerHTML = ANTRO_SECCIONES.map(s => `
+    <div style="margin-top:.8rem">
+      <div style="font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.4rem">${s.sec}</div>
+      <div class="form-row" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:.5rem">
+        ${s.campos.map(([clave, etiqueta]) => `
+          <div><label style="font-size:.72rem">${etiqueta}</label>
+            <input type="number" step="0.01" id="antro-campo-${clave}" value="${valores[clave] ?? ''}">
+          </div>`).join('')}
+      </div>
+    </div>`).join('');
+}
+
+function subirAntropometriaPDF() {
+  const input = document.getElementById('antro-pdf-input');
+  const msg = document.getElementById('antro-upload-msg');
+  if (!input.files.length) { msg.innerHTML = '<p style="color:var(--danger);font-size:.82rem">Elegí un archivo PDF primero.</p>'; return; }
+  const fd = new FormData();
+  fd.append('archivo', input.files[0]);
+  msg.innerHTML = '<p style="color:var(--muted);font-size:.82rem">Leyendo el PDF...</p>';
+  fetch('/api/training/antropometria/parsear', {method: 'POST', body: fd}).then(r => r.json()).then(d => {
+    if (!d.ok) { msg.innerHTML = `<p style="color:var(--danger);font-size:.82rem">Error: ${escHtml(d.error)}</p>`; return; }
+    msg.innerHTML = `<p style="color:var(--accent2);font-size:.82rem">✓ Se leyeron ${Object.keys(d.campos).length} campos. Revisalos abajo antes de guardar.</p>`;
+    document.getElementById('antro-fecha').value = d.meta.fecha_medicion || '';
+    document.getElementById('antro-numero').value = d.meta.numero_medicion || '';
+    document.getElementById('antro-revision-card').dataset.archivoPdf = d.archivo_pdf || '';
+    const avisoEl = document.getElementById('antro-no-reconocidos');
+    if (d.no_reconocidos && d.no_reconocidos.length) {
+      avisoEl.innerHTML = `<div style="background:var(--bg);border-radius:var(--radius-sm);padding:.6rem;margin-bottom:.8rem;font-size:.76rem;color:var(--muted)">
+        ⚠️ Estas líneas del PDF no se pudieron ubicar automáticamente, revisalas a mano si corresponde:
+        ${d.no_reconocidos.map(n => `${escHtml(n.etiqueta)}: ${n.valor}`).join(' · ')}</div>`;
+    } else {
+      avisoEl.innerHTML = '';
+    }
+    _renderFormularioAntro(d.campos);
+    document.getElementById('antro-revision-card').style.display = 'block';
+    document.getElementById('antro-revision-card').scrollIntoView({behavior:'smooth'});
+  });
+}
+
+function iniciarCargaManualAntro() {
+  document.getElementById('antro-upload-msg').innerHTML = '';
+  document.getElementById('antro-no-reconocidos').innerHTML = '';
+  document.getElementById('antro-fecha').value = _fechaLocalISO();
+  document.getElementById('antro-numero').value = '';
+  document.getElementById('antro-revision-card').dataset.archivoPdf = '';
+  _renderFormularioAntro({});
+  document.getElementById('antro-revision-card').style.display = 'block';
+  document.getElementById('antro-revision-card').scrollIntoView({behavior:'smooth'});
+}
+
+function cancelarRevisionAntro() {
+  document.getElementById('antro-revision-card').style.display = 'none';
+  document.getElementById('antro-pdf-input').value = '';
+}
+
+function guardarAntropometria() {
+  const datos = {
+    fecha_medicion: document.getElementById('antro-fecha').value,
+    numero_medicion: document.getElementById('antro-numero').value || null,
+    archivo_pdf: document.getElementById('antro-revision-card').dataset.archivoPdf || '',
+  };
+  if (!datos.fecha_medicion) { alert('Falta la fecha de medición.'); return; }
+  ANTRO_SECCIONES.forEach(s => s.campos.forEach(([clave]) => {
+    const v = document.getElementById(`antro-campo-${clave}`).value;
+    datos[clave] = v === '' ? null : parseFloat(v);
+  }));
+  fetch('/api/training/antropometria', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(datos)
+  }).then(r => r.json()).then(d => {
+    if (!d.ok) { alert('Error: ' + d.error); return; }
+    cancelarRevisionAntro();
+    cargarAntropometria();
+  });
+}
+
+function borrarAntropometria(id) {
+  if (!confirm('¿Borrar esta medición?')) return;
+  fetch(`/api/training/antropometria/${id}`, {method: 'DELETE'}).then(r => r.json()).then(() => cargarAntropometria());
+}
+
+let _chartAntro = null;
+function cargarAntropometria() {
+  fetch('/api/training/antropometria').then(r => r.json()).then(d => {
+    const el = document.getElementById('antro-historial');
+    if (!d.ok || !d.rows.length) {
+      el.innerHTML = '<p style="color:var(--muted);font-size:.82rem">Sin mediciones cargadas todavía.</p>';
+      return;
+    }
+    const rows = d.rows; // más reciente primero
+    el.innerHTML = `<table class="data-table"><thead><tr>
+        <th>Fecha</th><th>Peso</th><th>% Grasa</th><th>Músculo (kg)</th><th>Somatotipo</th><th></th>
+      </tr></thead><tbody>` +
+      rows.map((r, i) => {
+        const ant = rows[i+1]; // la siguiente en la lista = la anterior cronológicamente
+        const dif = (campo) => (ant && r[campo] != null && ant[campo] != null)
+          ? (r[campo]-ant[campo] > 0 ? ` <span style="color:var(--muted)">(+${(r[campo]-ant[campo]).toFixed(1)})</span>`
+                                       : ` <span style="color:var(--muted)">(${(r[campo]-ant[campo]).toFixed(1)})</span>`)
+          : '';
+        return `<tr>
+          <td style="font-family:var(--mono);font-size:.78rem">${escHtml(r.fecha_medicion)}${r.numero_medicion ? ' (#'+r.numero_medicion+')' : ''}</td>
+          <td>${r.peso_kg ?? '—'} kg${dif('peso_kg')}</td>
+          <td>${r.masa_adiposa_pct ?? '—'}%${dif('masa_adiposa_pct')}</td>
+          <td>${r.masa_muscular_kg ?? '—'}${dif('masa_muscular_kg')}</td>
+          <td style="font-size:.78rem">${r.somato_endo ?? '—'}/${r.somato_meso ?? '—'}/${r.somato_ecto ?? '—'}</td>
+          <td><button class="btn btn-sm" onclick="borrarAntropometria('${r.id}')">🗑️</button></td>
+        </tr>`;
+      }).join('') + `</tbody></table>`;
+
+    const cron = [...rows].reverse(); // cronológico para el gráfico
+    const ctx = document.getElementById('canvas-antro-tendencia').getContext('2d');
+    if (_chartAntro) _chartAntro.destroy();
+    _chartAntro = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: cron.map(r => r.fecha_medicion),
+        datasets: [
+          { label: '% Grasa', data: cron.map(r => r.masa_adiposa_pct), borderColor: 'rgba(217,119,6,1)', backgroundColor:'rgba(217,119,6,.1)', yAxisID: 'y', tension: .25 },
+          { label: 'Músculo (kg)', data: cron.map(r => r.masa_muscular_kg), borderColor: 'rgba(5,150,105,1)', backgroundColor:'rgba(5,150,105,.1)', yAxisID: 'y2', tension: .25 },
+          { label: 'Peso (kg)', data: cron.map(r => r.peso_kg), borderColor: 'rgba(26,86,219,1)', backgroundColor:'rgba(26,86,219,.1)', yAxisID: 'y2', borderDash: [5,3], tension: .25 },
+        ]
+      },
+      options: { responsive: true, maintainAspectRatio: false, interaction: {mode:'index', intersect:false},
+        scales: { y: {position:'left', title:{display:true,text:'% Grasa'}}, y2: {position:'right', title:{display:true,text:'kg'}, grid:{drawOnChartArea:false}} },
+        plugins: { legend: {position:'bottom'} } }
+    });
   });
 }
 
