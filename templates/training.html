@@ -460,8 +460,21 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
         </div>
 
         <div class="card">
-          <div class="card-title">Historial de peso (últimos 30 días)</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:.6rem">
+            <div class="card-title" style="margin:0">Historial de peso (últimos 30 días)</div>
+            <button class="btn btn-outline btn-sm" onclick="sincronizarHistorialPeso()">🔄 Sincronizar historial completo</button>
+          </div>
+          <p style="font-size:.72rem;color:var(--muted);margin-bottom:.6rem">
+            Se completa solo, de a un día, con el análisis nocturno — este botón trae de una todo lo que
+            hayas pesado en Garmin en los últimos 90 días, para no tener que esperar.
+          </p>
+          <div id="peso-sync-msg"></div>
           <div id="peso-lista"><p style="color:var(--muted);font-size:.82rem">Sin registros todavía.</p></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Historial de análisis diarios</div>
+          <div id="lista-analisis-diario"><p style="color:var(--muted);font-size:.82rem">Sin análisis guardados todavía.</p></div>
         </div>
       </div>
 
@@ -836,7 +849,7 @@ function switchModule(mod, panel) {
   if (panel === 'carga')      cargarCargaSemanal();
   if (panel === 'comparar')   cargarComparacion();
   if (panel === 'progresion') cargarAnalisisPrev();
-  if (panel === 'bienestar')  cargarPeso();
+  if (panel === 'bienestar')  { cargarPeso(); cargarAnalisisDiario(); }
   if (panel === 'config')     cargarConfig();
   if (panel === 'log')        { cargarLog(); cargarRutinasManuales(); }
 }
@@ -1356,7 +1369,7 @@ async function analizarProgresion() {
 }
 
 async function cargarAnalisisPrev() {
-  const d = await (await fetch('/api/garmin/analisis')).json();
+  const d = await (await fetch('/api/garmin/analisis/progresion')).json();
   const el = document.getElementById('lista-analisis-prog');
   if (!d.ok || !d.rows.length) { el.innerHTML = '<p style="color:var(--muted);font-size:.82rem">Sin análisis guardados.</p>'; return; }
   el.innerHTML = d.rows.map(r => `
@@ -1413,6 +1426,32 @@ function cargarPeso() {
         <td>${r.sensacion ? '⭐'.repeat(r.sensacion) : '—'}</td>
         <td style="font-size:.78rem;color:var(--muted)">${escHtml(r.nota || '—')}</td>
       </tr>`).join('') + `</tbody></table>`;
+  });
+}
+
+function sincronizarHistorialPeso() {
+  const msg = document.getElementById('peso-sync-msg');
+  msg.innerHTML = '<p style="color:var(--muted);font-size:.82rem">Sincronizando con Garmin...</p>';
+  fetch('/api/training/peso/sincronizar', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'})
+    .then(r => r.json()).then(d => {
+      if (!d.ok) { msg.innerHTML = `<p style="color:var(--danger);font-size:.82rem">Error: ${escHtml(d.error)}</p>`; return; }
+      msg.innerHTML = `<p style="color:var(--accent2);font-size:.82rem">✓ ${d.guardados} registro(s) sincronizado(s).</p>`;
+      cargarPeso();
+    });
+}
+
+function cargarAnalisisDiario() {
+  fetch('/api/garmin/analisis/diario').then(r => r.json()).then(d => {
+    const el = document.getElementById('lista-analisis-diario');
+    if (!d.ok || !d.rows.length) { el.innerHTML = '<p style="color:var(--muted);font-size:.82rem">Sin análisis guardados todavía.</p>'; return; }
+    el.innerHTML = d.rows.map(r => `
+      <div style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:.75rem;margin-bottom:.6rem;font-size:.8rem">
+        <div style="display:flex;justify-content:space-between;margin-bottom:.4rem">
+          <strong>${escHtml(r.fecha_desde || '')}</strong>
+          <span style="font-family:var(--mono);font-size:.7rem;color:var(--muted)">${(r.creado||'').substring(0,16).replace('T',' ')}</span>
+        </div>
+        <div style="color:var(--text-sub);line-height:1.55;white-space:pre-wrap">${escHtml(r.respuesta)}</div>
+      </div>`).join('');
   });
 }
 
