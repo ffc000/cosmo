@@ -1661,3 +1661,4 @@ def api_actividad_detalle_curvas(act_id):
 # garmin de este módulo, así que training_bp (definido arriba) y esas dos
 # funciones ya tienen que existir antes de que training_plan.py se cargue.
 import blueprints.training_plan  # noqa: E402,F401  (registra rutas sobre training_bp, no se usa directo)
+import blueprints.training_antro  # noqa: E402,F401  (ídem, composición corporal)
