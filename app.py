@@ -1805,14 +1805,36 @@ def _procesar_csv(tmp_path, tabla, log, modo="reemplazar", username="?"):
                                        "descartan filas 100% idénticas a una ya cargada; cualquier "
                                        "cambio (ej. nuevo ULT_ESTADO) se guarda como fila nueva.")
                             try:
-                                # Índice normal (no único) sobre la clave de operación --
-                                # ya no garantiza unicidad, pero se mantiene para que
-                                # las queries que agrupan/filtran por operación sigan
-                                # siendo rápidas (ver generar_queries.py).
                                 cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{tabla}_key "
                                            f"ON {tabla}(OPERACION_PAD_EXT, MIC, TIPO_REGISTRO)")
                             except Exception as e:
                                 log.append(f"⚠ No se pudo asegurar el índice de operación: {e}")
+
+                            # Columnas nuevas en el CSV que la tabla todavía no
+                            # tiene (ej. el schema de origen agrega un campo) --
+                            # se agregan solas con ALTER TABLE en vez de romper
+                            # el import. Si hay alguna nueva, la huella de
+                            # contenido (_hash_fila) hay que RECONSTRUIRLA para
+                            # que las incluya -- si no, dos filas que solo
+                            # difieren en la columna nueva seguirían pareciendo
+                            # "idénticas" para el dedupe y una se perdería.
+                            columnas_actuales = {r[1] for r in cur.execute(f"PRAGMA table_xinfo({tabla})").fetchall()}
+                            columnas_nuevas = [h for h in headers if h not in columnas_actuales]
+                            if columnas_nuevas:
+                                log.append(f"Columnas nuevas detectadas en el CSV: {columnas_nuevas} -- "
+                                          f"agregando a la tabla...")
+                                for h in columnas_nuevas:
+                                    try:
+                                        cur.execute(f'ALTER TABLE {tabla} ADD COLUMN "{h}" TEXT')
+                                    except Exception as e:
+                                        log.append(f"⚠ No se pudo agregar la columna \"{h}\": {e}")
+                                if "_hash_fila" in columnas_actuales:
+                                    try:
+                                        cur.execute(f"DROP INDEX IF EXISTS idx_{tabla}_hashfila")
+                                        cur.execute(f"ALTER TABLE {tabla} DROP COLUMN _hash_fila")
+                                    except Exception as e:
+                                        log.append(f"⚠ No se pudo reconstruir la huella de contenido: {e}")
+
                             hash_expr = " || '|' || ".join(f'COALESCE("{h}", \'\')' for h in headers)
                             try:
                                 cur.execute(f'ALTER TABLE {tabla} ADD COLUMN _hash_fila TEXT '
