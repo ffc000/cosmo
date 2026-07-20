@@ -380,7 +380,22 @@ def _armar_prompt_matutino(fecha_ayer, fecha_hoy, dia_ayer, dia_hoy, peso_row,
             origen = f"último registrado, del {peso_row['fecha']}"
         partes.append(f"PESO CORPORAL: {peso_row['peso_kg']} kg ({origen}).")
         if peso_row.get("sensacion"):
-            partes.append(f"Cómo se sintió ayer (1=mal, 5=muy bien): {peso_row['sensacion']}/5.")
+            partes.append(f"Cómo se sintió ayer en general (1=mal, 5=muy bien): {peso_row['sensacion']}/5.")
+        # Las 4 dimensiones son opcionales e independientes entre sí (Fer
+        # puede cargar solo alguna) -- se arma una sola línea con las que
+        # haya, en vez de una línea fija por cada una, para no llenar el
+        # prompt de "sin datos" cuando no se cargó nada. El objetivo es que
+        # el análisis pueda distinguir matices que "sensación" sola no
+        # puede (ej. cansado pero de buen ánimo, o con energía pero
+        # estresado) -- no es un diagnóstico de nada, es una señal más
+        # para cruzar con el entrenamiento real del día.
+        dimensiones = []
+        if peso_row.get("energia"): dimensiones.append(f"energía {peso_row['energia']}/5")
+        if peso_row.get("animo"): dimensiones.append(f"ánimo {peso_row['animo']}/5")
+        if peso_row.get("estres"): dimensiones.append(f"estrés {peso_row['estres']}/5")
+        if peso_row.get("motivacion"): dimensiones.append(f"motivación para entrenar {peso_row['motivacion']}/5")
+        if dimensiones:
+            partes.append("Detalle de cómo se sintió ayer: " + ", ".join(dimensiones) + ".")
         if peso_row.get("nota"):
             partes.append(f"Nota de ayer: {peso_row['nota']}")
     else:
@@ -565,7 +580,9 @@ def _analisis_matutino_diario():
                             try:
                                 fecha_peso, peso_kg, _raw = _obtener_peso_garmin(client, hoy)
                                 if peso_kg:
-                                    peso_row = {"fecha": fecha_peso, "peso_kg": peso_kg, "sensacion": None, "nota": ""}
+                                    peso_row = {"fecha": fecha_peso, "peso_kg": peso_kg, "sensacion": None,
+                                                "nota": "", "energia": None, "animo": None,
+                                                "estres": None, "motivacion": None}
                             except Exception as e:
                                 logging.info(f"Análisis diario: peso de Garmin no disponible ({e}).")
                         if not peso_row:
@@ -576,13 +593,18 @@ def _analisis_matutino_diario():
                                 peso_row = dict(fila) if fila else None
                         # sensación/nota de AYER (carga manual) se suman al
                         # peso -- son cosas independientes, ver
-                        # api_training_peso_guardar.
+                        # api_training_peso_guardar. energia/animo/estres/
+                        # motivacion son las 4 dimensiones que desglosan
+                        # "sensación" (Fase 12, a pedido -- cruzar bienestar
+                        # subjetivo con el entrenamiento en el análisis
+                        # nocturno).
                         with get_db(HIST_DB, row_factory=True) as con:
                             fila_ayer = con.execute(
-                                "SELECT sensacion, nota FROM entrenamiento_peso WHERE fecha=?", (ayer,)).fetchone()
+                                "SELECT sensacion, nota, energia, animo, estres, motivacion "
+                                "FROM entrenamiento_peso WHERE fecha=?", (ayer,)).fetchone()
                             if fila_ayer and peso_row:
-                                peso_row["sensacion"] = fila_ayer["sensacion"]
-                                peso_row["nota"] = fila_ayer["nota"]
+                                for _campo in ("sensacion", "nota", "energia", "animo", "estres", "motivacion"):
+                                    peso_row[_campo] = fila_ayer[_campo]
 
                         carga = _carga_semana_actual()
                         sesiones_hoy_plan = _sesiones_planificadas_dia(carga["semana_num"], dia_hoy) if carga else []

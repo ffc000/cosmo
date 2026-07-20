@@ -130,6 +130,26 @@ def init_garmin_db():
             nota       TEXT DEFAULT '',
             creado     TEXT DEFAULT (datetime('now'))
         )""")
+        # Columnas agregadas después de que la tabla ya existía (mismo caso
+        # que nota_real/total_steps más arriba/abajo). "sensacion" (1-5,
+        # "cómo te sentiste") ya se venía cargando y cruzando con el
+        # análisis nocturno -- estas 4 la desglosan en dimensiones
+        # separadas en vez de un único número general, para que el
+        # análisis de IA pueda distinguir, por ejemplo, "cansado pero de
+        # buen ánimo" de "con energía pero estresado" -- cosas que un solo
+        # 1-5 de "sensación" no puede expresar. Se pensaron en términos de
+        # bienestar/energía (el mismo enfoque que "readiness"/"body
+        # battery" de Garmin, o el diario subjetivo de Whoop), no como
+        # categorías clínicas -- no son ni pretenden ser un diagnóstico de
+        # nada, solo una señal más para cruzar con el entrenamiento.
+        # Todas 1-5, todas opcionales -- "sensacion" se mantiene como el
+        # campo general/resumen para no romper compatibilidad con lo ya
+        # cargado ni con las referencias existentes en training_plan.py.
+        for _col in ("energia", "animo", "estres", "motivacion"):
+            try:
+                con.execute(f"ALTER TABLE entrenamiento_peso ADD COLUMN {_col} INTEGER")
+            except Exception:
+                pass  # ya existe
         # raw_json guarda la respuesta cruda completa de cada endpoint de
         # Garmin, además de los campos que se extraen abajo -- no se probó
         # contra una cuenta real en desarrollo (los nombres de campo de la
@@ -582,7 +602,9 @@ def api_garmin_wellness_probar():
 @login_required
 @modulo_required("training")
 def api_training_peso_guardar():
-    """Carga manual de \"cómo te sentiste\" del día (1-5) + nota. El peso
+    """Carga manual de "cómo te sentiste" del día: sensación general (1-5,
+    compatibilidad con lo ya cargado) + 4 dimensiones opcionales (energía,
+    ánimo, estrés, motivación, cada una 1-5) + nota libre. El peso
     corporal NO se carga acá -- se toma de Garmin automáticamente (se
     carga en Garmin Connect, ver _obtener_peso_garmin) en el análisis
     nocturno. peso_kg sigue existiendo como parámetro opcional para poder
@@ -591,22 +613,39 @@ def api_training_peso_guardar():
     data = request.json or {}
     fecha = data.get("fecha") or date.today().isoformat()
     peso_kg = data.get("peso_kg")
-    sensacion = data.get("sensacion")
-    if sensacion is not None:
+
+    def _validar_1_5(campo):
+        val = data.get(campo)
+        if val is None or val == "":
+            return None
         try:
-            sensacion = int(sensacion)
-            if not (1 <= sensacion <= 5):
-                return jsonify({"ok": False, "error": "sensación debe ser 1-5."}), 400
+            val = int(val)
         except (TypeError, ValueError):
-            return jsonify({"ok": False, "error": "sensación inválida."}), 400
+            raise ValueError(f"{campo} inválido.")
+        if not (1 <= val <= 5):
+            raise ValueError(f"{campo} debe ser 1-5.")
+        return val
+
+    try:
+        sensacion = _validar_1_5("sensacion")
+        energia = _validar_1_5("energia")
+        animo = _validar_1_5("animo")
+        estres = _validar_1_5("estres")
+        motivacion = _validar_1_5("motivacion")
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
     nota = (data.get("nota") or "").strip()
     with get_db(HIST_DB) as con:
         con.execute("""
-            INSERT INTO entrenamiento_peso (fecha, peso_kg, sensacion, nota) VALUES (?,?,?,?)
+            INSERT INTO entrenamiento_peso (fecha, peso_kg, sensacion, nota, energia, animo, estres, motivacion)
+            VALUES (?,?,?,?,?,?,?,?)
             ON CONFLICT(fecha) DO UPDATE SET
                 peso_kg=COALESCE(excluded.peso_kg, entrenamiento_peso.peso_kg),
-                sensacion=excluded.sensacion, nota=excluded.nota
-        """, (fecha, peso_kg, sensacion, nota))
+                sensacion=excluded.sensacion, nota=excluded.nota,
+                energia=excluded.energia, animo=excluded.animo,
+                estres=excluded.estres, motivacion=excluded.motivacion
+        """, (fecha, peso_kg, sensacion, nota, energia, animo, estres, motivacion))
     return jsonify({"ok": True})
 
 
@@ -1335,6 +1374,10 @@ def api_tendencias_diarias():
             "fecha": f,
             "peso_kg": p.get("peso_kg"),
             "sensacion": p.get("sensacion"),
+            "energia": p.get("energia"),
+            "animo": p.get("animo"),
+            "estres_subjetivo": p.get("estres"),
+            "motivacion": p.get("motivacion"),
             "body_battery_min": w.get("body_battery_min"),
             "body_battery_max": w.get("body_battery_max"),
             "sleep_score": w.get("sleep_score"),
