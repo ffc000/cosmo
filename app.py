@@ -3186,7 +3186,7 @@ def sintia_dat_query():
     if p.get("novedad"):
         conditions.append("tiene_novedad = ?");     params.append(p["novedad"])
     if p.get("controles"):
-        conditions.append("CONTROLES = ?");         params.append(p["controles"])
+        conditions.append("CONTROLES LIKE ?");       params.append(f"{p['controles']}%")
     if p.get("cant_controles_min") not in (None, ""):
         conditions.append("CANT_CONTROLES >= ?");   params.append(p["cant_controles_min"])
     if p.get("cant_controles_max") not in (None, ""):
@@ -3329,7 +3329,7 @@ def sintia_dat_export():
     if p.get("var_control"): conditions.append("VAR_CONTROL = ?");    params.append(p["var_control"])
     if p.get("novedad"): conditions.append("tiene_novedad = ?");      params.append(p["novedad"])
     if p.get("controles"):
-        conditions.append("CONTROLES = ?");         params.append(p["controles"])
+        conditions.append("CONTROLES LIKE ?");       params.append(f"{p['controles']}%")
     if p.get("cant_controles_min") not in (None, ""):
         conditions.append("CANT_CONTROLES >= ?");   params.append(p["cant_controles_min"])
     if p.get("cant_controles_max") not in (None, ""):

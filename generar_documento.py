@@ -976,6 +976,19 @@ def _agrupar_por_dira(por_aduana):
     return filas
 
 
+def _agregar_controles_por_tipo(por_tipo_control):
+    """Suma por_tipo_control (que viene ABIERTO por aduana, ver
+    correr_queries_consolidado) agrupado solo por tipo -- para el gráfico
+    resumen nacional, que muestra el total de cada tipo de control sin
+    desglosar por aduana (el desglose por aduana va en la tabla, no en
+    este gráfico)."""
+    agregado = {}
+    for r in por_tipo_control or []:
+        cod = r["CODIGO"]
+        agregado[cod] = agregado.get(cod, 0) + n(r.get("TOTAL", 0))
+    return [{"CODIGO": k, "TOTAL": v} for k, v in agregado.items()]
+
+
 def _asimetria_impoexpo_paises(por_pais, umbral_pct=65.0, min_operaciones=1000):
     """Identifica países donde IMPO o EXPO domina fuertemente sobre el
     otro -- el % del Resumen Ejecutivo es un promedio del TOTAL general, y
@@ -1033,7 +1046,7 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
             ("cargalast",  lambda: grafico_consolidado_cargado_lastre(cargado, lastre)),
             ("aduana",     lambda: grafico_consolidado_aduana(por_aduana)),
             ("varcontrol", lambda: grafico_consolidado_var_control(por_var_control)),
-            ("controles", lambda: grafico_controles_por_tipo(por_tipo_control)),
+            ("controles", lambda: grafico_controles_por_tipo(_agregar_controles_por_tipo(por_tipo_control))),
             ("interanual", lambda: grafico_comparacion_interanual(comparacion_anual)),
         ]:
             try: graficos[nombre] = fn()
@@ -1189,12 +1202,14 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
         doc.add_paragraph()
         doc.add_paragraph().add_run("Tipos de control efectuados").bold = True
         doc.add_paragraph(
-            "Cantidad de operaciones sobre las que se efectuó cada tipo de control en el período "
-            "(catálogo de tipos editable en /admin — no todos los tipos configurados tienen por qué "
-            "haberse aplicado en este período puntual).")
-        agregar_tabla_word(doc, ["TIPO DE CONTROL", "CANT. CONTROLES", "CANT. OPERACIONES"],
-            [[r["CODIGO"], fmt(r.get("TOTAL", 0)), fmt(r.get("CANT_OPERACIONES", 0))] for r in por_tipo_control],
-            col_widths=[5, 3.5, 3.5])
+            "Cantidad de operaciones de cada aduana sobre las que se efectuó cada tipo de control en "
+            "el período (catálogo de tipos editable en /admin — no todas las combinaciones de aduana/"
+            "tipo tienen por qué haberse dado en este período puntual; solo se muestran las que sí).")
+        filas_ordenadas = sorted(por_tipo_control, key=lambda r: (r.get("DIRA_NOMBRE", ""), r.get("ADUANA_NOMBRE", ""), r["CODIGO"]))
+        agregar_tabla_word(doc, ["ADUANA", "TIPO DE CONTROL", "CANT. CONTROLES", "CANT. OPERACIONES"],
+            [[r.get("ADUANA_NOMBRE", r.get("ADUANA", "")), r["CODIGO"], fmt(r.get("TOTAL", 0)),
+              fmt(r.get("CANT_OPERACIONES", 0))] for r in filas_ordenadas],
+            col_widths=[4.5, 3.5, 3, 3])
         if "controles" in graficos: insertar_grafico(doc, graficos["controles"])
 
     # 6. Comparación interanual (condicional -- solo si hay al menos un mes
@@ -1314,8 +1329,10 @@ def _generar_excel_consolidado(fecha_d, fecha_h, version, totales, por_pais, por
         [[r["VAR_CONTROL"], n(r.get("TOTAL", 0)), pct(r.get("TOTAL", 0), total)] for r in por_var_control])
 
     if por_tipo_control:
-        add_sheet("Tipos de Control", ["Tipo de Control", "Cant. Controles", "Cant. Operaciones"],
-            [[r["CODIGO"], n(r.get("TOTAL", 0)), n(r.get("CANT_OPERACIONES", 0))] for r in por_tipo_control])
+        filas_ordenadas = sorted(por_tipo_control, key=lambda r: (r.get("DIRA_NOMBRE", ""), r.get("ADUANA_NOMBRE", ""), r["CODIGO"]))
+        add_sheet("Tipos de Control", ["Aduana", "Tipo de Control", "Cant. Controles", "Cant. Operaciones"],
+            [[r.get("ADUANA_NOMBRE", r.get("ADUANA", "")), r["CODIGO"], n(r.get("TOTAL", 0)),
+              n(r.get("CANT_OPERACIONES", 0))] for r in filas_ordenadas])
 
     if comparacion_anual:
         anio_act = comparacion_anual[0]["anio_actual"]; anio_ant = comparacion_anual[0]["anio_anterior"]

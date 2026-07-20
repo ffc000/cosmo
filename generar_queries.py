@@ -364,32 +364,56 @@ def correr_queries_consolidado(ruta_db, fecha_d, fecha_h, log_fn, hist_db=None):
             GROUP BY COALESCE(NULLIF(TRIM(VAR_CONTROL),''),'SIN VARIABLE DE CONTROL') ORDER BY TOTAL DESC
         """, params)
 
-        # Controles por tipo (Fase 13, 20/07/2026): CONTROLES trae el tipo
-        # + resultado pegados, ej. "ESC(--)" o "BIN(SN)" -- interesa solo
-        # el tipo (antes del paréntesis). Se cuenta con LIKE 'COD%' en vez
-        # de extraer el substring, para no asumir que el campo tiene
-        # exactamente un control. Los tipos posibles salen de
-        # ref_controles (catálogo editable a mano en /admin), no de un
-        # DISTINCT sobre los datos -- mismo criterio que "Consultar DAT".
+        # Controles por tipo, ABIERTO POR ADUANA (Fase 13, 20/07/2026 --
+        # corregido: la primera versión lo agregaba a nivel general, sin
+        # discriminar aduana, distinto del informe "Aduanas del país" que
+        # sí lo abre por aduana -- se corrige acá para que ambos informes
+        # tengan la misma granularidad). CONTROLES trae el tipo + resultado
+        # pegados, ej. "ESC(--)" o "BIN(SN)" -- interesa solo el tipo
+        # (antes del paréntesis), se cuenta con LIKE 'COD%'. Los tipos
+        # posibles salen de ref_controles (catálogo editable a mano en
+        # /admin), no de un DISTINCT sobre los datos -- mismo criterio que
+        # "Consultar DAT" y que _controles_por_aduana_nacional en app.py
+        # (informe Aduanas del país).
         with get_db(HIST_DB, row_factory=True) as con_hist:
             codigos_control = [r["codigo"] for r in con_hist.execute(
                 "SELECT codigo FROM ref_controles ORDER BY codigo").fetchall()]
         por_tipo_control = []
-        total_operaciones_periodo = n(totales.get("TOTAL", 0))
-        for cod in codigos_control:
-            fila = q(f"SELECT COUNT(*) AS TOTAL FROM {origen} {where} AND CONTROLES LIKE ?",
-                     params + (f"{cod}%",))
-            por_tipo_control.append({
-                "CODIGO": cod,
-                "TOTAL": n(fila[0]["TOTAL"]) if fila else 0,
-                "CANT_OPERACIONES": total_operaciones_periodo,
-            })
+        if codigos_control:
+            columnas_sum = ", ".join(
+                f"SUM(CASE WHEN CONTROLES LIKE '{cod}%' THEN 1 ELSE 0 END) AS \"{cod}\"" for cod in codigos_control)
+            filas_aduana_control = q(f"""
+                SELECT COALESCE(NULLIF(TRIM(ADUANA),''),'SIN DATO') AS ADUANA, COUNT(*) AS CANT_OPERACIONES,
+                    {columnas_sum}
+                FROM {origen} {where}
+                GROUP BY COALESCE(NULLIF(TRIM(ADUANA),''),'SIN DATO')
+            """, params)
+            for r in filas_aduana_control:
+                cant_operaciones = n(r.get("CANT_OPERACIONES", 0))
+                for cod in codigos_control:
+                    cant_controles = n(r.get(cod, 0))
+                    if cant_controles == 0:
+                        continue  # sin ese control en esa aduana -- no vale la pena mostrar la fila
+                    por_tipo_control.append({
+                        "ADUANA": r["ADUANA"], "CODIGO": cod,
+                        "TOTAL": cant_controles, "CANT_OPERACIONES": cant_operaciones,
+                    })
 
         comparacion_anual = comparacion_anual_meses_completos(con)
 
     cat_aduanas, cat_diras = _catalogo_aduanas_dira(hist_db)
     for r in por_aduana:
         r["DEMORA_MEDIA_FMT"] = formatear_demora(r.get("DEMORA_MEDIA_DIAS"))
+        cod = r["ADUANA"]
+        if cod == "SIN DATO":
+            r["ADUANA_NOMBRE"] = "SIN DATO"; r["DIRA_NOMBRE"] = "—"
+            continue
+        info = cat_aduanas.get(cod)
+        r["ADUANA_NOMBRE"] = info["nombre"] if info else f"{cod} (sin nombre en ref_aduanas)"
+        dira_indice = info["indice_dira"] if info else None
+        r["DIRA_NOMBRE"] = cat_diras.get(dira_indice, "Sin DIRA asignada") if dira_indice else "Sin DIRA asignada"
+
+    for r in por_tipo_control:
         cod = r["ADUANA"]
         if cod == "SIN DATO":
             r["ADUANA_NOMBRE"] = "SIN DATO"; r["DIRA_NOMBRE"] = "—"
