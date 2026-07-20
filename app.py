@@ -3884,6 +3884,7 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from generar_documento import (agregar_tabla_word, _agregar_encabezado, _agregar_pie_pagina,
         _insertar_indice, _heading_indexado, _generar_portada_compuesta)
+    from generar_utils import fmt
 
     nombre_archivo = f"Informe_Aduanas_Pais_{anio}_{job_id}.docx" if job_id else ""
     doc = Document()
@@ -3944,13 +3945,13 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
 
     _heading_indexado(doc, "1.  Indicadores", 1, 1)
     agregar_tabla_word(doc, ["Indicador", "Valor"], [
-        ["Operaciones totales", str(indicadores["total_operaciones"])],
-        ["Salieron (SAL)", str(indicadores["total_sali"])],
-        ["Salieron dentro del umbral", str(indicadores["sali_dentro_umbral"])],
+        ["Operaciones totales", fmt(indicadores["total_operaciones"])],
+        ["Salieron (SAL)", fmt(indicadores["total_sali"])],
+        ["Salieron dentro del umbral", fmt(indicadores["sali_dentro_umbral"])],
         ["Demora media", indicadores["demora_media_fmt"] or "—"],
-        ["En alerta — pendiente", str(indicadores["en_alerta_bandeja"])],
-        ["En alerta — salió tarde", str(indicadores["en_alerta_demora_larga"])],
-        ["En alerta total", str(indicadores["en_alerta_total"])],
+        ["En alerta — pendiente", fmt(indicadores["en_alerta_bandeja"])],
+        ["En alerta — salió tarde", fmt(indicadores["en_alerta_demora_larga"])],
+        ["En alerta total", fmt(indicadores["en_alerta_total"])],
     ], col_widths=[10, 5.5])
 
     _heading_indexado(doc, "2.  Análisis", 1, 2)
@@ -3969,8 +3970,8 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
     if filas:
         _heading_indexado(doc, "4.  Detalle por aduana", 1, idx_detalle)
         agregar_tabla_word(doc, ["Aduana", "DIRA", "Operaciones", "Demora media", "En alerta"],
-            [[f["aduana_nombre"], f["dira_nombre"], str(f["total_operaciones"]),
-              f["demora_media_fmt"] or "—", str(f["en_alerta_total"])] for f in filas],
+            [[f["aduana_nombre"], f["dira_nombre"], fmt(f["total_operaciones"]),
+              f["demora_media_fmt"] or "—", fmt(f["en_alerta_total"])] for f in filas],
             col_widths=[4, 3.5, 2.7, 2.7, 2.6])
 
     # ── Evolución mensual de cada aduana en alerta (tabla + gráfico) ──────
@@ -4007,14 +4008,14 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
             nombre_p = doc.add_paragraph()
             nombre_run = nombre_p.add_run(f"{f['aduana_nombre']} ")
             nombre_run.bold = True; nombre_run.font.size = Pt(12)
-            alerta_run = nombre_p.add_run(f"({f['en_alerta_total']} en alerta)")
+            alerta_run = nombre_p.add_run(f"({fmt(f['en_alerta_total'])} en alerta)")
             alerta_run.bold = True; alerta_run.font.size = Pt(12); alerta_run.font.color.rgb = RGBColor(0xDC, 0x26, 0x26)
 
             valores_mes = [datos_aduana.get(m) or {"demora": None, "operaciones": 0} for m in meses_cols]
             valores_dias = [v["demora"] for v in valores_mes]
             valores_ops = [v["operaciones"] for v in valores_mes]
             agregar_tabla_word(doc, ["Mes", "Demora media", "Operaciones"], [
-                [_mes_label_corto(m), _formatear_demora(v["demora"]) or "—", str(v["operaciones"])]
+                [_mes_label_corto(m), _formatear_demora(v["demora"]) or "—", fmt(v["operaciones"])]
                 for m, v in zip(meses_cols, valores_mes)
             ], col_widths=[5.5, 5, 5])
 
@@ -4211,6 +4212,7 @@ def sintia_aduanas_nacional_export():
         ws1.append([])
         ws1.append(["Indicadores nacionales"])
         ws1[f"A{ws1.max_row}"].font = Font(bold=True)
+        _fila_inicio_indicadores = ws1.max_row + 1
         for etiqueta, valor in [
             ("Operaciones totales", indicadores["total_operaciones"]),
             ("Salieron (SAL)", indicadores["total_sali"]),
@@ -4223,8 +4225,16 @@ def sintia_aduanas_nacional_export():
             ("En alerta total", indicadores["en_alerta_total"]),
         ]:
             ws1.append([etiqueta, valor])
-
-        ws1.column_dimensions["A"].width = 32
+        # Separador de miles -- Excel lo resuelve según la configuración
+        # regional de quien abre el archivo (punto o coma según corresponda),
+        # a diferencia del Word/HTML donde hay que hardcodear el separador
+        # como texto.
+        for row in ws1.iter_rows(min_row=_fila_inicio_indicadores, max_row=ws1.max_row, min_col=2, max_col=2):
+            for cell in row:
+                if isinstance(cell.value, int):
+                    cell.number_format = "#,##0"
+                elif isinstance(cell.value, float):
+                    cell.number_format = "#,##0.0000"
         ws1.column_dimensions["B"].width = 26
 
         # ── Hoja 2: Aduanas (detalle) ────────────────────────────────────
@@ -4245,6 +4255,14 @@ def sintia_aduanas_nacional_export():
                 f["demora_media_fmt"] or "",
                 f["en_alerta_bandeja"], f["en_alerta_demora_larga"], f["en_alerta_total"],
             ])
+        # Columnas C, D, E, H, I, J son enteros (operaciones/alertas); F es
+        # el decimal de demora en días -- separador de miles vía Excel
+        # (locale-aware), mismo criterio que la hoja Resumen de arriba.
+        for letra in ("C", "D", "E", "H", "I", "J"):
+            for cell in ws2[letra][1:]:
+                cell.number_format = "#,##0"
+        for cell in ws2["F"][1:]:
+            cell.number_format = "#,##0.0000"
         for col in ws2.columns:
             max_len = max((len(str(c.value if c.value is not None else "")) for c in col), default=8)
             ws2.column_dimensions[col[0].column_letter].width = min(max_len + 2, 42)
@@ -4269,7 +4287,10 @@ def sintia_aduanas_nacional_export():
             ws3.append(fila_valores)
         ws3.column_dimensions["A"].width = 32
         for i in range(len(meses_cols)):
-            ws3.column_dimensions[get_column_letter(2 + i)].width = 14
+            letra_col = get_column_letter(2 + i)
+            ws3.column_dimensions[letra_col].width = 14
+            for cell in ws3[letra_col][1:]:
+                cell.number_format = "#,##0.0000"
         if filas_evol:
             ws3.append([])
             ws3.append(["Valores en días (decimal) — demora media de ese mes, mismo criterio que la hoja Aduanas "
