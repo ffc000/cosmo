@@ -3191,6 +3191,8 @@ def sintia_dat_query():
         conditions.append("CANT_CONTROLES >= ?");   params.append(p["cant_controles_min"])
     if p.get("cant_controles_max") not in (None, ""):
         conditions.append("CANT_CONTROLES <= ?");   params.append(p["cant_controles_max"])
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     tabla, anio = _resolver_tabla_dat(p)
 
     try:
