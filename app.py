@@ -3087,6 +3087,26 @@ def sintia_dashboard():
                     dias_sin_actualizar = (hoy - uf).days
                 except: pass
 
+            # Controles (Fase 13, 20/07/2026): mismo período de 30 días que
+            # el resto del dashboard. por_tipo_control usa ref_controles
+            # (HIST_DB) como catálogo de tipos, igual que el informe SINTIA
+            # consolidado y el de Aduanas del país -- no un DISTINCT sobre
+            # los datos.
+            with get_db(HIST_DB, row_factory=True) as con_hist:
+                codigos_control = [r["codigo"] for r in con_hist.execute(
+                    "SELECT codigo FROM ref_controles ORDER BY codigo").fetchall()]
+            por_tipo_control = {}
+            for cod in codigos_control:
+                cur.execute(f"SELECT COUNT(*) FROM {tabla} WHERE FECHA_INGRESO_ISO BETWEEN ? AND ? "
+                           f"AND CONTROLES LIKE ?", (d30, hoy_iso, f"{cod}%"))
+                cnt = cur.fetchone()[0]
+                if cnt: por_tipo_control[cod] = cnt
+
+            cur.execute(f"SELECT COUNT(*) FROM {tabla} WHERE FECHA_INGRESO_ISO BETWEEN ? AND ? "
+                       f"AND CONTROLES IS NOT NULL AND TRIM(CONTROLES) != ''", (d30, hoy_iso))
+            con_control = cur.fetchone()[0]
+            con_sin_control = {"Con control": con_control, "Sin control": max(total_mes - con_control, 0)}
+
             evolucion = []
             for i in range(5, -1, -1):
                 d = (hoy.replace(day=1) - _dt.timedelta(days=1)) if i > 0 else hoy
@@ -3115,6 +3135,8 @@ def sintia_dashboard():
             "top_aduanas": top_aduanas,
             "dias_sin_actualizar": dias_sin_actualizar,
             "evolucion": evolucion,
+            "por_tipo_control": por_tipo_control,
+            "con_sin_control": con_sin_control,
         })
     except Exception as e:
         logging.error(f"SINTIA DASHBOARD ERROR | {e}")
@@ -3534,6 +3556,79 @@ def _aduanas_nacional_datos(anio, dira_filtro=None, umbral_alerta_dias=10):
     return filas, indicadores, diras
 
 
+def _controles_por_aduana_nacional(anio, dira_filtro=None):
+    """Cruza aduana x tipo de control (Fase 13, 20/07/2026): para cada
+    combinación con al menos 1 control, cuántas operaciones de esa aduana
+    tuvieron ese tipo de control (CONTROLES LIKE 'COD%') sobre el total de
+    operaciones de la aduana en el período (tengan o no control). Mismo
+    criterio de resolución de tabla/año que _aduanas_nacional_datos (año
+    puntual, "todos", o lista separada por comas).
+
+    Los tipos de control salen de ref_controles (catálogo editable a mano
+    en /admin), igual que en el informe SINTIA consolidado -- no de un
+    DISTINCT sobre los datos.
+
+    Combinaciones aduana/tipo con 0 controles se omiten (tabla de 26
+    aduanas x 7 tipos sin filtrar tendría ~180 filas, la mayoría en cero --
+    no aporta nada mostrarlas).
+
+    Devuelve una lista de dicts: aduana_cod, aduana_nombre, dira_nombre,
+    tipo_control, cantidad_controles, cantidad_operaciones, pct_controlado."""
+    if not os.path.exists(DB_PATH):
+        raise ValueError("BD no cargada.")
+    tabla, _anio_desc = _resolver_from_dat(anio)
+
+    with get_db(HIST_DB, row_factory=True) as con_hist:
+        codigos = [r["codigo"] for r in con_hist.execute(
+            "SELECT codigo FROM ref_controles ORDER BY codigo").fetchall()]
+        cat_aduanas = {r["cod"]: dict(r) for r in con_hist.execute(
+            "SELECT cod, nombre, indice_dira FROM ref_aduanas").fetchall()}
+        cat_diras = {r["indice"]: r["nombre"] for r in con_hist.execute(
+            "SELECT indice, nombre FROM ref_dira").fetchall()}
+    if not codigos:
+        return []
+
+    with get_db(DB_PATH, row_factory=True) as con:
+        if not tabla.startswith("("):
+            existe = con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,)).fetchone()
+            if not existe:
+                raise ValueError(f"Tabla {tabla} no encontrada.")
+        # Códigos validados en ref_controles_save (^[A-Z0-9_-]{1,20}$) --
+        # seguro interpolarlos directo en el SQL, no vienen de request.args.
+        columnas_sum = ", ".join(
+            f"SUM(CASE WHEN CONTROLES LIKE '{cod}%' THEN 1 ELSE 0 END) AS \"{cod}\"" for cod in codigos)
+        rows = [dict(r) for r in con.execute(f"""
+            SELECT ADUANA AS aduana_cod, COUNT(*) AS cantidad_operaciones, {columnas_sum}
+            FROM {tabla}
+            GROUP BY ADUANA
+        """).fetchall()]
+
+    filas = []
+    for r in rows:
+        cod = r["aduana_cod"]
+        info = cat_aduanas.get(cod)
+        dira_indice = info["indice_dira"] if info else None
+        if dira_filtro and dira_indice != dira_filtro:
+            continue
+        dira_nombre = cat_diras.get(dira_indice, "Sin DIRA asignada") if dira_indice else "Sin DIRA asignada"
+        aduana_nombre = info["nombre"] if info else f"{cod} (sin nombre en ref_aduanas)"
+        cantidad_operaciones = r["cantidad_operaciones"]
+        for tipo in codigos:
+            cantidad_controles = r.get(tipo, 0) or 0
+            if cantidad_controles == 0:
+                continue
+            filas.append({
+                "aduana_cod": cod, "aduana_nombre": aduana_nombre, "dira_nombre": dira_nombre,
+                "tipo_control": tipo, "cantidad_controles": cantidad_controles,
+                "cantidad_operaciones": cantidad_operaciones,
+                "pct_controlado": round(100 * cantidad_controles / cantidad_operaciones, 1)
+                                  if cantidad_operaciones else 0.0,
+            })
+    filas.sort(key=lambda f: (f["dira_nombre"], f["aduana_nombre"], f["tipo_control"]))
+    return filas
+
+
 def _aduanas_codigos_de_dira(dira_filtro):
     """Códigos de aduana (ref_aduanas.cod) que pertenecen a una DIRA -- para
     filtrar DAT_<año> por DIRA sin poder hacer JOIN entre bases (ver nota en
@@ -3904,7 +3999,8 @@ def _grafico_evolucion_aduana(nombre_aduana, meses_cols, valores_dias, valores_o
 
 
 def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicadores, filas, evolucion,
-                                   narrativa, evolucion_por_aduana=None, meses_cols=None, job_id=""):
+                                   narrativa, evolucion_por_aduana=None, meses_cols=None, job_id="",
+                                   controles_por_aduana=None):
     """Arma el Word del informe de Aduanas del País: filtros, indicadores,
     análisis IA, evolución mensual, y detalle por aduana. No reusa
     actas.generar_acta_word() -- esa está pensada para minutas de reunión
@@ -3974,12 +4070,14 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
     doc.add_page_break()
 
     secciones_aduanas = [(1, "1.  Indicadores"), (1, "2.  Análisis")]
-    idx_evol = idx_detalle = None
+    idx_evol = idx_detalle = idx_controles = None
     _idx_aduanas = 3
     if evolucion:
         idx_evol = _idx_aduanas; secciones_aduanas.append((1, "3.  Evolución mensual")); _idx_aduanas += 1
     if filas:
         idx_detalle = _idx_aduanas; secciones_aduanas.append((1, "4.  Detalle por aduana")); _idx_aduanas += 1
+    if controles_por_aduana:
+        idx_controles = _idx_aduanas; secciones_aduanas.append((1, "5.  Operaciones de control")); _idx_aduanas += 1
     _insertar_indice(doc, secciones_aduanas)
 
     _heading_indexado(doc, "1.  Indicadores", 1, 1)
@@ -4012,6 +4110,19 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
             [[f["aduana_nombre"], f["dira_nombre"], fmt(f["total_operaciones"]),
               f["demora_media_fmt"] or "—", fmt(f["en_alerta_total"])] for f in filas],
             col_widths=[4, 3.5, 2.7, 2.7, 2.6])
+
+    if controles_por_aduana:
+        _heading_indexado(doc, "5.  Operaciones de control", 1, idx_controles)
+        doc.add_paragraph(
+            "Cantidad de operaciones de cada aduana sobre las que se efectuó cada tipo de control "
+            "(catálogo editable en /admin), y qué porcentaje representa sobre el total de operaciones "
+            "de esa aduana en el período -- tengan o no control. Solo se muestran combinaciones "
+            "aduana/tipo con al menos un control realizado.")
+        agregar_tabla_word(doc, ["Aduana", "Tipo de control", "Cant. controles", "Cant. operaciones", "% controlado"],
+            [[c["aduana_nombre"], c["tipo_control"], fmt(c["cantidad_controles"]),
+              fmt(c["cantidad_operaciones"]),
+              f"{c['pct_controlado']}%".replace(".", ",")] for c in controles_por_aduana],
+            col_widths=[4, 3, 2.7, 2.7, 2.6])
 
     # ── Evolución mensual de cada aduana en alerta (tabla + gráfico) ──────
     # Al final del documento, a propósito: es el detalle más fino de todos
@@ -4091,6 +4202,9 @@ def _job_informe_aduanas_nacional(job_id, anio, dira_filtro, umbral_alerta_dias,
         log.append("Calculando evolución por aduana...")
         evolucion_por_aduana, meses_cols = _evolucion_mensual_por_aduana(anio, dira_filtro, umbral_alerta_dias)
 
+        log.append("Calculando controles por tipo...")
+        controles_por_aduana = _controles_por_aduana_nacional(anio, dira_filtro)
+
         # Word se genera siempre -- es la única fuente posible para este
         # informe (no hay versión Excel) y para el PDF (que se convierte a
         # partir de este archivo). Si el usuario solo pidió PDF, igual se
@@ -4098,7 +4212,7 @@ def _job_informe_aduanas_nacional(job_id, anio, dira_filtro, umbral_alerta_dias,
         log.append("Armando Word...")
         doc = _generar_word_informe_aduanas(
             anio, dira_nombre, umbral_alerta_dias, indicadores, filas, evolucion, narrativa,
-            evolucion_por_aduana, meses_cols, job_id=job_id)
+            evolucion_por_aduana, meses_cols, job_id=job_id, controles_por_aduana=controles_por_aduana)
         os.makedirs(OUTPUT_FOLDER, exist_ok=True)
         fname = f"Informe_Aduanas_Pais_{anio}_{job_id}.docx"
         ruta = os.path.join(OUTPUT_FOLDER, fname)
@@ -4334,6 +4448,25 @@ def sintia_aduanas_nacional_export():
             ws3.append([])
             ws3.append(["Valores en días (decimal) — demora media de ese mes, mismo criterio que la hoja Aduanas "
                         "(solo SAL dentro del umbral). Celda vacía = sin operaciones SAL ese mes."])
+
+        # ── Hoja: Controles (aduana x tipo de control) ────────────────────
+        controles_por_aduana = _controles_por_aduana_nacional(anio, dira_filtro)
+        if controles_por_aduana:
+            ws_ctrl = wb.create_sheet("Controles")
+            ws_ctrl.append(["Aduana", "Tipo de control", "Cant. controles", "Cant. operaciones", "% controlado"])
+            for cell in ws_ctrl[1]:
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.fill = PatternFill("solid", fgColor="242D4F")
+                cell.alignment = Alignment(horizontal="center")
+            for c in controles_por_aduana:
+                ws_ctrl.append([c["aduana_nombre"], c["tipo_control"], c["cantidad_controles"],
+                                c["cantidad_operaciones"], c["pct_controlado"]])
+            for cell in ws_ctrl["C"][1:]: cell.number_format = "#,##0"
+            for cell in ws_ctrl["D"][1:]: cell.number_format = "#,##0"
+            for cell in ws_ctrl["E"][1:]: cell.number_format = "0.0\"%\""
+            for col in ws_ctrl.columns:
+                max_len = max((len(str(c.value if c.value is not None else "")) for c in col), default=8)
+                ws_ctrl.column_dimensions[col[0].column_letter].width = min(max_len + 2, 42)
 
         # ── Hoja 4: tablas individuales por aduana en alerta ──────────────
         # A pedido: una tabla por cada aduana con alertas (mes/demora en

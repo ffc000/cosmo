@@ -4,7 +4,7 @@ Extraído de generar.py (Fase 3 de profesionalización).
 """
 import re
 from datetime import datetime
-from db_utils import get_db, dat_actual
+from db_utils import get_db, dat_actual, HIST_DB
 from generar_utils import CAT_LIKE, PAISES, PAISES_CONSOLIDADO, MESES, n, fmt, mes_label_largo, formatear_demora
 
 def _sql_case_categorias(campo="mensaje"):
@@ -159,7 +159,7 @@ def calcular_totales(totales):
 # de las tablas DAT_<año> involucradas en vez de operar sobre una sola tabla.
 
 _COLUMNAS_CONSOLIDADO = ["MIC", "FECHA_INGRESO_ISO", "CARGADO", "TIPO_REGISTRO", "ADUANA", "VAR_CONTROL",
-                         "ULT_ESTADO", "FECHA_ULT_INT"]
+                         "ULT_ESTADO", "FECHA_ULT_INT", "CONTROLES"]
 
 # Mismo criterio que _FECHA_ULT_INT_ISO en app.py (informe "Aduanas del
 # país") -- duplicado a propósito acá para no crear una dependencia de
@@ -283,7 +283,7 @@ def correr_queries_consolidado(ruta_db, fecha_d, fecha_h, log_fn, hist_db=None):
     ref_aduanas/ref_dira). Si no se pasa (ej. tests, o si esa base no está
     disponible), por_aduana queda solo con el código -- no rompe.
 
-    Devuelve (totales, por_pais, por_aduana, por_var_control, comparacion_anual):
+    Devuelve (totales, por_pais, por_aduana, por_var_control, comparacion_anual, por_tipo_control):
       totales: dict con TOTAL, IMPO, EXPO, CARGADO, LASTRE (agregado general)
       por_pais / por_aduana / por_var_control: listas de dicts, mismo shape
       que totales pero agrupadas (por_var_control solo trae TOTAL, no tiene
@@ -291,6 +291,9 @@ def correr_queries_consolidado(ruta_db, fecha_d, fecha_h, log_fn, hist_db=None):
       comparacion_anual: ver comparacion_anual_meses_completos() -- año
       actual vs año anterior, mes a mes, solo meses ya terminados. No
       depende de fecha_d/fecha_h, es siempre "a hoy".
+      por_tipo_control: lista de {"CODIGO","TOTAL"} -- cantidad de
+      operaciones con cada tipo de control (ver ref_controles), dentro del
+      mismo rango fecha_d/fecha_h.
     """
     if not re.match(r'^\d{4}-\d{2}-\d{2}$', fecha_d) or not re.match(r'^\d{4}-\d{2}-\d{2}$', fecha_h):
         raise ValueError(f"Fechas inválidas: '{fecha_d}' a '{fecha_h}'. Formato esperado: YYYY-MM-DD.")
@@ -361,6 +364,22 @@ def correr_queries_consolidado(ruta_db, fecha_d, fecha_h, log_fn, hist_db=None):
             GROUP BY COALESCE(NULLIF(TRIM(VAR_CONTROL),''),'SIN VARIABLE DE CONTROL') ORDER BY TOTAL DESC
         """, params)
 
+        # Controles por tipo (Fase 13, 20/07/2026): CONTROLES trae el tipo
+        # + resultado pegados, ej. "ESC(--)" o "BIN(SN)" -- interesa solo
+        # el tipo (antes del paréntesis). Se cuenta con LIKE 'COD%' en vez
+        # de extraer el substring, para no asumir que el campo tiene
+        # exactamente un control. Los tipos posibles salen de
+        # ref_controles (catálogo editable a mano en /admin), no de un
+        # DISTINCT sobre los datos -- mismo criterio que "Consultar DAT".
+        with get_db(HIST_DB, row_factory=True) as con_hist:
+            codigos_control = [r["codigo"] for r in con_hist.execute(
+                "SELECT codigo FROM ref_controles ORDER BY codigo").fetchall()]
+        por_tipo_control = []
+        for cod in codigos_control:
+            fila = q(f"SELECT COUNT(*) AS TOTAL FROM {origen} {where} AND CONTROLES LIKE ?",
+                     params + (f"{cod}%",))
+            por_tipo_control.append({"CODIGO": cod, "TOTAL": n(fila[0]["TOTAL"]) if fila else 0})
+
         comparacion_anual = comparacion_anual_meses_completos(con)
 
     cat_aduanas, cat_diras = _catalogo_aduanas_dira(hist_db)
@@ -376,4 +395,4 @@ def correr_queries_consolidado(ruta_db, fecha_d, fecha_h, log_fn, hist_db=None):
         r["DIRA_NOMBRE"] = cat_diras.get(dira_indice, "Sin DIRA asignada") if dira_indice else "Sin DIRA asignada"
 
     log_fn("✓ Queries completadas")
-    return totales, por_pais, por_aduana, por_var_control, comparacion_anual
+    return totales, por_pais, por_aduana, por_var_control, comparacion_anual, por_tipo_control

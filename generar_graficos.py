@@ -217,3 +217,13 @@ def grafico_consolidado_aduana(por_aduana, top=15):
 def grafico_consolidado_var_control(por_var_control, top=15):
     titulo = f"Operaciones por variable de control (top {min(top, len(por_var_control))})"
     return _grafico_barras_horiz_top(por_var_control, "VAR_CONTROL", top, C_TARDIO, titulo)
+
+def grafico_controles_por_tipo(por_tipo_control):
+    """Cantidad de operaciones con cada tipo de control (ver ref_controles
+    en /admin). Mismo helper genérico que grafico_consolidado_var_control,
+    solo cambia el nombre del campo de etiqueta (CODIGO en vez de
+    VAR_CONTROL)."""
+    if not por_tipo_control: return None
+    filas = sorted(por_tipo_control, key=lambda r: n(r.get("TOTAL", 0)), reverse=True)
+    return _grafico_barras_horiz_top(filas, "CODIGO", len(filas), C_CARGADO,
+                                      "Operaciones por tipo de control")

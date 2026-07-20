@@ -40,7 +40,8 @@ from generar_utils import PAISES, PAISES_CONSOLIDADO, fmt, pct, pct_f, n, pl, pe
 from generar_graficos import (grafico_torta, grafico_barras_apiladas, grafico_lineas_pct,
     grafico_rechazos_cat, grafico_rechazos_mes, grafico_comparativo_meses, MPL_OK,
     grafico_consolidado_pais, grafico_consolidado_impoexpo, grafico_consolidado_cargado_lastre,
-    grafico_consolidado_aduana, grafico_consolidado_var_control, grafico_comparacion_interanual)
+    grafico_consolidado_aduana, grafico_consolidado_var_control, grafico_comparacion_interanual,
+    grafico_controles_por_tipo)
 from generar_ia import calcular_frases, limpiar_salida_ia
 from generar_queries import calcular_totales
 
@@ -1017,7 +1018,7 @@ def _variable_control_dominante(por_var_control, total, umbral_pct=60.0):
 
 
 def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_aduana,
-                               por_var_control, comparacion_anual, carpeta, log_fn):
+                               por_var_control, comparacion_anual, carpeta, log_fn, por_tipo_control=None):
     periodo = _periodo_texto_fechas(fecha_d, fecha_h)
     nombre_archivo = f"Informe_SINTIA_Consolidado_{fecha_d}_{fecha_h}_v{version}.docx"
     total = n(totales.get("TOTAL", 0)); impo = n(totales.get("IMPO", 0)); expo = n(totales.get("EXPO", 0))
@@ -1032,6 +1033,7 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
             ("cargalast",  lambda: grafico_consolidado_cargado_lastre(cargado, lastre)),
             ("aduana",     lambda: grafico_consolidado_aduana(por_aduana)),
             ("varcontrol", lambda: grafico_consolidado_var_control(por_var_control)),
+            ("controles", lambda: grafico_controles_por_tipo(por_tipo_control)),
             ("interanual", lambda: grafico_comparacion_interanual(comparacion_anual)),
         ]:
             try: graficos[nombre] = fn()
@@ -1183,6 +1185,18 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
         col_widths=[7, 2.5, 2])
     if "varcontrol" in graficos: insertar_grafico(doc, graficos["varcontrol"])
 
+    if por_tipo_control:
+        doc.add_paragraph()
+        doc.add_paragraph().add_run("Tipos de control efectuados").bold = True
+        doc.add_paragraph(
+            "Cantidad de operaciones sobre las que se efectuó cada tipo de control en el período "
+            "(catálogo de tipos editable en /admin — no todos los tipos configurados tienen por qué "
+            "haberse aplicado en este período puntual).")
+        agregar_tabla_word(doc, ["TIPO DE CONTROL", "CANTIDAD"],
+            [[r["CODIGO"], fmt(r.get("TOTAL", 0))] for r in por_tipo_control],
+            col_widths=[7, 2.5])
+        if "controles" in graficos: insertar_grafico(doc, graficos["controles"])
+
     # 6. Comparación interanual (condicional -- solo si hay al menos un mes
     # cerrado del año en curso para comparar; ver comparacion_anual_meses_completos)
     indice_anexo = 7
@@ -1233,7 +1247,7 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
 
 
 def _generar_excel_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_aduana,
-                                por_var_control, comparacion_anual, carpeta, log_fn):
+                                por_var_control, comparacion_anual, carpeta, log_fn, por_tipo_control=None):
     wb = openpyxl.Workbook(); wb.remove(wb.active)
     HDR_FILL = PatternFill("solid", fgColor="1F3864"); HDR_FONT = Font(bold=True, color="FFFFFF", size=10)
     ALT_FILL = PatternFill("solid", fgColor="EEF2F7"); NORM_FONT = Font(size=10)
@@ -1298,6 +1312,10 @@ def _generar_excel_consolidado(fecha_d, fecha_h, version, totales, por_pais, por
          for r in por_aduana])
     add_sheet("Por Variable de Control", ["Variable de Control", "Total", "%"],
         [[r["VAR_CONTROL"], n(r.get("TOTAL", 0)), pct(r.get("TOTAL", 0), total)] for r in por_var_control])
+
+    if por_tipo_control:
+        add_sheet("Tipos de Control", ["Tipo de Control", "Cantidad"],
+            [[r["CODIGO"], n(r.get("TOTAL", 0))] for r in por_tipo_control])
 
     if comparacion_anual:
         anio_act = comparacion_anual[0]["anio_actual"]; anio_ant = comparacion_anual[0]["anio_anterior"]
