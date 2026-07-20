@@ -404,6 +404,15 @@ def _seed_ref_aduanas(con):
     con.commit()
 
 
+def _seed_ref_controles(con):
+    """Carga inicial del catálogo de códigos de CONTROLES -- a pedido
+    (20/07/2026), lista inicial fija, editable después desde /admin igual
+    que ref_aduanas."""
+    codigos = ["APE", "BIN", "BUS", "ESC", "FIB", "IMT", "PES"]  # ya alfabético
+    con.executemany("INSERT OR REPLACE INTO ref_controles (codigo) VALUES (?)", [(c,) for c in codigos])
+    con.commit()
+
+
     """Datos iniciales de cronología VUA. Separado de init_historial para mayor claridad."""
     cronologia = [
         ("08/10/2025","Designación del referente de la DGA ante VUCEA para el proyecto VUA","DI REPA","Completado",1),
@@ -568,6 +577,17 @@ def init_historial():
         con.execute("""CREATE TABLE IF NOT EXISTS ref_dira (
             indice TEXT PRIMARY KEY, nombre TEXT NOT NULL, orden INTEGER DEFAULT 0
         )""")
+        # Catálogo editable de códigos de CONTROLES (columna nueva en
+        # DAT_<año>, 20/07/2026) -- a diferencia de EST_MIC/ULT_ESTADO/
+        # VAR_CONTROL (que se listan solos con un DISTINCT sobre los datos
+        # reales, ver _calcular_opciones_dat), este catálogo es editable a
+        # mano desde /admin, mismo patrón que ref_aduanas/ref_dira -- no
+        # se auto-completa con lo que aparezca en la base, porque puede no
+        # ser exhaustivo todavía o puede necesitar códigos que aún no
+        # aparecieron en ningún import.
+        con.execute("""CREATE TABLE IF NOT EXISTS ref_controles (
+            codigo TEXT PRIMARY KEY
+        )""")
         con.execute("""CREATE TABLE IF NOT EXISTS feriados (
             fecha TEXT PRIMARY KEY, descripcion TEXT DEFAULT ''
         )""")
@@ -583,6 +603,10 @@ def init_historial():
         cur_ra.execute("SELECT COUNT(*) FROM ref_aduanas")
         if cur_ra.fetchone()[0] == 0:
             _seed_ref_aduanas(con)
+        cur_rc = con.cursor()
+        cur_rc.execute("SELECT COUNT(*) FROM ref_controles")
+        if cur_rc.fetchone()[0] == 0:
+            _seed_ref_controles(con)
         cur = con.cursor()
         cur.execute("SELECT COUNT(*) FROM vua_cronologia")
         if cur.fetchone()[0] == 0:
@@ -2945,12 +2969,18 @@ def sintia_dat_opciones():
         with get_db(HIST_DB, row_factory=True) as con:
             filas = con.execute(
                 "SELECT campo, valores, actualizado FROM sintia_dat_opciones WHERE tabla=?", (tabla,)).fetchall()
+            # CONTROLES es un catálogo editado a mano (ref_controles), no un
+            # DISTINCT de los datos como el resto -- se trae acá aparte para
+            # que el frontend de "Consultar DAT" siga pidiendo un solo
+            # endpoint y reciba todas las opciones de filtro juntas.
+            controles = [r["codigo"] for r in con.execute(
+                "SELECT codigo FROM ref_controles ORDER BY codigo").fetchall()]
 
         if filas:
             datos = {r["campo"]: json.loads(r["valores"]) for r in filas}
             actualizado = filas[0]["actualizado"]
             return jsonify({"ok": True, "anio": anio, "cached": True,
-                            "actualizado": actualizado, **datos})
+                            "actualizado": actualizado, "controles": controles, **datos})
 
         # Primera vez que se pide esta tabla y todavía no se calculó nunca
         # (ej. datos importados antes de que existiera este caché) -- se
@@ -2959,7 +2989,8 @@ def sintia_dat_opciones():
         if not os.path.exists(DB_PATH):
             return jsonify({"ok": False, "error": "BD no cargada."})
         datos = _recalcular_opciones_dat(tabla)
-        return jsonify({"ok": True, "anio": anio, "cached": False, "actualizado": None, **datos})
+        return jsonify({"ok": True, "anio": anio, "cached": False, "actualizado": None,
+                        "controles": controles, **datos})
     except ValueError as e:
         return jsonify({"ok": False, "error": str(e)})
     except Exception as e:
@@ -3132,10 +3163,12 @@ def sintia_dat_query():
         conditions.append("VAR_CONTROL = ?");       params.append(p["var_control"])
     if p.get("novedad"):
         conditions.append("tiene_novedad = ?");     params.append(p["novedad"])
-
-    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-
-    # Tabla según año elegido (por defecto, el actual)
+    if p.get("controles"):
+        conditions.append("CONTROLES = ?");         params.append(p["controles"])
+    if p.get("cant_controles_min") not in (None, ""):
+        conditions.append("CANT_CONTROLES >= ?");   params.append(p["cant_controles_min"])
+    if p.get("cant_controles_max") not in (None, ""):
+        conditions.append("CANT_CONTROLES <= ?");   params.append(p["cant_controles_max"])
     tabla, anio = _resolver_tabla_dat(p)
 
     try:
@@ -3271,6 +3304,12 @@ def sintia_dat_export():
     if p.get("ult_estado"): conditions.append("ULT_ESTADO = ?");      params.append(p["ult_estado"])
     if p.get("var_control"): conditions.append("VAR_CONTROL = ?");    params.append(p["var_control"])
     if p.get("novedad"): conditions.append("tiene_novedad = ?");      params.append(p["novedad"])
+    if p.get("controles"):
+        conditions.append("CONTROLES = ?");         params.append(p["controles"])
+    if p.get("cant_controles_min") not in (None, ""):
+        conditions.append("CANT_CONTROLES >= ?");   params.append(p["cant_controles_min"])
+    if p.get("cant_controles_max") not in (None, ""):
+        conditions.append("CANT_CONTROLES <= ?");   params.append(p["cant_controles_max"])
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     tabla, anio = _resolver_tabla_dat(p)
@@ -4522,6 +4561,53 @@ def ref_aduanas_save():
                      f"{len(nuevos_dedup)} aduanas guardadas" + (f", {len(errores)} filas con error" if errores else "")))
     logging.info(f"REF_ADUANAS SAVE | user={session.get('username')} | {len(nuevos_dedup)} filas | {len(errores)} errores")
     return jsonify({"ok": True, "guardadas": len(nuevos_dedup), "errores": errores[:30]})
+
+
+@app.route("/api/admin/ref-controles")
+@login_required
+def ref_controles_list():
+    with get_db(HIST_DB, row_factory=True) as con:
+        rows = [r["codigo"] for r in con.execute(
+            "SELECT codigo FROM ref_controles ORDER BY codigo").fetchall()]
+    return jsonify({"ok": True, "rows": rows})
+
+
+@app.route("/api/admin/ref-controles/save", methods=["POST"])
+@login_required
+@admin_required("bd")
+def ref_controles_save():
+    """Reemplaza completamente el catálogo de códigos de CONTROLES con la
+    lista editada a mano desde el panel -- mismo patrón que
+    ref_aduanas_save, pero sin relación a DIRA (una sola columna).
+    Body esperado: {"codigos": ["APE", "BIN", ...]}"""
+    data = request.get_json(force=True) or {}
+    codigos = data.get("codigos")
+    if not isinstance(codigos, list) or not codigos:
+        return jsonify({"ok": False, "error": "No se recibieron códigos para guardar"}), 400
+
+    errores = []
+    limpios = []
+    vistos = set()
+    for i, c in enumerate(codigos, 1):
+        cod = str(c).strip().upper()
+        if not cod:
+            continue
+        if not re.match(r'^[A-Z0-9_-]{1,20}$', cod):
+            errores.append(f"Código {i} inválido: '{c}'")
+            continue
+        if cod in vistos:
+            continue  # duplicado, se ignora en silencio (a diferencia de ref_aduanas no hace falta avisar por un solo campo)
+        vistos.add(cod)
+        limpios.append(cod)
+
+    if not limpios:
+        return jsonify({"ok": False, "error": "Ningún código válido para guardar", "detalle_errores": errores}), 400
+
+    with get_db(HIST_DB) as con:
+        con.execute("DELETE FROM ref_controles")
+        con.executemany("INSERT INTO ref_controles (codigo) VALUES (?)", [(c,) for c in limpios])
+    logging.info(f"REF_CONTROLES SAVE | user={session.get('username')} | {len(limpios)} códigos")
+    return jsonify({"ok": True, "guardados": len(limpios), "errores": errores[:30]})
 
 
 @app.route("/api/admin/feriados", methods=["GET"])
