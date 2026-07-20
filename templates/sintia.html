@@ -1267,13 +1267,13 @@ async function cargarAduanasNacional() {
       dira ? `— ${document.getElementById('aduanas-dira').selectedOptions[0].textContent}` : '— Nacional';
 
     const ind = d.indicadores || {};
-    document.getElementById('aduanas-kpi-total').textContent = ind.total_operaciones ?? '—';
-    document.getElementById('aduanas-kpi-sali').textContent = ind.total_sali ?? '—';
+    document.getElementById('aduanas-kpi-total').textContent = ind.total_operaciones != null ? ind.total_operaciones.toLocaleString('es-AR') : '—';
+    document.getElementById('aduanas-kpi-sali').textContent = ind.total_sali != null ? ind.total_sali.toLocaleString('es-AR') : '—';
     document.getElementById('aduanas-kpi-demora').textContent = ind.demora_media_fmt || '—';
-    document.getElementById('aduanas-kpi-alerta').textContent = ind.en_alerta_total ?? '—';
+    document.getElementById('aduanas-kpi-alerta').textContent = ind.en_alerta_total != null ? ind.en_alerta_total.toLocaleString('es-AR') : '—';
     document.getElementById('aduanas-kpi-alerta-desglose').textContent =
       (ind.en_alerta_bandeja != null && ind.en_alerta_demora_larga != null)
-        ? `${ind.en_alerta_bandeja} pendiente + ${ind.en_alerta_demora_larga} salió tarde`
+        ? `${ind.en_alerta_bandeja.toLocaleString('es-AR')} pendiente + ${ind.en_alerta_demora_larga.toLocaleString('es-AR')} salió tarde`
         : '';
 
     _renderAduanasEvolChart(d.evolucion_mensual || []);
@@ -1349,11 +1349,11 @@ function _renderAduanasTabla() {
     body.innerHTML = filas.map(a => `<tr>
       <td>${escHtml(a.aduana_nombre)}</td>
       <td style="font-size:.78rem;color:var(--muted)">${escHtml(a.dira_nombre)}</td>
-      <td style="font-family:var(--mono)">${a.total_operaciones}</td>
-      <td style="font-family:var(--mono)">${a.total_sali}</td>
+      <td style="font-family:var(--mono)">${(a.total_operaciones ?? 0).toLocaleString('es-AR')}</td>
+      <td style="font-family:var(--mono)">${(a.total_sali ?? 0).toLocaleString('es-AR')}</td>
       <td style="font-family:var(--mono);font-weight:600;color:${_semaforoDemora(a.demora_media_dias)}">${a.demora_media_fmt || '—'}</td>
-      <td style="font-family:var(--mono)${a.en_alerta_bandeja > 0 ? ';color:var(--danger);font-weight:600' : ''}">${a.en_alerta_bandeja}</td>
-      <td style="font-family:var(--mono)${a.en_alerta_demora_larga > 0 ? ';color:var(--danger);font-weight:600' : ''}">${a.en_alerta_demora_larga}</td>
+      <td style="font-family:var(--mono)${a.en_alerta_bandeja > 0 ? ';color:var(--danger);font-weight:600' : ''}">${(a.en_alerta_bandeja ?? 0).toLocaleString('es-AR')}</td>
+      <td style="font-family:var(--mono)${a.en_alerta_demora_larga > 0 ? ';color:var(--danger);font-weight:600' : ''}">${(a.en_alerta_demora_larga ?? 0).toLocaleString('es-AR')}</td>
     </tr>`).join('');
   }
 
