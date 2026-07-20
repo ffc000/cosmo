@@ -237,19 +237,19 @@ input:checked+.slider::before{transform:translateX(18px)}
           <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:.9rem;margin-bottom:1.25rem">
             <div class="card" style="margin:0">
               <div class="card-title">Por país</div>
-              <canvas id="dash-chart-pais" height="200"></canvas>
+              <div style="position:relative;height:200px"><canvas id="dash-chart-pais"></canvas></div>
             </div>
             <div class="card" style="margin:0">
               <div class="card-title">Por estado</div>
-              <canvas id="dash-chart-estado" height="200"></canvas>
+              <div style="position:relative;height:200px"><canvas id="dash-chart-estado"></canvas></div>
             </div>
             <div class="card" style="margin:0">
               <div class="card-title">Top aduanas</div>
-              <canvas id="dash-chart-aduanas" height="200"></canvas>
+              <div style="position:relative;height:200px"><canvas id="dash-chart-aduanas"></canvas></div>
             </div>
             <div class="card" style="margin:0">
               <div class="card-title">Tendencia Rechazos — 6 meses</div>
-              <canvas id="dash-chart-evol" height="200"></canvas>
+              <div style="position:relative;height:200px"><canvas id="dash-chart-evol"></canvas></div>
             </div>
           </div>
 
@@ -257,11 +257,11 @@ input:checked+.slider::before{transform:translateX(18px)}
           <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:.9rem;margin-bottom:1.25rem">
             <div class="card" style="margin:0">
               <div class="card-title">Controles por tipo — últimos 30 días</div>
-              <canvas id="dash-chart-controles-tipo" height="200"></canvas>
+              <div style="position:relative;height:200px"><canvas id="dash-chart-controles-tipo"></canvas></div>
             </div>
             <div class="card" style="margin:0">
               <div class="card-title">Con control vs. sin control — últimos 30 días</div>
-              <canvas id="dash-chart-con-sin-control" height="200"></canvas>
+              <div style="position:relative;height:200px"><canvas id="dash-chart-con-sin-control"></canvas></div>
             </div>
           </div>
 
@@ -1499,7 +1499,7 @@ async function _fetchDashboard() {
     document.getElementById('dash-mes-ant-label').textContent = d.label_ant;
 
     const destroyChart = (id) => { if (_dashCharts[id]) { _dashCharts[id].destroy(); delete _dashCharts[id]; } };
-    const baseOpts = { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { maxTicksLimit: 4, font: { size: 10 } } }, x: { ticks: { font: { size: 10 } } } }, responsive: true, maintainAspectRatio: true };
+    const baseOpts = { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { maxTicksLimit: 4, font: { size: 10 } } }, x: { ticks: { font: { size: 10 } } } }, responsive: true, maintainAspectRatio: false };
 
     destroyChart('pais');
     _dashCharts['pais'] = new Chart(document.getElementById('dash-chart-pais'), {
@@ -1512,7 +1512,7 @@ async function _fetchDashboard() {
     _dashCharts['estado'] = new Chart(document.getElementById('dash-chart-estado'), {
       type: 'doughnut',
       data: { labels: Object.keys(d.por_estado), datasets: [{ data: Object.values(d.por_estado), backgroundColor: ['#057A55','#DC2626','#6B7280'], borderWidth: 2 }] },
-      options: { plugins: { legend: { position: 'top', labels: { font: { size: 10 }, boxWidth: 12 } } }, responsive: true, maintainAspectRatio: true }
+      options: { plugins: { legend: { position: 'top', labels: { font: { size: 10 }, boxWidth: 12 } } }, responsive: true, maintainAspectRatio: false }
     });
 
     destroyChart('aduanas');
@@ -1540,7 +1540,7 @@ async function _fetchDashboard() {
     _dashCharts['conSinControl'] = new Chart(document.getElementById('dash-chart-con-sin-control'), {
       type: 'doughnut',
       data: { labels: Object.keys(d.con_sin_control||{}), datasets: [{ data: Object.values(d.con_sin_control||{}), backgroundColor: ['#057A55','#6B7280'], borderWidth: 2 }] },
-      options: { plugins: { legend: { position: 'top', labels: { font: { size: 10 }, boxWidth: 12 } } }, responsive: true, maintainAspectRatio: true }
+      options: { plugins: { legend: { position: 'top', labels: { font: { size: 10 }, boxWidth: 12 } } }, responsive: true, maintainAspectRatio: false }
     });
 
     loading.style.display = 'none';
