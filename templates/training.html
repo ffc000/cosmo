@@ -343,6 +343,11 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
                 </optgroup>
                 <optgroup label="Diario (con o sin entrenamiento)">
                 <option value="diaria__peso_kg">Peso corporal (kg)</option>
+                <option value="diaria__sensacion">Cómo te sentiste (1-5, general)</option>
+                <option value="diaria__energia">Energía (1-5)</option>
+                <option value="diaria__animo">Ánimo (1-5)</option>
+                <option value="diaria__estres_subjetivo">Estrés subjetivo (1-5)</option>
+                <option value="diaria__motivacion">Motivación para entrenar (1-5)</option>
                 <option value="diaria__body_battery_max">Body Battery máx (diario)</option>
                 <option value="diaria__body_battery_min">Body Battery mín (diario)</option>
                 <option value="diaria__sleep_score">Sueño (score)</option>
@@ -452,7 +457,7 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
           </p>
           <div class="form-row cols2">
             <div><label>Fecha</label><input type="date" id="peso-fecha"></div>
-            <div><label>Cómo te sentiste (1-5)</label>
+            <div><label>Cómo te sentiste en general (1-5)</label>
               <select id="peso-sensacion">
                 <option value="">—</option>
                 <option value="1">1 — mal</option>
@@ -460,6 +465,50 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
                 <option value="3">3</option>
                 <option value="4">4</option>
                 <option value="5">5 — muy bien</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row cols2" style="margin-top:.6rem">
+            <div><label>Energía (1-5)</label>
+              <select id="peso-energia">
+                <option value="">—</option>
+                <option value="1">1 — sin energía</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5 — con mucha energía</option>
+              </select>
+            </div>
+            <div><label>Ánimo (1-5)</label>
+              <select id="peso-animo">
+                <option value="">—</option>
+                <option value="1">1 — bajoneado</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5 — muy buen ánimo</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row cols2" style="margin-top:.6rem">
+            <div><label>Estrés (1-5)</label>
+              <select id="peso-estres">
+                <option value="">—</option>
+                <option value="1">1 — relajado</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5 — muy estresado</option>
+              </select>
+            </div>
+            <div><label>Motivación para entrenar (1-5)</label>
+              <select id="peso-motivacion">
+                <option value="">—</option>
+                <option value="1">1 — nada de ganas</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5 — con muchas ganas</option>
               </select>
             </div>
           </div>
@@ -1483,11 +1532,22 @@ function _fechaLocalISO(d) {
 function guardarPeso() {
   const fecha = document.getElementById('peso-fecha').value;
   const sensacion = document.getElementById('peso-sensacion').value;
+  const energia = document.getElementById('peso-energia').value;
+  const animo = document.getElementById('peso-animo').value;
+  const estres = document.getElementById('peso-estres').value;
+  const motivacion = document.getElementById('peso-motivacion').value;
   const nota = document.getElementById('peso-nota').value;
   if (!fecha) { alert('Falta la fecha.'); return; }
   fetch('/api/training/peso', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({fecha, sensacion: sensacion || null, nota})
+    body: JSON.stringify({
+      fecha, nota,
+      sensacion: sensacion || null,
+      energia: energia || null,
+      animo: animo || null,
+      estres: estres || null,
+      motivacion: motivacion || null,
+    })
   }).then(r => r.json()).then(d => {
     if (!d.ok) { alert('Error: ' + d.error); return; }
     document.getElementById('peso-nota').value = '';
@@ -1499,11 +1559,17 @@ function cargarPeso() {
   fetch('/api/training/peso?dias=30').then(r => r.json()).then(d => {
     const el = document.getElementById('peso-lista');
     if (!d.ok || !d.rows.length) { el.innerHTML = '<p style="color:var(--muted);font-size:.82rem">Sin registros todavía.</p>'; return; }
-    el.innerHTML = `<table class="data-table"><thead><tr><th>Fecha</th><th>Peso</th><th>Sensación</th><th>Nota</th></tr></thead><tbody>` +
+    const estrellas = v => v ? '⭐'.repeat(v) : '—';
+    el.innerHTML = `<table class="data-table"><thead><tr><th>Fecha</th><th>Peso</th><th>Sensación</th>` +
+      `<th>Energía</th><th>Ánimo</th><th>Estrés</th><th>Motivación</th><th>Nota</th></tr></thead><tbody>` +
       d.rows.map(r => `<tr>
         <td style="font-family:var(--mono);font-size:.78rem">${escHtml(r.fecha)}</td>
         <td>${r.peso_kg ? escHtml(String(r.peso_kg)) + ' kg' : '—'}</td>
-        <td>${r.sensacion ? '⭐'.repeat(r.sensacion) : '—'}</td>
+        <td>${estrellas(r.sensacion)}</td>
+        <td>${estrellas(r.energia)}</td>
+        <td>${estrellas(r.animo)}</td>
+        <td>${estrellas(r.estres)}</td>
+        <td>${estrellas(r.motivacion)}</td>
         <td style="font-size:.78rem;color:var(--muted)">${escHtml(r.nota || '—')}</td>
       </tr>`).join('') + `</tbody></table>`;
     const conPeso = d.rows.find(r => r.peso_kg);
