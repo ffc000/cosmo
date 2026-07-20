@@ -477,6 +477,17 @@ select option{background:var(--surface)}
           <div id="msg-ref-aduanas" style="margin-bottom:.75rem;font-size:.82rem"></div>
           <div id="ref-aduanas-tabla" style="max-height:60vh;overflow-y:auto"><div style="color:var(--muted);font-size:.82rem">Cargando...</div></div>
         </div>
+        <div class="card">
+          <div class="card-title">Catálogo de códigos de CONTROLES</div>
+          <div class="alert alert-info" style="margin-bottom:.75rem">Lista editable a mano (no se auto-completa con lo que aparezca en la base) que alimenta el filtro "Controles" de Consultar DAT. Agregá o quitá códigos y guardá todos los cambios juntos.</div>
+          <div style="display:flex;gap:.6rem;margin-bottom:.85rem;flex-wrap:wrap;align-items:center">
+            <button class="btn btn-outline btn-sm" onclick="agregarFilaRefControles()">➕ Agregar código</button>
+            <button class="btn btn-primary btn-sm" onclick="guardarTablaRefControles()">💾 Guardar códigos</button>
+            <span id="ref-controles-contador" style="font-size:.75rem;color:var(--muted)"></span>
+          </div>
+          <div id="msg-ref-controles" style="margin-bottom:.75rem;font-size:.82rem"></div>
+          <div id="ref-controles-tabla" style="max-height:40vh;overflow-y:auto"><div style="color:var(--muted);font-size:.82rem">Cargando...</div></div>
+        </div>
       </div>
 
       <!-- FERIADOS -->
@@ -1024,6 +1035,7 @@ let REF_ADUANAS_DIRA_NOMBRES = {};
 
 function loadRefAduanas(){
   loadRefDira();
+  loadRefControles();
   fetch('/api/admin/ref-aduanas').then(r=>r.json()).then(data=>{
     if(!data.ok)return;
     REF_ADUANAS_DIRA_NOMBRES = data.dira_nombres;
@@ -1190,6 +1202,82 @@ function guardarTablaRefAduanas(){
     }
   }).catch(()=>{
     showMsg('msg-ref-aduanas', '✗ Error de red al guardar', 'err');
+  });
+}
+
+function loadRefControles(){
+  fetch('/api/admin/ref-controles').then(r=>r.json()).then(data=>{
+    if(!data.ok)return;
+    renderRefControlesTabla(data.rows);
+  });
+}
+
+function _filaRefControlHTML(codigo){
+  return `<tr style="border-bottom:1px solid var(--border)">
+    <td style="padding:.4rem .5rem"><input type="text" value="${codigo}" class="ref-ctrl-codigo" maxlength="20" style="width:100%;border:1px solid var(--border);border-radius:4px;padding:.3rem .5rem;font-size:.8rem;font-family:var(--mono);text-transform:uppercase"></td>
+    <td style="padding:.4rem .5rem;text-align:center"><button class="btn btn-outline btn-sm" onclick="this.closest('tr').remove(); actualizarContadorRefControles()" title="Eliminar código">🗑</button></td>
+  </tr>`;
+}
+
+function renderRefControlesTabla(rows){
+  const el = document.getElementById('ref-controles-tabla');
+  if(!el) return;
+  let html = '<table style="width:100%;border-collapse:collapse;font-size:.82rem">';
+  html += '<thead><tr style="text-align:left;border-bottom:2px solid var(--border)">';
+  html += '<th style="padding:.4rem .5rem">Código</th><th style="padding:.4rem .5rem;width:8%"></th>';
+  html += '</tr></thead><tbody id="ref-controles-tbody">';
+  rows.forEach(codigo=>{ html += _filaRefControlHTML(codigo); });
+  html += '</tbody></table>';
+  el.innerHTML = html;
+  actualizarContadorRefControles();
+}
+
+function agregarFilaRefControles(){
+  const tbody = document.getElementById('ref-controles-tbody');
+  if(!tbody) return;
+  tbody.insertAdjacentHTML('beforeend', _filaRefControlHTML(''));
+  actualizarContadorRefControles();
+  tbody.lastElementChild.querySelector('.ref-ctrl-codigo').focus();
+}
+
+function actualizarContadorRefControles(){
+  const tbody = document.getElementById('ref-controles-tbody');
+  const el = document.getElementById('ref-controles-contador');
+  if(tbody && el) el.textContent = `${tbody.children.length} códigos`;
+}
+
+function guardarTablaRefControles(){
+  const tbody = document.getElementById('ref-controles-tbody');
+  if(!tbody) return;
+  const codigos = [];
+  let huboVacios = false;
+  Array.from(tbody.children).forEach(tr=>{
+    const codigo = tr.querySelector('.ref-ctrl-codigo').value.trim().toUpperCase();
+    if(!codigo){ huboVacios = true; return; }
+    codigos.push(codigo);
+  });
+  if(huboVacios){
+    showMsg('msg-ref-controles', '⚠ Hay códigos vacíos — se omitieron del guardado', 'warn');
+  }
+  if(codigos.length === 0){
+    showMsg('msg-ref-controles', '✗ No hay códigos válidos para guardar', 'err');
+    return;
+  }
+  showMsg('msg-ref-controles', 'Guardando...', 'info');
+  fetch('/api/admin/ref-controles/save', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({codigos})
+  }).then(r=>r.json()).then(d=>{
+    if(d.ok){
+      showMsg('msg-ref-controles', `✓ ${d.guardados} códigos guardados` + (d.errores && d.errores.length ? ` — ${d.errores.length} con error` : ''), 'ok');
+      if(d.errores && d.errores.length) console.warn('Errores ref-controles:', d.errores);
+      loadRefControles();
+    }else{
+      showMsg('msg-ref-controles', `✗ ${d.error||'Error al guardar'}`, 'err');
+    }
+  }).catch(()=>{
+    showMsg('msg-ref-controles', '✗ Error de red al guardar', 'err');
   });
 }
 

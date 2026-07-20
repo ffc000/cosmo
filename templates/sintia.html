@@ -477,6 +477,19 @@ input:checked+.slider::before{transform:translateX(18px)}
               </select>
             </div>
           </div>
+          <div class="form-row cols3">
+            <div><label>Controles</label>
+              <select id="dat-controles">
+                <option value="">Todos</option>
+              </select>
+            </div>
+            <div><label>Cant. controles (mín.)</label>
+              <input type="number" id="dat-cant-controles-min" min="0" placeholder="Sin mínimo">
+            </div>
+            <div><label>Cant. controles (máx.)</label>
+              <input type="number" id="dat-cant-controles-max" min="0" placeholder="Sin máximo">
+            </div>
+          </div>
           <div style="display:flex;justify-content:space-between;align-items:center;font-size:.72rem;color:var(--muted);margin-bottom:.5rem">
             <span id="dat-opciones-info"></span>
             <button class="btn btn-outline btn-sm" id="btn-recalcular-opciones" onclick="recalcularOpcionesDat()"
@@ -929,6 +942,7 @@ async function cargarOpcionesDat(forzar) {
     llenar('dat-est', d.est_mic);
     llenar('dat-ult-estado', d.ult_estado);
     llenar('dat-var-control', d.var_control);
+    llenar('dat-controles', d.controles);
     _datOpcionesAnioCargado = anio;
     const info = document.getElementById('dat-opciones-info');
     if (info) info.textContent = d.actualizado ? `Opciones actualizadas: ${d.actualizado}` : '';
@@ -968,6 +982,9 @@ function buscarDat(){
     ult_estado: document.getElementById('dat-ult-estado').value,
     var_control: document.getElementById('dat-var-control').value,
     novedad:document.getElementById('dat-novedad').value,
+    controles: document.getElementById('dat-controles').value,
+    cant_controles_min: document.getElementById('dat-cant-controles-min').value,
+    cant_controles_max: document.getElementById('dat-cant-controles-max').value,
   };
   _datOffset=0;
   _fetchDat();
@@ -993,8 +1010,8 @@ function _fetchDat(){
     }).catch(e=>{btn.disabled=false;btn.innerHTML='🔍 Buscar';alert('Error de red: '+e);});
 }
 function limpiarDat(){
-  ['dat-fec-d','dat-fec-h','dat-ftx-d','dat-ftx-h','dat-mic','dat-lot','dat-empresa','dat-vehiculo'].forEach(id=>document.getElementById(id).value='');
-  ['dat-aduana','dat-tipo','dat-cargado','dat-pais','dat-est','dat-ult-estado','dat-var-control','dat-novedad'].forEach(id=>document.getElementById(id).value='');
+  ['dat-fec-d','dat-fec-h','dat-ftx-d','dat-ftx-h','dat-mic','dat-lot','dat-empresa','dat-vehiculo','dat-cant-controles-min','dat-cant-controles-max'].forEach(id=>document.getElementById(id).value='');
+  ['dat-aduana','dat-tipo','dat-cargado','dat-pais','dat-est','dat-ult-estado','dat-var-control','dat-novedad','dat-controles'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('dat-resultado').style.display='none';
   document.getElementById('dat-resumen').innerHTML='';
   document.getElementById('dat-filtro').value='';
@@ -1020,6 +1037,9 @@ function exportarDat(){
     ult_estado: document.getElementById('dat-ult-estado').value,
     var_control: document.getElementById('dat-var-control').value,
     novedad:document.getElementById('dat-novedad').value,
+    controles: document.getElementById('dat-controles').value,
+    cant_controles_min: document.getElementById('dat-cant-controles-min').value,
+    cant_controles_max: document.getElementById('dat-cant-controles-max').value,
   };
   fetch('/api/sintia/dat/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(params)})
     .then(r=>r.blob()).then(b=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='Res_Datos_'+hoy()+'.xlsx';a.click();});
