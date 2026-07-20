@@ -1192,9 +1192,9 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
             "Cantidad de operaciones sobre las que se efectuó cada tipo de control en el período "
             "(catálogo de tipos editable en /admin — no todos los tipos configurados tienen por qué "
             "haberse aplicado en este período puntual).")
-        agregar_tabla_word(doc, ["TIPO DE CONTROL", "CANTIDAD"],
-            [[r["CODIGO"], fmt(r.get("TOTAL", 0))] for r in por_tipo_control],
-            col_widths=[7, 2.5])
+        agregar_tabla_word(doc, ["TIPO DE CONTROL", "CANT. CONTROLES", "CANT. OPERACIONES"],
+            [[r["CODIGO"], fmt(r.get("TOTAL", 0)), fmt(r.get("CANT_OPERACIONES", 0))] for r in por_tipo_control],
+            col_widths=[5, 3.5, 3.5])
         if "controles" in graficos: insertar_grafico(doc, graficos["controles"])
 
     # 6. Comparación interanual (condicional -- solo si hay al menos un mes
@@ -1314,8 +1314,8 @@ def _generar_excel_consolidado(fecha_d, fecha_h, version, totales, por_pais, por
         [[r["VAR_CONTROL"], n(r.get("TOTAL", 0)), pct(r.get("TOTAL", 0), total)] for r in por_var_control])
 
     if por_tipo_control:
-        add_sheet("Tipos de Control", ["Tipo de Control", "Cantidad"],
-            [[r["CODIGO"], n(r.get("TOTAL", 0))] for r in por_tipo_control])
+        add_sheet("Tipos de Control", ["Tipo de Control", "Cant. Controles", "Cant. Operaciones"],
+            [[r["CODIGO"], n(r.get("TOTAL", 0)), n(r.get("CANT_OPERACIONES", 0))] for r in por_tipo_control])
 
     if comparacion_anual:
         anio_act = comparacion_anual[0]["anio_actual"]; anio_ant = comparacion_anual[0]["anio_anterior"]

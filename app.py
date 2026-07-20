@@ -4117,14 +4117,13 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
         _heading_indexado(doc, "5.  Operaciones de control", 1, idx_controles)
         doc.add_paragraph(
             "Cantidad de operaciones de cada aduana sobre las que se efectuó cada tipo de control "
-            "(catálogo editable en /admin), y qué porcentaje representa sobre el total de operaciones "
-            "de esa aduana en el período -- tengan o no control. Solo se muestran combinaciones "
-            "aduana/tipo con al menos un control realizado.")
-        agregar_tabla_word(doc, ["Aduana", "Tipo de control", "Cant. controles", "Cant. operaciones", "% controlado"],
+            "(catálogo editable en /admin), junto con el total de operaciones de esa aduana en el "
+            "período -- tengan o no control. Solo se muestran combinaciones aduana/tipo con al menos "
+            "un control realizado.")
+        agregar_tabla_word(doc, ["Aduana", "Tipo de control", "Cant. controles", "Cant. operaciones"],
             [[c["aduana_nombre"], c["tipo_control"], fmt(c["cantidad_controles"]),
-              fmt(c["cantidad_operaciones"]),
-              f"{c['pct_controlado']}%".replace(".", ",")] for c in controles_por_aduana],
-            col_widths=[4, 3, 2.7, 2.7, 2.6])
+              fmt(c["cantidad_operaciones"])] for c in controles_por_aduana],
+            col_widths=[4.5, 3.5, 3.5, 3.5])
 
     # ── Evolución mensual de cada aduana en alerta (tabla + gráfico) ──────
     # Al final del documento, a propósito: es el detalle más fino de todos
@@ -4455,17 +4454,16 @@ def sintia_aduanas_nacional_export():
         controles_por_aduana = _controles_por_aduana_nacional(anio, dira_filtro)
         if controles_por_aduana:
             ws_ctrl = wb.create_sheet("Controles")
-            ws_ctrl.append(["Aduana", "Tipo de control", "Cant. controles", "Cant. operaciones", "% controlado"])
+            ws_ctrl.append(["Aduana", "Tipo de control", "Cant. controles", "Cant. operaciones"])
             for cell in ws_ctrl[1]:
                 cell.font = Font(bold=True, color="FFFFFF")
                 cell.fill = PatternFill("solid", fgColor="242D4F")
                 cell.alignment = Alignment(horizontal="center")
             for c in controles_por_aduana:
                 ws_ctrl.append([c["aduana_nombre"], c["tipo_control"], c["cantidad_controles"],
-                                c["cantidad_operaciones"], c["pct_controlado"]])
+                                c["cantidad_operaciones"]])
             for cell in ws_ctrl["C"][1:]: cell.number_format = "#,##0"
             for cell in ws_ctrl["D"][1:]: cell.number_format = "#,##0"
-            for cell in ws_ctrl["E"][1:]: cell.number_format = "0.0\"%\""
             for col in ws_ctrl.columns:
                 max_len = max((len(str(c.value if c.value is not None else "")) for c in col), default=8)
                 ws_ctrl.column_dimensions[col[0].column_letter].width = min(max_len + 2, 42)

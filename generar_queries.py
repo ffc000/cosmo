@@ -375,10 +375,15 @@ def correr_queries_consolidado(ruta_db, fecha_d, fecha_h, log_fn, hist_db=None):
             codigos_control = [r["codigo"] for r in con_hist.execute(
                 "SELECT codigo FROM ref_controles ORDER BY codigo").fetchall()]
         por_tipo_control = []
+        total_operaciones_periodo = n(totales.get("TOTAL", 0))
         for cod in codigos_control:
             fila = q(f"SELECT COUNT(*) AS TOTAL FROM {origen} {where} AND CONTROLES LIKE ?",
                      params + (f"{cod}%",))
-            por_tipo_control.append({"CODIGO": cod, "TOTAL": n(fila[0]["TOTAL"]) if fila else 0})
+            por_tipo_control.append({
+                "CODIGO": cod,
+                "TOTAL": n(fila[0]["TOTAL"]) if fila else 0,
+                "CANT_OPERACIONES": total_operaciones_periodo,
+            })
 
         comparacion_anual = comparacion_anual_meses_completos(con)
 
