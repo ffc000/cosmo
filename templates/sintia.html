@@ -253,6 +253,18 @@ input:checked+.slider::before{transform:translateX(18px)}
             </div>
           </div>
 
+          <!-- Fila 3: Controles -->
+          <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:.9rem;margin-bottom:1.25rem">
+            <div class="card" style="margin:0">
+              <div class="card-title">Controles por tipo — últimos 30 días</div>
+              <canvas id="dash-chart-controles-tipo" height="200"></canvas>
+            </div>
+            <div class="card" style="margin:0">
+              <div class="card-title">Con control vs. sin control — últimos 30 días</div>
+              <canvas id="dash-chart-con-sin-control" height="200"></canvas>
+            </div>
+          </div>
+
           <div style="text-align:right">
             <button class="btn btn-outline btn-sm" onclick="recargarDashboard()">🔄 Actualizar</button>
           </div>
@@ -1515,6 +1527,20 @@ async function _fetchDashboard() {
       type: 'line',
       data: { labels: d.evolucion.map(e => e.mes), datasets: [{ data: d.evolucion.map(e => e.total), borderColor: '#1A56DB', backgroundColor: 'rgba(26,86,219,.1)', fill: true, tension: .3, pointRadius: 3 }] },
       options: baseOpts
+    });
+
+    destroyChart('controlesTipo');
+    _dashCharts['controlesTipo'] = new Chart(document.getElementById('dash-chart-controles-tipo'), {
+      type: 'bar',
+      data: { labels: Object.keys(d.por_tipo_control||{}), datasets: [{ data: Object.values(d.por_tipo_control||{}), backgroundColor: '#7C3AED', borderRadius: 4 }] },
+      options: baseOpts
+    });
+
+    destroyChart('conSinControl');
+    _dashCharts['conSinControl'] = new Chart(document.getElementById('dash-chart-con-sin-control'), {
+      type: 'doughnut',
+      data: { labels: Object.keys(d.con_sin_control||{}), datasets: [{ data: Object.values(d.con_sin_control||{}), backgroundColor: ['#057A55','#6B7280'], borderWidth: 2 }] },
+      options: { plugins: { legend: { position: 'top', labels: { font: { size: 10 }, boxWidth: 12 } } }, responsive: true, maintainAspectRatio: true }
     });
 
     loading.style.display = 'none';
