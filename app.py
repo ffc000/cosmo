@@ -2304,12 +2304,13 @@ def _convertir_a_pdf(path, log_fn=None):
     if not path.lower().endswith((".docx", ".xlsx")):
         return None, "Solo se puede convertir a PDF un Word o Excel generado por el sistema."
     ruta_pdf = os.path.splitext(path)[0] + ".pdf"
-    if os.path.exists(ruta_pdf):
+    if os.path.exists(ruta_pdf) and os.path.getmtime(ruta_pdf) >= os.path.getmtime(path):
         return ruta_pdf, None
     if not _pdf_conversion_lock.acquire(timeout=90):
         return None, "El servidor está convirtiendo otro archivo a PDF, probá de nuevo en un momento."
     try:
-        if os.path.exists(ruta_pdf):  # pudo generarse mientras esperábamos el lock
+        if os.path.exists(ruta_pdf) and os.path.getmtime(ruta_pdf) >= os.path.getmtime(path):
+            # pudo generarse mientras esperábamos el lock
             return ruta_pdf, None
         if log_fn: log_fn(f"Convirtiendo {os.path.basename(path)} a PDF...")
         carpeta = os.path.dirname(path)

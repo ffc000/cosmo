@@ -45,22 +45,37 @@ from generar_graficos import (grafico_torta, grafico_barras_apiladas, grafico_li
 from generar_ia import calcular_frases, limpiar_salida_ia
 from generar_queries import calcular_totales
 
+def _unificar_fuente_documento(doc, fuente="Calibri"):
+    """Fija una única fuente para todo el documento (estilos Normal y
+    Heading 1/2/3), sin tocar tamaño/negrita/color -- esos quedan en el
+    default de python-docx, a pedido (21/07/2026). El encabezado y pie de
+    página institucionales quedan afuera de esto: ya fijan su propia fuente
+    explícitamente en _agregar_encabezado/_agregar_pie_pagina."""
+    for nombre_estilo in ("Normal", "Heading 1", "Heading 2", "Heading 3"):
+        try:
+            doc.styles[nombre_estilo].font.name = fuente
+        except KeyError:
+            pass
+
 def set_cell_bg(cell, hex_color):
     tc=cell._tc; tcPr=tc.get_or_add_tcPr(); shd=OxmlElement('w:shd')
     shd.set(qn('w:val'),'clear'); shd.set(qn('w:color'),'auto'); shd.set(qn('w:fill'),hex_color); tcPr.append(shd)
 def agregar_tabla_word(doc, headers, rows, col_widths=None, semaforo_col=None, semaforo_total_col=None,
-                        fuente_nombre=None, fuente_tam_pt=9):
+                        fuente_nombre=None, fuente_tam_pt=9, fuente_tam_header_pt=None):
     """fuente_nombre/fuente_tam_pt: por default no tocan la fuente (Pt(9),
     sin nombre explícito -- hereda la del documento) para no afectar el
     resto de las tablas que ya usan esta función. Se pueden pedir
     distintos para una tabla puntual (ej. "Detalle por aduana" en Calibri
-    8pt, a pedido, 21/07/2026)."""
+    8pt, a pedido, 21/07/2026). fuente_tam_header_pt: tamaño de la primera
+    fila (headers); si no se pasa, usa fuente_tam_pt (mismo comportamiento
+    que antes)."""
+    tam_header = fuente_tam_header_pt if fuente_tam_header_pt is not None else fuente_tam_pt
     table=doc.add_table(rows=1,cols=len(headers)); table.style='Table Grid'; table.alignment=WD_TABLE_ALIGNMENT.CENTER
     hdr=table.rows[0]
     for i,h in enumerate(headers):
         cell=hdr.cells[i]; cell.text=h
         cell.paragraphs[0].runs[0].bold=True
-        cell.paragraphs[0].runs[0].font.size=Pt(fuente_tam_pt)
+        cell.paragraphs[0].runs[0].font.size=Pt(tam_header)
         if fuente_nombre: cell.paragraphs[0].runs[0].font.name=fuente_nombre
         cell.paragraphs[0].runs[0].font.color.rgb=RGBColor(0xFF,0xFF,0xFF)
         cell.paragraphs[0].alignment=WD_ALIGN_PARAGRAPH.CENTER
@@ -461,6 +476,7 @@ def _generar_word(pais, anio, mes_d, mes_h, version,
         log_fn("✓ Gr\u00e1ficos generados")
 
     doc=Document()
+    _unificar_fuente_documento(doc)
     for section in doc.sections:
         section.top_margin=Cm(2.5); section.bottom_margin=Cm(2.5)
         section.left_margin=Cm(3); section.right_margin=Cm(2.5)
@@ -1130,6 +1146,7 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
         log_fn("✓ Gr\u00e1ficos generados")
 
     doc = Document()
+    _unificar_fuente_documento(doc)
     for section in doc.sections:
         section.top_margin = Cm(2.5); section.bottom_margin = Cm(2.5)
         section.left_margin = Cm(3); section.right_margin = Cm(2.5)
@@ -1248,7 +1265,7 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
           r.get("DEMORA_MEDIA_FMT") or "—", fmt(r.get("EN_ALERTA_PAD", 0))]
          for r in por_aduana],
         col_widths=[3.0, 2.3, 1.3, 1.2, 1.2, 1.4, 1.3, 2.0, 1.3],
-        fuente_nombre="Calibri", fuente_tam_pt=8)
+        fuente_nombre="Calibri", fuente_tam_pt=8, fuente_tam_header_pt=9)
     if "aduana" in graficos: insertar_grafico(doc, graficos["aduana"])
     doc.add_page_break()
 
