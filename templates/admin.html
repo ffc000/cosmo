@@ -758,11 +758,16 @@ document.getElementById('btn-sql-console-run').addEventListener('click', ()=>{
     statusEl.textContent = `${d.rows.length} fila(s) en ${d.duracion_seg}s` + (d.truncado ? ` — cortado en ${d.rows.length} (subí el límite o agregá LIMIT a tu consulta si necesitás más)` : '');
     if(!d.rows.length){ resEl.innerHTML='<p style="color:var(--muted);font-size:.82rem">Sin resultados.</p>'; return; }
     let html = '<table style="border-collapse:collapse;width:100%;font-size:.78rem"><thead><tr>';
-    for(const c of d.cols) html += `<th style="border:1px solid var(--border,#ccc);padding:.3rem .5rem;background:var(--accent-light,#eef);text-align:left;position:sticky;top:0">${c}</th>`;
+    for(const c of d.cols) html += `<th style="border:1px solid var(--border,#ccc);padding:.3rem .5rem;background:var(--accent-light,#eef);text-align:left;position:sticky;top:0">${escHtml(String(c))}</th>`;
     html += '</tr></thead><tbody>';
     for(const row of d.rows){
       html += '<tr>';
-      for(const val of row) html += `<td style="border:1px solid var(--border,#ccc);padding:.3rem .5rem;white-space:nowrap">${val===null?'<em style="color:var(--muted)">NULL</em>':String(val)}</td>`;
+      // escHtml en cada valor -- SIN esto, un SELECT que devuelva un campo
+      // con HTML/JS embebido (ej. datos importados del CSV) lo ejecutaba
+      // tal cual en el navegador del admin que corrió la consulta (XSS
+      // almacenado, encontrado en revisión 20/07/2026 -- acá es más grave
+      // que en Consultar DAT porque le pega directo a la sesión de un admin).
+      for(const val of row) html += `<td style="border:1px solid var(--border,#ccc);padding:.3rem .5rem;white-space:nowrap">${val===null?'<em style="color:var(--muted)">NULL</em>':escHtml(String(val))}</td>`;
       html += '</tr>';
     }
     html += '</tbody></table>';

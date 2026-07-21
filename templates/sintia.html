@@ -922,8 +922,14 @@ function _irPagina(prefix, newOffset){
 
 function renderTabla(containerId, cols, rows) {
   if(!rows.length){document.getElementById(containerId).innerHTML='<p style="padding:.75rem;color:var(--muted);font-size:.8rem">Sin resultados.</p>';return;}
-  let h='<table><thead><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr></thead><tbody>';
-  rows.forEach(r=>{h+='<tr>'+r.map(c=>`<td>${c??''}</td>`).join('')+'</tr>';});
+  // escHtml() en cada celda -- SIN esto, cualquier dato con HTML/JS embebido
+  // (ej. un campo de texto libre importado del CSV -- EMPRESA, notas, etc.)
+  // se ejecutaba tal cual en el navegador de quien mirara la tabla (XSS
+  // almacenado, encontrado en revisión 20/07/2026). Las columnas (cols) no
+  // se escapan porque vienen del nombre de columna de la BD, no de datos
+  // libres -- pero por las dudas, mejor no asumir eso tampoco a futuro.
+  let h='<table><thead><tr>'+cols.map(c=>`<th>${escHtml(String(c))}</th>`).join('')+'</tr></thead><tbody>';
+  rows.forEach(r=>{h+='<tr>'+r.map(c=>`<td>${c==null?'':escHtml(String(c))}</td>`).join('')+'</tr>';});
   h+='</tbody></table>';
   document.getElementById(containerId).innerHTML=h;
 }
