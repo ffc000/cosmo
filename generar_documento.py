@@ -1185,13 +1185,13 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
         doc.add_paragraph(
             "Este porcentaje es un promedio del total general: individualmente, algunos países están "
             "lejos del 50/50 (se compensan entre sí en el agregado) — " + ", ".join(asimetrias) + ".")
-    if "impoexpo" in graficos: insertar_grafico(doc, graficos["impoexpo"], width_cm=11)
+    if "impoexpo" in graficos: insertar_grafico(doc, graficos["impoexpo"], width_cm=8.5)
 
     # 3. Cargado vs. Lastre
     _heading_indexado(doc, "3.  Cargado vs. Lastre", 1, 4)
     doc.add_paragraph(f"{fmt(cargado)} ({pct(cargado, total)}) operaciones fueron con mercadería "
                        f"cargada y {fmt(lastre)} ({pct(lastre, total)}) en lastre (vacío).")
-    if "cargalast" in graficos: insertar_grafico(doc, graficos["cargalast"], width_cm=11)
+    if "cargalast" in graficos: insertar_grafico(doc, graficos["cargalast"], width_cm=8.5)
     doc.add_page_break()
 
     # 4. Operaciones por aduana
