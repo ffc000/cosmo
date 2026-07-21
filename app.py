@@ -4081,7 +4081,8 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
     from docx.shared import Pt, RGBColor, Cm
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from generar_documento import (agregar_tabla_word, _agregar_encabezado, _agregar_pie_pagina,
-        _insertar_indice, _heading_indexado, _generar_portada_compuesta)
+        _insertar_indice, _heading_indexado, _generar_portada_compuesta,
+        _ocultar_encabezado_portada, _agregar_imagen_portada_ajustada)
     from generar_utils import fmt
 
     nombre_archivo = f"Informe_Aduanas_Pais_{anio}_{job_id}.docx" if job_id else ""
@@ -4091,6 +4092,7 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
         section.left_margin = Cm(3); section.right_margin = Cm(2.5)
     _agregar_encabezado(doc, "Dirección de Reingeniería de Procesos Aduaneros")
     _agregar_pie_pagina(doc, "Informe — Aduanas del País")
+    _ocultar_encabezado_portada(doc)
 
     _imagen_portada = _generar_portada_compuesta(
         titulo="INFORME — ADUANAS DEL PAÍS",
@@ -4101,7 +4103,7 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
             f"Umbral de alerta: {umbral_alerta_dias} días     Versión: {_INFORME_ADUANAS_VERSION}",
         ])
     if _imagen_portada:
-        doc.add_picture(_imagen_portada, width=Cm(16.09))
+        _agregar_imagen_portada_ajustada(doc, _imagen_portada)
     else:
         titulo = doc.add_heading("INFORME — ADUANAS DEL PAÍS", 0)
         titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER

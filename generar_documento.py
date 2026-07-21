@@ -12,7 +12,7 @@ from datetime import datetime
 
 try:
     from docx import Document
-    from docx.shared import Pt, RGBColor, Cm
+    from docx.shared import Pt, RGBColor, Cm, Emu
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.enum.table import WD_TABLE_ALIGNMENT
     from docx.oxml.ns import qn
@@ -178,6 +178,58 @@ def _wrap_texto_pil(texto, font, max_width, draw):
     if actual:
         lineas.append(actual)
     return lineas
+
+
+def _ocultar_encabezado_portada(doc):
+    """Activa "primera página distinta" y deja el encabezado/pie de esa
+    primera página en blanco -- para que la portada salga limpia (sin la
+    barra de "DIRECCIÓN DE REINGENIERÍA..." arriba ni el pie abajo), y el
+    encabezado/pie normal recién arranque desde la página 2 (el índice).
+    A pedido, 21/07/2026 -- antes la portada mostraba encabezado y pie
+    igual que el resto del documento.
+
+    Tiene que llamarse DESPUÉS de _agregar_encabezado/_agregar_pie_pagina
+    (que configuran section.header/section.footer -- una vez activado
+    este flag, esos pasan a regir desde la página 2 en adelante, y
+    section.first_page_header/first_page_footer son los que se ven en la
+    página 1)."""
+    section = doc.sections[0]
+    section.different_first_page_header_footer = True
+    for p in section.first_page_header.paragraphs:
+        p.text = ""
+    for p in section.first_page_footer.paragraphs:
+        p.text = ""
+
+
+def _agregar_imagen_portada_ajustada(doc, imagen_bytesio, ancho_deseado_cm=16.09, margen_seguridad_cm=1.0):
+    """Inserta la imagen de portada con un ancho que GARANTIZA que entre
+    en una sola página, dejando aire de sobra -- encontrado en producción
+    (21/07/2026): con el ancho fijo de 16.09cm, la altura resultante
+    (22.76cm) dejaba apenas 0.18cm de margen contra el alto de página
+    disponible en Letter (22.94cm). Cualquier diferencia mínima de cómo
+    Word/LibreOffice miden el espacio empujaba la imagen a la página
+    siguiente -- la portada y la página 2 quedaban casi en blanco (el
+    índice terminaba recién en la página 3 en vez de la 2).
+
+    Calcula el alto disponible de la página REAL del documento (no asume
+    A4 ni Letter -- se leen page_height/top_margin/bottom_margin del
+    section actual) y, si la imagen al ancho deseado no entra con
+    margen_seguridad_cm de aire, la achica proporcionalmente hasta que sí
+    entre -- nunca la deja al límite exacto como antes."""
+    imagen_bytesio.seek(0)
+    with Image.open(imagen_bytesio) as img:
+        ancho_px, alto_px = img.size
+    imagen_bytesio.seek(0)
+    aspect_ratio = alto_px / ancho_px
+
+    section = doc.sections[0]
+    alto_disponible_cm = Emu(section.page_height).cm - Emu(section.top_margin).cm - Emu(section.bottom_margin).cm
+    alto_maximo_cm = alto_disponible_cm - margen_seguridad_cm
+
+    alto_con_ancho_deseado_cm = ancho_deseado_cm * aspect_ratio
+    ancho_final_cm = (alto_maximo_cm / aspect_ratio) if alto_con_ancho_deseado_cm > alto_maximo_cm else ancho_deseado_cm
+
+    doc.add_picture(imagen_bytesio, width=Cm(ancho_final_cm))
 
 
 def _generar_portada_compuesta(titulo, subtitulo, meta_lineas):
@@ -391,6 +443,7 @@ def _generar_word(pais, anio, mes_d, mes_h, version,
         section.left_margin=Cm(3); section.right_margin=Cm(2.5)
     _agregar_encabezado(doc, "Dirección de Reingeniería de Procesos Aduaneros")
     _agregar_pie_pagina(doc, f"Estado de Situación SINTIA {anio} {pais}-AR")
+    _ocultar_encabezado_portada(doc)
 
     # Portada
     _imagen_portada = _generar_portada_compuesta(
@@ -402,7 +455,7 @@ def _generar_word(pais, anio, mes_d, mes_h, version,
             "Elaborado por: Sección Simplificación de Procesos Operativos — DI REPA",
         ])
     if _imagen_portada:
-        doc.add_picture(_imagen_portada, width=Cm(16.09))
+        _agregar_imagen_portada_ajustada(doc, _imagen_portada)
     else:
         titulo=doc.add_heading(f"ESTADO DE SITUACI\u00d3N SINTIA {anio} {pais}-AR",0)
         titulo.alignment=WD_ALIGN_PARAGRAPH.CENTER
@@ -1059,6 +1112,7 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
         section.left_margin = Cm(3); section.right_margin = Cm(2.5)
     _agregar_encabezado(doc, "Dirección de Reingeniería de Procesos Aduaneros")
     _agregar_pie_pagina(doc, "Informe Consolidado de Operaciones Fronterizas Terrestres")
+    _ocultar_encabezado_portada(doc)
 
     # Portada
     _imagen_portada = _generar_portada_compuesta(
@@ -1070,7 +1124,7 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
             "Elaborado por: Sección Simplificación de Procesos Operativos — DI REPA",
         ])
     if _imagen_portada:
-        doc.add_picture(_imagen_portada, width=Cm(16.09))
+        _agregar_imagen_portada_ajustada(doc, _imagen_portada)
     else:
         titulo = doc.add_heading("INFORME CONSOLIDADO DE OPERACIONES FRONTERIZAS TERRESTRES", 0)
         titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
