@@ -1521,6 +1521,20 @@ _SQL_KEYWORDS_PROHIBIDAS = re.compile(
     r'\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|REPLACE|ATTACH|DETACH|VACUUM|PRAGMA|TRIGGER)\b',
     re.IGNORECASE
 )
+# Tablas de finanzas (fin_ddjj*, fin_movimientos, fin_tarjetas, etc. -- todas
+# en HIST_DB, ver blueprints/finanzas.py) son datos personales protegidos
+# aparte del resto de la base por finanzas_owner_required (admin O la
+# whitelist de FINANZAS_ALLOWED_USERS -- ni siquiera "cualquier admin"
+# alcanza ahí). La consola SQL solo exige admin_required("bd"), un permiso
+# más amplio y distinto -- sin este bloqueo, cualquiera con permiso de BD
+# (no necesariamente de finanzas) podría leer esos datos personales
+# saltándose esa restricción. El bloqueo es a propósito específico de la
+# CONSOLA, no del módulo de finanzas en sí -- el módulo necesita leer estas
+# tablas para funcionar y ya tiene su propio control de acceso correcto;
+# acá se trata de una herramienta de diagnóstico genérica que no tiene
+# ningún motivo legítimo para tocar datos personales de nadie, sea quien
+# sea quien la use (encontrado en revisión de seguridad, 20/07/2026).
+_TABLAS_PROHIBIDAS = re.compile(r'\bfin_\w*', re.IGNORECASE)
 
 
 @app.route("/api/admin/sql-query", methods=["POST"])
@@ -1577,6 +1591,12 @@ def api_admin_sql_query():
         return jsonify({"ok": False, "error":
             "La consulta contiene una palabra no permitida en esta consola de solo lectura "
             "(INSERT/UPDATE/DELETE/DROP/ALTER/CREATE/etc.)."})
+
+    if _TABLAS_PROHIBIDAS.search(query_sin_fin):
+        return jsonify({"ok": False, "error":
+            "Esta consola no permite consultar tablas de finanzas (fin_*) -- son datos personales, "
+            "protegidos aparte del resto de la base. Para verlos, entrá al módulo de Finanzas "
+            "(respeta el permiso específico de esa sección, no el de administración de BD)."})
 
     ruta_db = DB_PATH if base == "pad" else HIST_DB
     if not os.path.exists(ruta_db):
