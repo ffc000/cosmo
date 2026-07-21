@@ -48,13 +48,20 @@ from generar_queries import calcular_totales
 def set_cell_bg(cell, hex_color):
     tc=cell._tc; tcPr=tc.get_or_add_tcPr(); shd=OxmlElement('w:shd')
     shd.set(qn('w:val'),'clear'); shd.set(qn('w:color'),'auto'); shd.set(qn('w:fill'),hex_color); tcPr.append(shd)
-def agregar_tabla_word(doc, headers, rows, col_widths=None, semaforo_col=None, semaforo_total_col=None):
+def agregar_tabla_word(doc, headers, rows, col_widths=None, semaforo_col=None, semaforo_total_col=None,
+                        fuente_nombre=None, fuente_tam_pt=9):
+    """fuente_nombre/fuente_tam_pt: por default no tocan la fuente (Pt(9),
+    sin nombre explícito -- hereda la del documento) para no afectar el
+    resto de las tablas que ya usan esta función. Se pueden pedir
+    distintos para una tabla puntual (ej. "Detalle por aduana" en Calibri
+    8pt, a pedido, 21/07/2026)."""
     table=doc.add_table(rows=1,cols=len(headers)); table.style='Table Grid'; table.alignment=WD_TABLE_ALIGNMENT.CENTER
     hdr=table.rows[0]
     for i,h in enumerate(headers):
         cell=hdr.cells[i]; cell.text=h
         cell.paragraphs[0].runs[0].bold=True
-        cell.paragraphs[0].runs[0].font.size=Pt(9)
+        cell.paragraphs[0].runs[0].font.size=Pt(fuente_tam_pt)
+        if fuente_nombre: cell.paragraphs[0].runs[0].font.name=fuente_nombre
         cell.paragraphs[0].runs[0].font.color.rgb=RGBColor(0xFF,0xFF,0xFF)
         cell.paragraphs[0].alignment=WD_ALIGN_PARAGRAPH.CENTER
         set_cell_bg(cell,"1F3864")
@@ -62,7 +69,8 @@ def agregar_tabla_word(doc, headers, rows, col_widths=None, semaforo_col=None, s
         tr=table.add_row(); base_fill="F2F2F2" if ri%2==0 else "FFFFFF"
         for ci,val in enumerate(row):
             cell=tr.cells[ci]; cell.text=str(val or "")
-            cell.paragraphs[0].runs[0].font.size=Pt(9)
+            cell.paragraphs[0].runs[0].font.size=Pt(fuente_tam_pt)
+            if fuente_nombre: cell.paragraphs[0].runs[0].font.name=fuente_nombre
             fill=base_fill
             if semaforo_col is not None and semaforo_total_col is not None and ci==semaforo_col:
                 try:
@@ -74,10 +82,25 @@ def agregar_tabla_word(doc, headers, rows, col_widths=None, semaforo_col=None, s
         for i,w in enumerate(col_widths):
             for row in table.rows: row.cells[i].width=Cm(w)
     doc.add_paragraph(); return table
-def insertar_grafico(doc, img_bytes, width_cm=14):
+def insertar_grafico(doc, img_bytes, width_cm=14, height_cm=None):
+    """height_cm es opcional -- si no se pasa, la imagen mantiene su propia
+    proporción (ancho fijo, alto según el aspect ratio del PNG). Hace falta
+    especificarlo cuando dos gráficos tienen que verse del mismo tamaño
+    entre sí (ej. las dos tortas de Impo/Expo y Cargado/Lastre): matplotlib
+    recorta cada PNG a su contenido (bbox_inches='tight'), y como
+    "Importación"/"Exportación" son etiquetas más largas que "Cargado"/
+    "Lastre", el recorte les da proporciones distintas aunque el figsize de
+    origen sea igual -- incluso con el mismo ancho, terminaban con alturas
+    distintas (encontrado en producción, 21/07/2026). Fijando width Y
+    height acá se ignora la proporción propia de cada PNG y quedan
+    idénticos en pantalla."""
     if not img_bytes: return
     p=doc.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.CENTER
-    p.add_run().add_picture(img_bytes, width=Cm(width_cm)); doc.add_paragraph()
+    if height_cm is not None:
+        p.add_run().add_picture(img_bytes, width=Cm(width_cm), height=Cm(height_cm))
+    else:
+        p.add_run().add_picture(img_bytes, width=Cm(width_cm))
+    doc.add_paragraph()
 def _campo_word(p, instr):
     """Inserta un campo de Word (PAGE, NUMPAGES, TOC, etc.) que se calcula solo
     al abrir/actualizar el documento — no se puede calcular desde python-docx."""
@@ -1185,13 +1208,13 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
         doc.add_paragraph(
             "Este porcentaje es un promedio del total general: individualmente, algunos países están "
             "lejos del 50/50 (se compensan entre sí en el agregado) — " + ", ".join(asimetrias) + ".")
-    if "impoexpo" in graficos: insertar_grafico(doc, graficos["impoexpo"], width_cm=8.5)
+    if "impoexpo" in graficos: insertar_grafico(doc, graficos["impoexpo"], width_cm=8.5, height_cm=6.5)
 
     # 3. Cargado vs. Lastre
     _heading_indexado(doc, "3.  Cargado vs. Lastre", 1, 4)
     doc.add_paragraph(f"{fmt(cargado)} ({pct(cargado, total)}) operaciones fueron con mercadería "
                        f"cargada y {fmt(lastre)} ({pct(lastre, total)}) en lastre (vacío).")
-    if "cargalast" in graficos: insertar_grafico(doc, graficos["cargalast"], width_cm=8.5)
+    if "cargalast" in graficos: insertar_grafico(doc, graficos["cargalast"], width_cm=8.5, height_cm=6.5)
     doc.add_page_break()
 
     # 4. Operaciones por aduana
@@ -1224,7 +1247,8 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
           fmt(r.get("IMPO", 0)), fmt(r.get("EXPO", 0)), fmt(r.get("CARGADO", 0)), fmt(r.get("LASTRE", 0)),
           r.get("DEMORA_MEDIA_FMT") or "—", fmt(r.get("EN_ALERTA_PAD", 0))]
          for r in por_aduana],
-        col_widths=[3.0, 2.3, 1.3, 1.2, 1.2, 1.4, 1.3, 2.0, 1.3])
+        col_widths=[3.0, 2.3, 1.3, 1.2, 1.2, 1.4, 1.3, 2.0, 1.3],
+        fuente_nombre="Calibri", fuente_tam_pt=8)
     if "aduana" in graficos: insertar_grafico(doc, graficos["aduana"])
     doc.add_page_break()
 
