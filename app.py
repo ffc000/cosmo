@@ -3096,15 +3096,27 @@ def sintia_dashboard():
                 codigos_control = [r["codigo"] for r in con_hist.execute(
                     "SELECT codigo FROM ref_controles ORDER BY codigo").fetchall()]
             por_tipo_control = {}
-            for cod in codigos_control:
-                cur.execute(f"SELECT COUNT(*) FROM {tabla} WHERE FECHA_INGRESO_ISO BETWEEN ? AND ? "
-                           f"AND CONTROLES LIKE ?", (d30, hoy_iso, f"{cod}%"))
-                cnt = cur.fetchone()[0]
-                if cnt: por_tipo_control[cod] = cnt
-
-            cur.execute(f"SELECT COUNT(*) FROM {tabla} WHERE FECHA_INGRESO_ISO BETWEEN ? AND ? "
-                       f"AND CONTROLES IS NOT NULL AND TRIM(CONTROLES) != ''", (d30, hoy_iso))
-            con_control = cur.fetchone()[0]
+            con_control = 0
+            if codigos_control:
+                columnas_sum = ", ".join(
+                    f"SUM(CASE WHEN CONTROLES LIKE '{cod}%' THEN 1 ELSE 0 END) AS \"{cod}\"" for cod in codigos_control)
+                try:
+                    cur.execute(f"""SELECT {columnas_sum},
+                        SUM(CASE WHEN CONTROLES IS NOT NULL AND TRIM(CONTROLES) != '' THEN 1 ELSE 0 END) AS _con_control
+                        FROM {tabla} WHERE FECHA_INGRESO_ISO BETWEEN ? AND ?""", (d30, hoy_iso))
+                    fila_ctrl = cur.fetchone()
+                    cols_ctrl = [d[0] for d in cur.description]
+                    valores_ctrl = dict(zip(cols_ctrl, fila_ctrl))
+                    for cod in codigos_control:
+                        cnt = valores_ctrl.get(cod) or 0
+                        if cnt: por_tipo_control[cod] = cnt
+                    con_control = valores_ctrl.get("_con_control") or 0
+                except sqlite3.OperationalError as e:
+                    # CONTROLES puede no existir todavía en algún año viejo --
+                    # mismo criterio que _controles_por_aduana_nacional: no
+                    # tirar abajo el dashboard entero por este solo widget.
+                    if "no such column" not in str(e).lower():
+                        raise
             con_sin_control = {"Con control": con_control, "Sin control": max(total_mes - con_control, 0)}
 
             evolucion = []
@@ -3141,6 +3153,21 @@ def sintia_dashboard():
     except Exception as e:
         logging.error(f"SINTIA DASHBOARD ERROR | {e}")
         return jsonify({"ok": False, "error": str(e)})
+
+def _mensaje_error_sql(e):
+    """Traduce errores de SQLite comunes a un mensaje entendible para el
+    usuario de Consultar DAT -- en particular "no such column", que pasa
+    cuando se filtra por una columna nueva (ej. CONTROLES/CANT_CONTROLES,
+    20/07/2026) en un año que todavía no la tiene. Sin esto, el usuario
+    veía el error crudo de SQLite en la pantalla."""
+    texto = str(e)
+    m = re.search(r'no such column:\s*(\w+)', texto, re.IGNORECASE)
+    if m:
+        col = m.group(1)
+        return (f"La columna '{col}' no existe en el año seleccionado (es un campo nuevo, puede no "
+                f"estar disponible en años anteriores). Probá sacando ese filtro o eligiendo otro año.")
+    return texto
+
 
 @app.route("/api/sintia/dat", methods=["POST"])
 @login_required
@@ -3235,7 +3262,7 @@ def sintia_dat_query():
 
     except Exception as e:
         logging.error(f"DAT QUERY ERROR | {e}")
-        return jsonify({"ok": False, "error": str(e)})
+        return jsonify({"ok": False, "error": _mensaje_error_sql(e)})
 
 
 @app.route("/api/sintia/rec", methods=["POST"])
@@ -3351,7 +3378,7 @@ def sintia_dat_export():
                          mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     except Exception as e:
         logging.error(f"DAT EXPORT ERROR | {e}")
-        return jsonify({"ok": False, "error": str(e)})
+        return jsonify({"ok": False, "error": _mensaje_error_sql(e)})
 
 
 @app.route("/api/sintia/rec/export", methods=["POST"])
@@ -3600,11 +3627,25 @@ def _controles_por_aduana_nacional(anio, dira_filtro=None):
         # seguro interpolarlos directo en el SQL, no vienen de request.args.
         columnas_sum = ", ".join(
             f"SUM(CASE WHEN CONTROLES LIKE '{cod}%' THEN 1 ELSE 0 END) AS \"{cod}\"" for cod in codigos)
-        rows = [dict(r) for r in con.execute(f"""
-            SELECT ADUANA AS aduana_cod, COUNT(*) AS cantidad_operaciones, {columnas_sum}
-            FROM {tabla}
-            GROUP BY ADUANA
-        """).fetchall()]
+        try:
+            rows = [dict(r) for r in con.execute(f"""
+                SELECT ADUANA AS aduana_cod, COUNT(*) AS cantidad_operaciones, {columnas_sum}
+                FROM {tabla}
+                GROUP BY ADUANA
+            """).fetchall()]
+        except sqlite3.OperationalError as e:
+            # CONTROLES es una columna nueva (20/07/2026) -- un año viejo
+            # sin esa columna (ej. DAT_2025, migrada de un dump anterior a
+            # que existiera el campo) no debería tirar abajo TODO el
+            # informe de Aduanas del país por esto solo. La unión
+            # multi-año (_union_dat_rango en generar_queries.py) ya
+            # resuelve este mismo caso con VAR_CONTROL rellenando con
+            # NULL -- acá, para un año puntual sin la columna, no hay
+            # nada que rellenar (no existe el dato), así que se devuelve
+            # vacío en vez de romper.
+            if "no such column" in str(e).lower():
+                return []
+            raise
 
     filas = []
     for r in rows:
