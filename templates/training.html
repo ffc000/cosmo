@@ -516,6 +516,7 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
             <div><label>Nota (opcional)</label><input type="text" id="peso-nota" placeholder="ej: dolor en el hombro, dormí mal, etc."></div>
           </div>
           <button class="btn btn-primary" onclick="guardarPeso()">Guardar</button>
+          <div id="peso-guardar-msg" style="margin-top:.5rem;font-size:.82rem"></div>
         </div>
 
         <div class="card">
@@ -1537,7 +1538,9 @@ function guardarPeso() {
   const estres = document.getElementById('peso-estres').value;
   const motivacion = document.getElementById('peso-motivacion').value;
   const nota = document.getElementById('peso-nota').value;
+  const msg = document.getElementById('peso-guardar-msg');
   if (!fecha) { alert('Falta la fecha.'); return; }
+  if (msg) msg.innerHTML = '<span style="color:var(--muted)">Guardando...</span>';
   fetch('/api/training/peso', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({
@@ -1549,9 +1552,24 @@ function guardarPeso() {
       motivacion: motivacion || null,
     })
   }).then(r => r.json()).then(d => {
-    if (!d.ok) { alert('Error: ' + d.error); return; }
+    if (!d.ok) {
+      if (msg) msg.innerHTML = `<span style="color:var(--danger)">Error: ${escHtml(d.error || 'no se pudo guardar')}</span>`;
+      else alert('Error: ' + d.error);
+      return;
+    }
     document.getElementById('peso-nota').value = '';
+    document.getElementById('peso-sensacion').value = '';
+    document.getElementById('peso-energia').value = '';
+    document.getElementById('peso-animo').value = '';
+    document.getElementById('peso-estres').value = '';
+    document.getElementById('peso-motivacion').value = '';
+    if (msg) {
+      msg.innerHTML = '<span style="color:var(--success,#16a34a)">✓ Guardado.</span>';
+      setTimeout(() => { msg.innerHTML = ''; }, 4000);
+    }
     cargarPeso();
+  }).catch(() => {
+    if (msg) msg.innerHTML = '<span style="color:var(--danger)">Error de conexión, probá de nuevo.</span>';
   });
 }
 
