@@ -561,7 +561,7 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
 
         <div class="card">
           <div class="card-title">Historial de análisis diarios</div>
-          <div id="lista-analisis-diario"><p style="color:var(--muted);font-size:.82rem">Sin análisis guardados todavía.</p></div>
+          <div id="lista-analisis-diario" style="max-height:520px;overflow-y:auto"><p style="color:var(--muted);font-size:.82rem">Sin análisis guardados todavía.</p></div>
         </div>
       </div>
 
@@ -1577,17 +1577,17 @@ function cargarPeso() {
   fetch('/api/training/peso?dias=30').then(r => r.json()).then(d => {
     const el = document.getElementById('peso-lista');
     if (!d.ok || !d.rows.length) { el.innerHTML = '<p style="color:var(--muted);font-size:.82rem">Sin registros todavía.</p>'; return; }
-    const estrellas = v => v ? '⭐'.repeat(v) : '—';
+    const num = v => (v || v === 0) ? `${v}/5` : '—';
     el.innerHTML = `<table class="data-table"><thead><tr><th>Fecha</th><th>Peso</th><th>Sensación</th>` +
       `<th>Energía</th><th>Ánimo</th><th>Estrés</th><th>Motivación</th><th>Nota</th></tr></thead><tbody>` +
       d.rows.map(r => `<tr>
         <td style="font-family:var(--mono);font-size:.78rem">${escHtml(r.fecha)}</td>
         <td>${r.peso_kg ? escHtml(String(r.peso_kg)) + ' kg' : '—'}</td>
-        <td>${estrellas(r.sensacion)}</td>
-        <td>${estrellas(r.energia)}</td>
-        <td>${estrellas(r.animo)}</td>
-        <td>${estrellas(r.estres)}</td>
-        <td>${estrellas(r.motivacion)}</td>
+        <td>${num(r.sensacion)}</td>
+        <td>${num(r.energia)}</td>
+        <td>${num(r.animo)}</td>
+        <td>${num(r.estres)}</td>
+        <td>${num(r.motivacion)}</td>
         <td style="font-size:.78rem;color:var(--muted)">${escHtml(r.nota || '—')}</td>
       </tr>`).join('') + `</tbody></table>`;
     const conPeso = d.rows.find(r => r.peso_kg);
@@ -1692,13 +1692,14 @@ function cargarAnalisisDiario() {
   fetch('/api/garmin/analisis/diario').then(r => r.json()).then(d => {
     const el = document.getElementById('lista-analisis-diario');
     if (!d.ok || !d.rows.length) { el.innerHTML = '<p style="color:var(--muted);font-size:.82rem">Sin análisis guardados todavía.</p>'; return; }
-    el.innerHTML = d.rows.map(r => `
-      <div style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:.75rem;margin-bottom:.6rem;font-size:.8rem">
-        <div style="display:flex;justify-content:space-between;margin-bottom:.4rem">
-          <strong>${escHtml(r.fecha_desde || '')}</strong>
+    el.innerHTML = d.rows.map((r, i) => `
+      <div style="border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:.5rem;font-size:.8rem;overflow:hidden">
+        <div onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'; this.querySelector('.chev').textContent = this.nextElementSibling.style.display === 'none' ? '▸' : '▾';"
+             style="display:flex;justify-content:space-between;align-items:center;padding:.55rem .75rem;cursor:pointer;user-select:none">
+          <span><span class="chev" style="display:inline-block;width:1em">${i === 0 ? '▾' : '▸'}</span><strong>${escHtml(r.fecha_desde || '')}</strong></span>
           <span style="font-family:var(--mono);font-size:.7rem;color:var(--muted)">${(r.creado||'').substring(0,16).replace('T',' ')}</span>
         </div>
-        <div style="color:var(--text-sub);line-height:1.55;white-space:pre-wrap">${escHtml(r.respuesta)}</div>
+        <div style="display:${i === 0 ? 'block' : 'none'};padding:0 .75rem .75rem;color:var(--text-sub);line-height:1.55;white-space:pre-wrap;border-top:1px solid var(--border)">${escHtml(r.respuesta)}</div>
       </div>`).join('');
   });
 }
