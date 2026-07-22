@@ -683,7 +683,7 @@ function showPanel(id){
 }
 showPanel('minutas');
 
-document.getElementById('min-fecha').value=new Date().toISOString().split('T')[0];
+document.getElementById('min-fecha').value=fechaLocalISO();
 
 // ── Participantes ──
 let participantes=[];
@@ -723,7 +723,7 @@ function generarMinuta(){
     const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='Acta_Reunion_VUA.docx';a.click();
     ['min-asunto','min-lugar','min-temas','min-acuerdos','min-proximos'].forEach(id=>{document.getElementById(id).value='';});
     participantes=[];renderParticipantes();
-    document.getElementById('min-fecha').value=new Date().toISOString().split('T')[0];
+    document.getElementById('min-fecha').value=fechaLocalISO();
     document.getElementById('minuta-preview').classList.remove('visible');
     setTimeout(()=>alert('✓ Acta generada y guardada en historial.'),300);
   }).catch(e=>{

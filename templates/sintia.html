@@ -797,7 +797,7 @@ async function _poblarSelectorAnio(selectId, incluirTodos) {
 }
 showPanel('dashboard');
 (function(){
-  const d=new Date(); const iso=x=>x.toISOString().slice(0,10);
+  const d=new Date(); const iso=x=>fechaLocalISO(x);
   const fd=document.getElementById('consolidado-fecha-d'), fh=document.getElementById('consolidado-fecha-h');
   if(fd && !fd.value) fd.value = iso(new Date(d.getFullYear(), d.getMonth(), 1));
   if(fh && !fh.value) fh.value = iso(d);

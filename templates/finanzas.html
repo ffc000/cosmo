@@ -610,7 +610,7 @@ function fmtMoney(v) {
   if (v === null || v === undefined) return '—';
   return '$' + Number(v).toLocaleString('es-AR', {minimumFractionDigits: 2, maximumFractionDigits: 2});
 }
-function mesActual() { return new Date().toISOString().substring(0, 7); }
+function mesActual() { return fechaLocalISO().substring(0, 7); }
 
 // ══════════════════════════════════════════════════════════════════════════════
 // DASHBOARD
@@ -997,7 +997,7 @@ async function cargarCategoriasSelect() {
     document.getElementById('man-tarjeta').innerHTML = dt.rows.map(t => `<option value="${t.id}">${esc(t.nombre)}</option>`).join('');
   }
   if (!document.getElementById('man-fecha').value) {
-    document.getElementById('man-fecha').value = new Date().toISOString().substring(0, 10);
+    document.getElementById('man-fecha').value = fechaLocalISO();
   }
 }
 
@@ -1123,7 +1123,7 @@ async function cargarTarjetasList() {
     : '<p style="color:var(--muted);font-size:.82rem">Sin tarjetas configuradas todavía.</p>';
 }
 
-function mesActual_(){ return new Date().toISOString().substring(0,7); }
+function mesActual_(){ return fechaLocalISO().substring(0,7); }
 
 async function guardarMontoTarjeta(tid) {
   const monto_a_pagar = parseFloat(document.getElementById(`monto-tarjeta-${tid}`).value);

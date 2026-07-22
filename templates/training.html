@@ -1949,7 +1949,7 @@ function renderHistCal() {
   const ultimoDia = new Date(_histAnio, _histMes, 0).getDate();
   // Lunes=0 ... Domingo=6
   let offset = primerDia.getDay() - 1; if (offset < 0) offset = 6;
-  const hoyStr = new Date().toISOString().substring(0,10);
+  const hoyStr = _fechaLocalISO();
 
   let html = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'].map(d => `<div class="hist-cal-dow">${d}</div>`).join('');
   for (let i = 0; i < offset; i++) html += `<div class="hist-cal-day empty"></div>`;
@@ -2214,7 +2214,7 @@ async function cargarCalendario() {
     if (!_calSemanas.length) { empty.style.display = 'block'; return; }
 
     // Posicionarse en la semana más cercana a hoy
-    const hoy = new Date().toISOString().substring(0,10);
+    const hoy = _fechaLocalISO();
     _calIdx = 0;
     for (let i = 0; i < _calSemanas.length; i++) {
       if (_calSemanas[i].domingo >= hoy) { _calIdx = i; break; }
@@ -2262,7 +2262,7 @@ function renderCalSemana() {
         ${dur ? `<div style="font-family:var(--mono);font-size:.65rem;color:var(--muted);margin-top:.2rem">${dur}</div>` : ''}
       </div>`;
     }).join('');
-    const hoy = new Date().toISOString().substring(0,10);
+    const hoy = _fechaLocalISO();
     const esHoy = fecha === hoy;
     return `<div class="dia-col">
       <div class="dia-header" style="${esHoy ? 'color:var(--accent);font-weight:700' : ''}">${hdr} <span style="font-size:.58rem;font-weight:400">${fecha.substring(5)}</span></div>
@@ -2353,7 +2353,7 @@ async function guardarNuevaSesion() {
 
 // ── Log ───────────────────────────────────────────────────────────────────────
 function abrirModalLog() {
-  document.getElementById('log-fecha').value = new Date().toISOString().substring(0,10);
+  document.getElementById('log-fecha').value = _fechaLocalISO();
   document.getElementById('log-desc').value = '';
   document.getElementById('log-notas').value = '';
   document.getElementById('log-garmin').value = '';
@@ -2399,7 +2399,7 @@ async function eliminarLog(id) {
 
 // ── Rutinas manuales (texto libre) ──────────────────────────────────────────
 function abrirModalRutinaManual() {
-  document.getElementById('rm-fecha').value = new Date().toISOString().substring(0,10);
+  document.getElementById('rm-fecha').value = _fechaLocalISO();
   document.getElementById('rm-titulo').value = '';
   document.getElementById('rm-texto').value = '';
   abrirModal('modal-rutina-manual');

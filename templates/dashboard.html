@@ -330,7 +330,7 @@ updateTime();setInterval(updateTime,30000);
       if(!items.length){
         elSenasa.innerHTML = '<span style="color:var(--accent2)">✓ Sin acuerdos pendientes</span>';
       }else{
-        const hoy = new Date().toISOString().slice(0,10);
+        const hoy = fechaLocalISO();
         elSenasa.innerHTML = items.map(it=>{
           const vencido = it.fecha_compromiso && it.fecha_compromiso < hoy;
           const fechaTxt = it.fecha_compromiso
