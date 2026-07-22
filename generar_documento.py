@@ -101,14 +101,19 @@ def insertar_grafico(doc, img_bytes, width_cm=14, height_cm=None):
     """height_cm es opcional -- si no se pasa, la imagen mantiene su propia
     proporción (ancho fijo, alto según el aspect ratio del PNG). Hace falta
     especificarlo cuando dos gráficos tienen que verse del mismo tamaño
-    entre sí (ej. las dos tortas de Impo/Expo y Cargado/Lastre): matplotlib
-    recorta cada PNG a su contenido (bbox_inches='tight'), y como
-    "Importación"/"Exportación" son etiquetas más largas que "Cargado"/
-    "Lastre", el recorte les da proporciones distintas aunque el figsize de
-    origen sea igual -- incluso con el mismo ancho, terminaban con alturas
-    distintas (encontrado en producción, 21/07/2026). Fijando width Y
-    height acá se ignora la proporción propia de cada PNG y quedan
-    idénticos en pantalla."""
+    entre sí y sus PNG de origen NO tienen la misma proporción -- ej. las
+    dos tortas de Impo/Expo y Cargado/Lastre tenían este problema porque
+    matplotlib recortaba cada PNG a su contenido (bbox_inches='tight') y,
+    al tener etiquetas de distinto largo ("Importación"/"Exportación" vs.
+    "Cargado"/"Lastre"), quedaban con proporciones distintas aunque el
+    figsize de origen fuera igual -- forzar acá el mismo width/height
+    "arreglaba" que se vieran del mismo tamaño, pero como uno de los dos
+    PNG no tenía esa proporción, terminaba estirado (el círculo de la
+    torta se veía ovalado; encontrado en producción, 22/07/2026). La
+    solución real fue en el origen (generar_graficos.py:
+    fig_to_bytes_canvas_fijo, sin bbox_inches='tight'), para que ambos PNG
+    salgan con el mismo tamaño real -- por eso esas dos tortas ahora se
+    insertan solo con width_cm, sin forzar height_cm."""
     if not img_bytes: return
     p=doc.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.CENTER
     if height_cm is not None:
@@ -1225,13 +1230,13 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
         doc.add_paragraph(
             "Este porcentaje es un promedio del total general: individualmente, algunos países están "
             "lejos del 50/50 (se compensan entre sí en el agregado) — " + ", ".join(asimetrias) + ".")
-    if "impoexpo" in graficos: insertar_grafico(doc, graficos["impoexpo"], width_cm=8.5, height_cm=6.5)
+    if "impoexpo" in graficos: insertar_grafico(doc, graficos["impoexpo"], width_cm=8.5)
 
     # 3. Cargado vs. Lastre
     _heading_indexado(doc, "3.  Cargado vs. Lastre", 1, 4)
     doc.add_paragraph(f"{fmt(cargado)} ({pct(cargado, total)}) operaciones fueron con mercadería "
                        f"cargada y {fmt(lastre)} ({pct(lastre, total)}) en lastre (vacío).")
-    if "cargalast" in graficos: insertar_grafico(doc, graficos["cargalast"], width_cm=8.5, height_cm=6.5)
+    if "cargalast" in graficos: insertar_grafico(doc, graficos["cargalast"], width_cm=8.5)
     doc.add_page_break()
 
     # 4. Operaciones por aduana

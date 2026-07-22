@@ -18,6 +18,24 @@ def fig_to_bytes(fig):
     fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
     plt.close(fig); buf.seek(0)
     return buf
+
+def fig_to_bytes_canvas_fijo(fig):
+    """Igual que fig_to_bytes pero SIN bbox_inches='tight'. Ese recorte
+    ajusta el PNG al contenido real dibujado (título+etiquetas+torta), y
+    como las etiquetas de cada gráfico tienen largos de texto distintos
+    (ej. "Importación"/"Exportación" vs. "Cargado"/"Lastre"), dos gráficos
+    con el mismo figsize terminaban con PNGs de proporciones distintas.
+    generar_documento.py fuerza esos dos PNG a la MISMA caja (ancho y
+    alto) en el Word para que se vean parejos -- pero al no tener la
+    misma proporción de origen, uno de los dos se estiraba de forma
+    no uniforme y el círculo de la torta quedaba ovalado (bug encontrado
+    en producción, 22/07/2026). Sin el recorte, dos figuras con el mismo
+    figsize/dpi producen SIEMPRE el mismo tamaño de PNG en píxeles, así
+    que forzarlas a la misma caja en Word ya no deforma nada."""
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=150, facecolor='white')
+    plt.close(fig); buf.seek(0)
+    return buf
 def grafico_torta(gT, gN, gTd):
     fig, ax = plt.subplots(figsize=(7,4), facecolor='white')
     valores=[gT,gN,gTd]; total=gT+gN+gTd
@@ -182,7 +200,7 @@ def _grafico_torta_dos(valor_a, etiqueta_a, valor_b, etiqueta_b, color_a, color_
         autopct=lambda v: f"{v:.1f}%".replace(".", ",") if total > 0 else "",
         startangle=90, pctdistance=0.75, wedgeprops=dict(edgecolor='white', linewidth=2))
     ax.set_title(titulo, fontsize=11, fontweight='bold', pad=12)
-    fig.tight_layout(); return fig_to_bytes(fig)
+    fig.tight_layout(); return fig_to_bytes_canvas_fijo(fig)
 
 def grafico_consolidado_impoexpo(impo, expo):
     return _grafico_torta_dos(impo, "Importación", expo, "Exportación", C_TRANS, C_TARDIO,
