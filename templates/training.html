@@ -515,7 +515,7 @@ textarea{resize:vertical;min-height:60px;font-family:var(--sans);font-size:.85re
           <div class="form-row">
             <div><label>Nota (opcional)</label><input type="text" id="peso-nota" placeholder="ej: dolor en el hombro, dormí mal, etc."></div>
           </div>
-          <button class="btn btn-primary" onclick="guardarPeso()">Guardar</button>
+          <button class="btn btn-primary" id="peso-guardar-btn" onclick="guardarPeso()">Guardar</button>
           <div id="peso-guardar-msg" style="margin-top:.5rem;font-size:.82rem"></div>
         </div>
 
@@ -1528,7 +1528,25 @@ function _fechaLocalISO(d) {
   const hoy = _fechaLocalISO();
   if (fp && !fp.value) fp.value = hoy;
   if (fw && !fw.value) fw.value = hoy;
+  if (fp) fp.addEventListener('change', _precargarBienestarDelDia);
 })();
+
+let _pesoRowsCache = {};
+function _precargarBienestarDelDia() {
+  // Si la fecha elegida ya tiene datos cargados, los muestra en el
+  // formulario en vez de dejarlo en blanco -- así se ve qué falta
+  // completar y se evita mandar campos vacíos que ahora el backend trata
+  // como "sin cambios" (COALESCE), pudiendo dar una falsa sensación de
+  // que el campo quedó vacío cuando en realidad conserva lo anterior.
+  const fecha = document.getElementById('peso-fecha').value;
+  const r = _pesoRowsCache[fecha];
+  document.getElementById('peso-sensacion').value = r && r.sensacion != null ? r.sensacion : '';
+  document.getElementById('peso-energia').value = r && r.energia != null ? r.energia : '';
+  document.getElementById('peso-animo').value = r && r.animo != null ? r.animo : '';
+  document.getElementById('peso-estres').value = r && r.estres != null ? r.estres : '';
+  document.getElementById('peso-motivacion').value = r && r.motivacion != null ? r.motivacion : '';
+  document.getElementById('peso-nota').value = r && r.nota ? r.nota : '';
+}
 
 function guardarPeso() {
   const fecha = document.getElementById('peso-fecha').value;
@@ -1539,7 +1557,9 @@ function guardarPeso() {
   const motivacion = document.getElementById('peso-motivacion').value;
   const nota = document.getElementById('peso-nota').value;
   const msg = document.getElementById('peso-guardar-msg');
+  const btn = document.getElementById('peso-guardar-btn');
   if (!fecha) { alert('Falta la fecha.'); return; }
+  if (btn) btn.disabled = true;
   if (msg) msg.innerHTML = '<span style="color:var(--muted)">Guardando...</span>';
   fetch('/api/training/peso', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -1557,12 +1577,6 @@ function guardarPeso() {
       else alert('Error: ' + d.error);
       return;
     }
-    document.getElementById('peso-nota').value = '';
-    document.getElementById('peso-sensacion').value = '';
-    document.getElementById('peso-energia').value = '';
-    document.getElementById('peso-animo').value = '';
-    document.getElementById('peso-estres').value = '';
-    document.getElementById('peso-motivacion').value = '';
     if (msg) {
       msg.innerHTML = '<span style="color:var(--success,#16a34a)">✓ Guardado.</span>';
       setTimeout(() => { msg.innerHTML = ''; }, 4000);
@@ -1570,13 +1584,22 @@ function guardarPeso() {
     cargarPeso();
   }).catch(() => {
     if (msg) msg.innerHTML = '<span style="color:var(--danger)">Error de conexión, probá de nuevo.</span>';
+  }).finally(() => {
+    if (btn) btn.disabled = false;
   });
 }
 
 function cargarPeso() {
   fetch('/api/training/peso?dias=30').then(r => r.json()).then(d => {
     const el = document.getElementById('peso-lista');
-    if (!d.ok || !d.rows.length) { el.innerHTML = '<p style="color:var(--muted);font-size:.82rem">Sin registros todavía.</p>'; return; }
+    if (!d.ok || !d.rows.length) {
+      el.innerHTML = '<p style="color:var(--muted);font-size:.82rem">Sin registros todavía.</p>';
+      _pesoRowsCache = {};
+      _precargarBienestarDelDia();
+      return;
+    }
+    _pesoRowsCache = Object.fromEntries(d.rows.map(r => [r.fecha, r]));
+    _precargarBienestarDelDia();
     const num = v => (v || v === 0) ? `${v}/5` : '—';
     el.innerHTML = `<table class="data-table"><thead><tr><th>Fecha</th><th>Peso</th><th>Sensación</th>` +
       `<th>Energía</th><th>Ánimo</th><th>Estrés</th><th>Motivación</th><th>Nota</th></tr></thead><tbody>` +
