@@ -29,6 +29,8 @@ from blueprints.vua import vua_bp
 app.register_blueprint(vua_bp)
 from blueprints.senasa import senasa_bp
 app.register_blueprint(senasa_bp)
+from blueprints.pad_acuatico import pad_acuatico_bp
+app.register_blueprint(pad_acuatico_bp)
 from blueprints.finanzas import finanzas_bp
 app.register_blueprint(finanzas_bp)
 
@@ -879,11 +881,40 @@ def init_historial():
             ]
             con.executemany("INSERT INTO senasa_ejes (nombre, descripcion, estado, orden) VALUES (?,?,?,?)", ejes_seed)
 
+        # ── Tablas PAD ACUÁTICO ──────────────────────────────────────────────────
+        # Mismo esquema que senasa_cronologia/senasa_ejes/senasa_minutas
+        # (Cronología, Ejes, Minutas) + vua_glosario (Glosario). Repositorio
+        # es genérico (doc_repositorio, ya creada arriba) -- no necesita
+        # tabla propia, solo que "pad_acuatico" esté en MODULOS_REPOSITORIO
+        # (ver core.py).
+        con.execute("""CREATE TABLE IF NOT EXISTS pad_acuatico_cronologia (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha TEXT, actividad TEXT, participantes TEXT,
+            estado TEXT DEFAULT 'Pendiente', orden INTEGER DEFAULT 0,
+            creado TEXT DEFAULT (datetime('now')), modificado TEXT DEFAULT (datetime('now'))
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS pad_acuatico_ejes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT, descripcion TEXT, estado TEXT DEFAULT 'Pendiente',
+            orden INTEGER DEFAULT 0
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS pad_acuatico_minutas (
+            id TEXT PRIMARY KEY, fecha TEXT, asunto TEXT, lugar TEXT,
+            participantes TEXT, temas TEXT, conclusiones TEXT,
+            compromisos TEXT, proximos TEXT, archivo TEXT,
+            creado_por TEXT, creado TEXT DEFAULT (datetime('now'))
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS pad_acuatico_glosario (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            termino TEXT, definicion TEXT, categoria TEXT DEFAULT 'general',
+            orden INTEGER DEFAULT 0
+        )""")
+
 def _migrar_fechas_cronologia():
     """Normaliza fechas ya guardadas en otros formatos (aaaa-mm-dd, aaaa/mm/dd, etc.)
     al estándar único dd/mm/aaaa."""
     with get_db(HIST_DB) as con:
-        for tabla in ("vua_cronologia", "senasa_cronologia"):
+        for tabla in ("vua_cronologia", "senasa_cronologia", "pad_acuatico_cronologia"):
             rows = con.execute(f"SELECT id, fecha FROM {tabla}").fetchall()
             for rid, fecha in rows:
                 if not _validar_fecha_ddmmaaaa(fecha):

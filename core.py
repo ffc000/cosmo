@@ -531,8 +531,8 @@ def job_get(job_id):
 
 # ── Repositorio de documentos (contexto extra para prompts de IA) ───────────
 # Compartido por vua/senasa/sintia.
-MODULOS_REPOSITORIO = ("vua", "senasa", "sintia")
-MODULOS_CON_CRONOLOGIA = {"vua": "vua_cronologia", "senasa": "senasa_cronologia"}
+MODULOS_REPOSITORIO = ("vua", "senasa", "sintia", "pad_acuatico")
+MODULOS_CON_CRONOLOGIA = {"vua": "vua_cronologia", "senasa": "senasa_cronologia", "pad_acuatico": "pad_acuatico_cronologia"}
 
 def get_api_key():
     return os.environ.get("ANTHROPIC_API_KEY", "")
