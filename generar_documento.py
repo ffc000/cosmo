@@ -40,8 +40,8 @@ from generar_utils import PAISES, PAISES_CONSOLIDADO, fmt, pct, pct_f, n, pl, pe
 from generar_graficos import (grafico_torta, grafico_barras_apiladas, grafico_lineas_pct,
     grafico_rechazos_cat, grafico_rechazos_mes, grafico_comparativo_meses, MPL_OK,
     grafico_consolidado_pais, grafico_consolidado_impoexpo, grafico_consolidado_cargado_lastre,
-    grafico_consolidado_aduana, grafico_consolidado_var_control, grafico_comparacion_interanual,
-    grafico_controles_por_tipo)
+    grafico_consolidado_aduana, grafico_consolidado_var_control, grafico_consolidado_tipo_operacion,
+    grafico_comparacion_interanual, grafico_controles_por_tipo)
 from generar_ia import calcular_frases, limpiar_salida_ia
 from generar_queries import calcular_totales
 
@@ -1128,9 +1128,11 @@ def _variable_control_dominante(por_var_control, total, umbral_pct=60.0):
 
 
 def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_aduana,
-                               por_var_control, comparacion_anual, carpeta, log_fn, por_tipo_control=None):
+                               por_var_control, comparacion_anual, carpeta, log_fn, por_tipo_control=None,
+                               por_tipo_operacion=None):
     periodo = _periodo_texto_fechas(fecha_d, fecha_h)
     nombre_archivo = f"Informe_SINTIA_Consolidado_{fecha_d}_{fecha_h}_v{version}.docx"
+    por_tipo_operacion = por_tipo_operacion or []
     total = n(totales.get("TOTAL", 0)); impo = n(totales.get("IMPO", 0)); expo = n(totales.get("EXPO", 0))
     cargado = n(totales.get("CARGADO", 0)); lastre = n(totales.get("LASTRE", 0))
 
@@ -1143,6 +1145,7 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
             ("cargalast",  lambda: grafico_consolidado_cargado_lastre(cargado, lastre)),
             ("aduana",     lambda: grafico_consolidado_aduana(por_aduana)),
             ("varcontrol", lambda: grafico_consolidado_var_control(por_var_control)),
+            ("tipoop",     lambda: grafico_consolidado_tipo_operacion(por_tipo_operacion)),
             ("controles", lambda: grafico_controles_por_tipo(_agregar_controles_por_tipo(por_tipo_control))),
             ("interanual", lambda: grafico_comparacion_interanual(comparacion_anual)),
         ]:
@@ -1192,7 +1195,8 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
         (1, "3.  Cargado vs. Lastre"),
         (1, "4.  Operaciones por aduana"),
         (1, "5.  Operaciones por variable de control"),
-    ] + ([(1, "6.  Comparación interanual (meses cerrados)")] if comparacion_anual else []) + [
+        (1, "6.  Operaciones por tipo de operación"),
+    ] + ([(1, "7.  Comparación interanual (meses cerrados)")] if comparacion_anual else []) + [
         (1, "Anexo — Glosario de siglas"),
     ])
 
@@ -1311,13 +1315,27 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
               fmt(r.get("CANT_OPERACIONES", 0))] for r in filas_ordenadas],
             col_widths=[4.5, 3.5, 3, 3])
         if "controles" in graficos: insertar_grafico(doc, graficos["controles"])
+    doc.add_page_break()
 
-    # 6. Comparación interanual (condicional -- solo si hay al menos un mes
+    # 6. Tipo de operación
+    _heading_indexado(doc, "6.  Operaciones por tipo de operación", 1, 7)
+    sin_dato_op = next((n(r.get("TOTAL", 0)) for r in por_tipo_operacion if r["TIPO_OPERACION"] == "SIN DATO"), 0)
+    doc.add_paragraph(
+        f"Se identificaron {len(por_tipo_operacion)} "
+        f"{pl(len(por_tipo_operacion), 'tipo de operación distinto', 'tipos de operación distintos')} en el período."
+        + (f" {fmt(sin_dato_op)} {pl(sin_dato_op, 'operación', 'operaciones')} ({pct(sin_dato_op, total)}) no "
+           f"{pl(sin_dato_op, 'tiene', 'tienen')} tipo de operación registrado." if sin_dato_op else ""))
+    agregar_tabla_word(doc, ["TIPO DE OPERACIÓN", "TOTAL", "%"],
+        [[r["TIPO_OPERACION"], fmt(r.get("TOTAL", 0)), pct(r.get("TOTAL", 0), total)] for r in por_tipo_operacion],
+        col_widths=[7, 2.5, 2])
+    if "tipoop" in graficos: insertar_grafico(doc, graficos["tipoop"])
+
+    # 7. Comparación interanual (condicional -- solo si hay al menos un mes
     # cerrado del año en curso para comparar; ver comparacion_anual_meses_completos)
-    indice_anexo = 7
+    indice_anexo = 8
     if comparacion_anual:
         doc.add_page_break()
-        _heading_indexado(doc, "6.  Comparación interanual (meses cerrados)", 1, 7)
+        _heading_indexado(doc, "7.  Comparación interanual (meses cerrados)", 1, 8)
         anio_act = comparacion_anual[0]["anio_actual"]; anio_ant = comparacion_anual[0]["anio_anterior"]
         doc.add_paragraph(
             f"Comparación mes a mes entre {anio_act} y {anio_ant}, considerando únicamente los meses "
@@ -1331,7 +1349,7 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
              for r in comparacion_anual],
             col_widths=[4, 3, 3, 3])
         if "interanual" in graficos: insertar_grafico(doc, graficos["interanual"], width_cm=11)
-        indice_anexo = 8
+        indice_anexo = 9
 
     # Anexo — Glosario (mismo que el informe SINTIA estándar)
     doc.add_page_break()
@@ -1362,7 +1380,8 @@ def _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_
 
 
 def _generar_excel_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_aduana,
-                                por_var_control, comparacion_anual, carpeta, log_fn, por_tipo_control=None):
+                                por_var_control, comparacion_anual, carpeta, log_fn, por_tipo_control=None,
+                                por_tipo_operacion=None):
     wb = openpyxl.Workbook(); wb.remove(wb.active)
     HDR_FILL = PatternFill("solid", fgColor="1F3864"); HDR_FONT = Font(bold=True, color="FFFFFF", size=10)
     ALT_FILL = PatternFill("solid", fgColor="EEF2F7"); NORM_FONT = Font(size=10)
@@ -1427,6 +1446,9 @@ def _generar_excel_consolidado(fecha_d, fecha_h, version, totales, por_pais, por
          for r in por_aduana])
     add_sheet("Por Variable de Control", ["Variable de Control", "Total", "%"],
         [[r["VAR_CONTROL"], n(r.get("TOTAL", 0)), pct(r.get("TOTAL", 0), total)] for r in por_var_control])
+    if por_tipo_operacion:
+        add_sheet("Por Tipo de Operación", ["Tipo de Operación", "Total", "%"],
+            [[r["TIPO_OPERACION"], n(r.get("TOTAL", 0)), pct(r.get("TOTAL", 0), total)] for r in por_tipo_operacion])
 
     if por_tipo_control:
         filas_ordenadas = sorted(por_tipo_control, key=lambda r: (r.get("DIRA_NOMBRE", ""), r.get("ADUANA_NOMBRE", ""), r["CODIGO"]))

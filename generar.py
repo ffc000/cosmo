@@ -237,7 +237,7 @@ def generar_informe_consolidado(ruta_db, fecha_d, fecha_h, carpeta, log_fn, hist
     version = 1
     while os.path.exists(os.path.join(carpeta, f"{nombre_base}_v{version}.docx")): version += 1
 
-    totales, por_pais, por_aduana, por_var_control, comparacion_anual, por_tipo_control = correr_queries_consolidado(
+    totales, por_pais, por_aduana, por_var_control, comparacion_anual, por_tipo_control, por_tipo_operacion = correr_queries_consolidado(
         ruta_db, fecha_d, fecha_h, log_fn, hist_db=hist_db)
 
     log_fn("Generando archivos...")
@@ -245,12 +245,12 @@ def generar_informe_consolidado(ruta_db, fecha_d, fecha_h, carpeta, log_fn, hist
     if DOCX_OK and generar_word:
         ruta = _generar_word_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_aduana,
                                           por_var_control, comparacion_anual, carpeta, log_fn,
-                                          por_tipo_control=por_tipo_control)
+                                          por_tipo_control=por_tipo_control, por_tipo_operacion=por_tipo_operacion)
         archivos.append(ruta)
     if XLSX_OK and generar_excel:
         ruta = _generar_excel_consolidado(fecha_d, fecha_h, version, totales, por_pais, por_aduana,
                                            por_var_control, comparacion_anual, carpeta, log_fn,
-                                           por_tipo_control=por_tipo_control)
+                                           por_tipo_control=por_tipo_control, por_tipo_operacion=por_tipo_operacion)
         archivos.append(ruta)
     log_fn(f"✓ Proceso completado — {len(archivos)} archivo(s) listos para descargar")
     return archivos

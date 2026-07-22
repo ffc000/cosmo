@@ -159,7 +159,7 @@ def calcular_totales(totales):
 # de las tablas DAT_<año> involucradas en vez de operar sobre una sola tabla.
 
 _COLUMNAS_CONSOLIDADO = ["MIC", "FECHA_INGRESO_ISO", "CARGADO", "TIPO_REGISTRO", "ADUANA", "VAR_CONTROL",
-                         "ULT_ESTADO", "FECHA_ULT_INT", "CONTROLES"]
+                         "ULT_ESTADO", "FECHA_ULT_INT", "CONTROLES", "TIPO_OPERACION"]
 
 # Mismo criterio que _FECHA_ULT_INT_ISO en app.py (informe "Aduanas del
 # país") -- duplicado a propósito acá para no crear una dependencia de
@@ -283,11 +283,12 @@ def correr_queries_consolidado(ruta_db, fecha_d, fecha_h, log_fn, hist_db=None):
     ref_aduanas/ref_dira). Si no se pasa (ej. tests, o si esa base no está
     disponible), por_aduana queda solo con el código -- no rompe.
 
-    Devuelve (totales, por_pais, por_aduana, por_var_control, comparacion_anual, por_tipo_control):
+    Devuelve (totales, por_pais, por_aduana, por_var_control, comparacion_anual, por_tipo_control, por_tipo_operacion):
       totales: dict con TOTAL, IMPO, EXPO, CARGADO, LASTRE (agregado general)
-      por_pais / por_aduana / por_var_control: listas de dicts, mismo shape
-      que totales pero agrupadas (por_var_control solo trae TOTAL, no tiene
-      sentido desglosar impo/expo/cargado/lastre otra vez ahí).
+      por_pais / por_aduana / por_var_control / por_tipo_operacion: listas de
+      dicts, mismo shape que totales pero agrupadas (por_var_control y
+      por_tipo_operacion solo traen TOTAL, no tiene sentido desglosar
+      impo/expo/cargado/lastre otra vez ahí).
       comparacion_anual: ver comparacion_anual_meses_completos() -- año
       actual vs año anterior, mes a mes, solo meses ya terminados. No
       depende de fecha_d/fecha_h, es siempre "a hoy".
@@ -364,6 +365,13 @@ def correr_queries_consolidado(ruta_db, fecha_d, fecha_h, log_fn, hist_db=None):
             GROUP BY COALESCE(NULLIF(TRIM(VAR_CONTROL),''),'SIN VARIABLE DE CONTROL') ORDER BY TOTAL DESC
         """, params)
 
+        por_tipo_operacion = q(f"""
+            SELECT COALESCE(NULLIF(TRIM(TIPO_OPERACION),''),'SIN DATO') AS TIPO_OPERACION,
+                COUNT(*) AS TOTAL
+            FROM {origen} {where}
+            GROUP BY COALESCE(NULLIF(TRIM(TIPO_OPERACION),''),'SIN DATO') ORDER BY TOTAL DESC
+        """, params)
+
         # Controles por tipo, ABIERTO POR ADUANA (Fase 13, 20/07/2026 --
         # corregido: la primera versión lo agregaba a nivel general, sin
         # discriminar aduana, distinto del informe "Aduanas del país" que
@@ -424,4 +432,4 @@ def correr_queries_consolidado(ruta_db, fecha_d, fecha_h, log_fn, hist_db=None):
         r["DIRA_NOMBRE"] = cat_diras.get(dira_indice, "Sin DIRA asignada") if dira_indice else "Sin DIRA asignada"
 
     log_fn("✓ Queries completadas")
-    return totales, por_pais, por_aduana, por_var_control, comparacion_anual, por_tipo_control
+    return totales, por_pais, por_aduana, por_var_control, comparacion_anual, por_tipo_control, por_tipo_operacion

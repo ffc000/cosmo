@@ -236,6 +236,12 @@ def grafico_consolidado_var_control(por_var_control, top=15):
     titulo = f"Operaciones por variable de control (top {min(top, len(por_var_control))})"
     return _grafico_barras_horiz_top(por_var_control, "VAR_CONTROL", top, C_TARDIO, titulo)
 
+def grafico_consolidado_tipo_operacion(por_tipo_operacion, top=15):
+    """Mismo helper genérico que grafico_consolidado_var_control, para la
+    columna TIPO_OPERACION (a pedido, 22/07/2026)."""
+    titulo = f"Operaciones por tipo de operación (top {min(top, len(por_tipo_operacion))})"
+    return _grafico_barras_horiz_top(por_tipo_operacion, "TIPO_OPERACION", top, C_TRANS, titulo)
+
 def grafico_controles_por_tipo(por_tipo_control):
     """Cantidad de operaciones con cada tipo de control (ver ref_controles
     en /admin). Mismo helper genérico que grafico_consolidado_var_control,

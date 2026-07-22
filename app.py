@@ -2981,6 +2981,7 @@ def _calcular_opciones_dat(tabla):
             "est_mic": _distinct("EST_MIC"),
             "ult_estado": _distinct("ULT_ESTADO"),
             "var_control": _distinct("VAR_CONTROL"),
+            "tipo_operacion": _distinct("TIPO_OPERACION"),
         }
 
 
@@ -3262,6 +3263,8 @@ def sintia_dat_query():
         conditions.append("ULT_ESTADO = ?");        params.append(p["ult_estado"])
     if p.get("var_control"):
         conditions.append("VAR_CONTROL = ?");       params.append(p["var_control"])
+    if p.get("tipo_operacion"):
+        conditions.append("TIPO_OPERACION = ?");    params.append(p["tipo_operacion"])
     if p.get("novedad"):
         conditions.append("tiene_novedad = ?");     params.append(p["novedad"])
     if p.get("controles"):
@@ -3406,6 +3409,7 @@ def sintia_dat_export():
     if p.get("est"):     conditions.append("EST_MIC = ?");            params.append(p["est"])
     if p.get("ult_estado"): conditions.append("ULT_ESTADO = ?");      params.append(p["ult_estado"])
     if p.get("var_control"): conditions.append("VAR_CONTROL = ?");    params.append(p["var_control"])
+    if p.get("tipo_operacion"): conditions.append("TIPO_OPERACION = ?"); params.append(p["tipo_operacion"])
     if p.get("novedad"): conditions.append("tiene_novedad = ?");      params.append(p["novedad"])
     if p.get("controles"):
         conditions.append("CONTROLES LIKE ?");       params.append(f"{p['controles']}%")
@@ -3724,6 +3728,60 @@ def _controles_por_aduana_nacional(anio, dira_filtro=None):
     return filas
 
 
+def _tipo_operacion_nacional(anio, dira_filtro=None):
+    """Cantidad de operaciones por TIPO_OPERACION a nivel nacional (a
+    pedido, 22/07/2026) -- mismo criterio de resolución de tabla/año que
+    _aduanas_nacional_datos/_controles_por_aduana_nacional, pero sin
+    catálogo (TIPO_OPERACION no tiene una tabla de referencia editable
+    como ref_controles, se agrupa directo por el valor que trae el dato).
+
+    dira_filtro: si se pasa, se filtra a las aduanas de esa DIRA (mismo
+    mecanismo que _controles_por_aduana_nacional -- sin JOIN posible entre
+    DB_PATH y HIST_DB, se resuelve trayendo los códigos de aduana de esa
+    DIRA y filtrando con ADUANA IN (...) en Python/SQL).
+
+    Devuelve una lista de dicts: tipo_operacion, cantidad, pct (sobre el
+    total filtrado). Si la columna no existe en la tabla del año pedido
+    (años viejos sin este campo), devuelve []  -- no rompe el resto del
+    informe por esto solo (mismo criterio que el resto de las columnas
+    "nuevas" de este informe)."""
+    if not os.path.exists(DB_PATH):
+        raise ValueError("BD no cargada.")
+    tabla, _anio_desc = _resolver_from_dat(anio)
+
+    aduanas_dira = _aduanas_codigos_de_dira(dira_filtro) if dira_filtro else None
+    if dira_filtro and not aduanas_dira:
+        return []
+
+    with get_db(DB_PATH, row_factory=True) as con:
+        if not tabla.startswith("("):
+            existe = con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (tabla,)).fetchone()
+            if not existe:
+                raise ValueError(f"Tabla {tabla} no encontrada.")
+        where, params = "", ()
+        if aduanas_dira:
+            placeholders = ",".join("?" * len(aduanas_dira))
+            where = f"WHERE ADUANA IN ({placeholders})"
+            params = tuple(aduanas_dira)
+        try:
+            rows = [dict(r) for r in con.execute(f"""
+                SELECT COALESCE(NULLIF(TRIM(TIPO_OPERACION),''),'SIN DATO') AS TIPO_OPERACION,
+                    COUNT(*) AS CANTIDAD
+                FROM {tabla} {where}
+                GROUP BY COALESCE(NULLIF(TRIM(TIPO_OPERACION),''),'SIN DATO') ORDER BY CANTIDAD DESC
+            """, params).fetchall()]
+        except sqlite3.OperationalError as e:
+            if "no such column" in str(e).lower():
+                return []
+            raise
+
+    total = sum(r["CANTIDAD"] for r in rows)
+    for r in rows:
+        r["PCT"] = round(100 * r["CANTIDAD"] / total, 1) if total else 0.0
+    return rows
+
+
 def _aduanas_codigos_de_dira(dira_filtro):
     """Códigos de aduana (ref_aduanas.cod) que pertenecen a una DIRA -- para
     filtrar DAT_<año> por DIRA sin poder hacer JOIN entre bases (ver nota en
@@ -4025,6 +4083,22 @@ def _verificar_narrativa_aduanas(texto, indicadores, log_fn):
                f"valores, o un número mal citado por la IA — no se pudo distinguir automáticamente).")
 
 
+def _grafico_tipo_operacion_nacional(tipo_operacion):
+    """Gráfico de barras horizontales por tipo de operación -- reusa el
+    generador genérico del informe consolidado (mismo estilo visual),
+    solo remapea CANTIDAD -> TOTAL (nombre de campo que espera esa
+    función, ver grafico_consolidado_var_control en generar_graficos.py)."""
+    try:
+        from generar_graficos import grafico_consolidado_tipo_operacion
+    except ImportError:
+        return None
+    filas = [{"TIPO_OPERACION": t["TIPO_OPERACION"], "TOTAL": t["CANTIDAD"]} for t in tipo_operacion]
+    try:
+        return grafico_consolidado_tipo_operacion(filas)
+    except Exception:
+        return None
+
+
 def _grafico_evolucion_aduana(nombre_aduana, meses_cols, valores_dias, valores_operaciones=None):
     """Gráfico combinado para una aduana puntual: línea de demora (horas,
     eje izquierdo, igual criterio que el gráfico en pantalla) + barras de
@@ -4095,7 +4169,7 @@ def _grafico_evolucion_aduana(nombre_aduana, meses_cols, valores_dias, valores_o
 
 def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicadores, filas, evolucion,
                                    narrativa, evolucion_por_aduana=None, meses_cols=None, job_id="",
-                                   controles_por_aduana=None):
+                                   controles_por_aduana=None, tipo_operacion=None):
     """Arma el Word del informe de Aduanas del País: filtros, indicadores,
     análisis IA, evolución mensual, y detalle por aduana. No reusa
     actas.generar_acta_word() -- esa está pensada para minutas de reunión
@@ -4167,7 +4241,7 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
     doc.add_page_break()
 
     secciones_aduanas = [(1, "1.  Indicadores"), (1, "2.  Análisis")]
-    idx_evol = idx_detalle = idx_controles = None
+    idx_evol = idx_detalle = idx_controles = idx_tipo_op = None
     _idx_aduanas = 3
     if evolucion:
         idx_evol = _idx_aduanas; secciones_aduanas.append((1, "3.  Evolución mensual")); _idx_aduanas += 1
@@ -4175,6 +4249,8 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
         idx_detalle = _idx_aduanas; secciones_aduanas.append((1, "4.  Detalle por aduana")); _idx_aduanas += 1
     if controles_por_aduana:
         idx_controles = _idx_aduanas; secciones_aduanas.append((1, "5.  Operaciones de control")); _idx_aduanas += 1
+    if tipo_operacion:
+        idx_tipo_op = _idx_aduanas; secciones_aduanas.append((1, "6.  Tipo de operación")); _idx_aduanas += 1
     _insertar_indice(doc, secciones_aduanas)
 
     _heading_indexado(doc, "1.  Indicadores", 1, 1)
@@ -4219,6 +4295,24 @@ def _generar_word_informe_aduanas(anio, dira_nombre, umbral_alerta_dias, indicad
             [[c["aduana_nombre"], c["tipo_control"], fmt(c["cantidad_controles"]),
               fmt(c["cantidad_operaciones"])] for c in controles_por_aduana],
             col_widths=[4.5, 3.5, 3.5, 3.5])
+
+    if tipo_operacion:
+        _heading_indexado(doc, "6.  Tipo de operación", 1, idx_tipo_op)
+        sin_dato_op = next((t["CANTIDAD"] for t in tipo_operacion if t["TIPO_OPERACION"] == "SIN DATO"), 0)
+        total_op = sum(t["CANTIDAD"] for t in tipo_operacion)
+        doc.add_paragraph(
+            f"Se identificaron {len(tipo_operacion)} "
+            f"{'tipo de operación distinto' if len(tipo_operacion) == 1 else 'tipos de operación distintos'} "
+            f"en {dira_nombre.lower() if dira_nombre != 'Todo el país' else 'todo el país'} durante el período."
+            + (f" {fmt(sin_dato_op)} de {fmt(total_op)} operaciones no tienen tipo de operación registrado."
+               if sin_dato_op else ""))
+        agregar_tabla_word(doc, ["Tipo de operación", "Cantidad", "%"],
+            [[t["TIPO_OPERACION"], fmt(t["CANTIDAD"]), f"{t['PCT']}%".replace(".", ",")] for t in tipo_operacion],
+            col_widths=[7, 4, 3])
+        img_tipo_op = _grafico_tipo_operacion_nacional(tipo_operacion)
+        if img_tipo_op:
+            p_img = doc.add_paragraph(); p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p_img.add_run().add_picture(img_tipo_op, width=Cm(13))
 
     # ── Evolución mensual de cada aduana en alerta (tabla + gráfico) ──────
     # Al final del documento, a propósito: es el detalle más fino de todos
@@ -4301,6 +4395,9 @@ def _job_informe_aduanas_nacional(job_id, anio, dira_filtro, umbral_alerta_dias,
         log.append("Calculando controles por tipo...")
         controles_por_aduana = _controles_por_aduana_nacional(anio, dira_filtro)
 
+        log.append("Calculando tipos de operación...")
+        tipo_operacion = _tipo_operacion_nacional(anio, dira_filtro)
+
         # Word se genera siempre -- es la única fuente posible para este
         # informe (no hay versión Excel) y para el PDF (que se convierte a
         # partir de este archivo). Si el usuario solo pidió PDF, igual se
@@ -4308,7 +4405,8 @@ def _job_informe_aduanas_nacional(job_id, anio, dira_filtro, umbral_alerta_dias,
         log.append("Armando Word...")
         doc = _generar_word_informe_aduanas(
             anio, dira_nombre, umbral_alerta_dias, indicadores, filas, evolucion, narrativa,
-            evolucion_por_aduana, meses_cols, job_id=job_id, controles_por_aduana=controles_por_aduana)
+            evolucion_por_aduana, meses_cols, job_id=job_id, controles_por_aduana=controles_por_aduana,
+            tipo_operacion=tipo_operacion)
         os.makedirs(OUTPUT_FOLDER, exist_ok=True)
         fname = f"Informe_Aduanas_Pais_{anio}_{job_id}.docx"
         ruta = os.path.join(OUTPUT_FOLDER, fname)
