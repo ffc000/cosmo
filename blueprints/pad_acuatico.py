@@ -279,12 +279,14 @@ def pad_acuatico_glosario_delete(gid):
 @modulo_required("pad_acuatico")
 def pad_acuatico_informe():
     """Genera el informe Pad Acuático en background — misma arquitectura
-    que VUA/SENASA. A diferencia de SENASA (que tiene "compromisos
-    pendientes"), acá no hay tabla de acuerdos, así que en su lugar el
-    informe incluye el glosario."""
+    de job que VUA/SENASA, y mismo formato visual que los informes SINTIA
+    (portada compuesta, índice, encabezado/pie institucional, fuente
+    unificada -- ver generar_documento.py) a pedido, 22/07/2026. A
+    diferencia de SENASA (que tiene "compromisos pendientes"), acá no hay
+    tabla de acuerdos, así que en su lugar el informe incluye el
+    glosario."""
     with get_db(HIST_DB, row_factory=True) as con:
         datos = {
-            "modulo": "Pad Acuático",
             "cronologia": [dict(r) for r in con.execute("SELECT * FROM pad_acuatico_cronologia ORDER BY orden").fetchall()],
             "ejes":       [dict(r) for r in con.execute("SELECT * FROM pad_acuatico_ejes ORDER BY orden").fetchall()],
             "minutas":    [dict(r) for r in con.execute("SELECT * FROM pad_acuatico_minutas ORDER BY creado DESC LIMIT 10").fetchall()],
@@ -297,22 +299,128 @@ def pad_acuatico_informe():
         log = job_status[jid]["log"]
         try:
             from docx import Document as DocxDoc
+            from docx.shared import Cm, Pt, RGBColor
+            from docx.enum.text import WD_ALIGN_PARAGRAPH
+            from generar_documento import (
+                _unificar_fuente_documento, _agregar_encabezado, _agregar_pie_pagina,
+                _ocultar_encabezado_portada, _generar_portada_compuesta,
+                _agregar_imagen_portada_ajustada, _insertar_indice, _heading_indexado,
+                agregar_tabla_word, kpi_box,
+            )
+            from generar_utils import pl
+
+            ejes, cronologia, minutas, glosario = datos["ejes"], datos["cronologia"], datos["minutas"], datos["glosario"]
+            hoy = datetime.today().strftime("%d/%m/%Y")
+
             doc = DocxDoc()
-            doc.add_heading("Informe de Avance — Pad Acuático / ARCA", 0)
-            doc.add_heading("Ejes de trabajo", 1)
-            for e in datos["ejes"]:
-                doc.add_heading(e["nombre"], 2)
-                if e.get("descripcion"): doc.add_paragraph(e["descripcion"])
-                doc.add_paragraph(f"Estado: {e['estado']}")
-            doc.add_heading("Cronología de reuniones", 1)
-            for c in datos["cronologia"]:
-                doc.add_paragraph(f"{c['fecha']} — {c['actividad']} ({c['estado']})", style="List Bullet")
-            if datos["glosario"]:
-                doc.add_heading("Glosario", 1)
-                for g in datos["glosario"]:
+            _unificar_fuente_documento(doc)
+            for section in doc.sections:
+                section.top_margin = Cm(2.5); section.bottom_margin = Cm(2.5)
+                section.left_margin = Cm(3); section.right_margin = Cm(2.5)
+            _agregar_encabezado(doc, "Dirección de Reingeniería de Procesos Aduaneros")
+            _agregar_pie_pagina(doc, "Informe de Avance — Pad Acuático")
+            _ocultar_encabezado_portada(doc)
+
+            # Portada
+            imagen_portada = _generar_portada_compuesta(
+                titulo="INFORME DE AVANCE — PAD ACUÁTICO",
+                subtitulo=f"Actualizado al {hoy}",
+                meta_lineas=[
+                    "Dirección de Reingeniería de Procesos Aduaneros (DG ADUA)",
+                    f"Última modificación: {hoy}",
+                    "Elaborado por: Sección Simplificación de Procesos Operativos — DI REPA",
+                ])
+            if imagen_portada:
+                _agregar_imagen_portada_ajustada(doc, imagen_portada)
+            else:
+                titulo = doc.add_heading("INFORME DE AVANCE — PAD ACUÁTICO", 0)
+                titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                for txt, sz in [("Dirección de Reingeniería de Procesos Aduaneros (DG ADUA)", 12),
+                                 (f"Actualizado al {hoy}", 11)]:
+                    p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    run = p.add_run(txt); run.font.size = Pt(sz); run.font.color.rgb = RGBColor(0x40, 0x40, 0x40)
+                doc.add_paragraph()
+                dest = doc.add_paragraph(); dest.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                dest.add_run("Elaborado por: ").bold = True
+                dest.add_run("Sección Simplificación de Procesos Operativos — DI REPA")
+            doc.add_page_break()
+
+            # Índice -- Ejes y Cronología son fijos (1. y 2.); Minutas y
+            # Glosario son condicionales y su número depende de qué haya
+            # antes, así que se arman con un contador en vez de hardcodear
+            # "3."/"4." (a diferencia del patrón de generar_documento.py,
+            # que sí hardcodea porque ahí la mayoría de las secciones son
+            # opcionales y no vale la pena calcularlo bien).
+            secciones = [(1, "Resumen Ejecutivo"), (1, "1.  Ejes de trabajo"), (1, "2.  Cronología de reuniones")]
+            num = 2  # último número fijo usado (2. Cronología) -- el primer condicional es num+1 = 3.
+            idx_doc = 4  # posición secuencial para _heading_indexado (bookmarks); ver mismo criterio en generar_documento.py
+            idx_minutas = idx_glosario = None
+            num_minutas = num_glosario = None
+            if minutas:
+                num += 1; num_minutas = num
+                secciones.append((1, f"{num}.  Minutas generadas")); idx_minutas = idx_doc; idx_doc += 1
+            if glosario:
+                num += 1; num_glosario = num
+                secciones.append((1, f"{num}.  Glosario")); idx_glosario = idx_doc; idx_doc += 1
+            _insertar_indice(doc, secciones)
+
+            # Resumen ejecutivo
+            _heading_indexado(doc, "Resumen Ejecutivo", 1, 1)
+            doc.add_paragraph(
+                "El presente informe resume el estado de avance del proyecto Pad Acuático al "
+                f"{hoy}: ejes de trabajo definidos, cronología de reuniones realizadas y "
+                "pendientes, minutas generadas y glosario de términos del proyecto.")
+            en_curso = sum(1 for e in ejes if "curso" in e.get("estado", "").lower() or "análisis" in e.get("estado", "").lower() or "diseño" in e.get("estado", "").lower())
+            completados = sum(1 for e in ejes if "completado" in e.get("estado", "").lower())
+            pendientes_crono = sum(1 for c in cronologia if c.get("estado") == "Pendiente")
+            kpi_box(doc, [
+                ("EJES DE TRABAJO", str(len(ejes)), f"{completados} completados, {en_curso} en curso"),
+                ("REUNIONES", str(len(cronologia)), f"{pendientes_crono} pendientes"),
+                ("MINUTAS GENERADAS", str(len(minutas)), ""),
+                ("TÉRMINOS EN GLOSARIO", str(len(glosario)), ""),
+            ])
+            doc.add_page_break()
+
+            # 1. Ejes de trabajo
+            _heading_indexado(doc, "1.  Ejes de trabajo", 1, 2)
+            if ejes:
+                doc.add_paragraph(f"Se relevaron {len(ejes)} {pl(len(ejes), 'eje de trabajo', 'ejes de trabajo')} del proyecto.")
+                for e in ejes:
+                    p = doc.add_paragraph(); p.add_run(e["nombre"]).bold = True
+                    if e.get("descripcion"): doc.add_paragraph(e["descripcion"])
+                    ep = doc.add_paragraph(); ep.add_run("Estado: ").bold = True; ep.add_run(e["estado"])
+            else:
+                doc.add_paragraph("Todavía no hay ejes de trabajo cargados.")
+            doc.add_page_break()
+
+            # 2. Cronología de reuniones
+            _heading_indexado(doc, "2.  Cronología de reuniones", 1, 3)
+            if cronologia:
+                doc.add_paragraph(f"Se registraron {len(cronologia)} {pl(len(cronologia), 'evento', 'eventos')} en la cronología del proyecto.")
+                agregar_tabla_word(doc, ["FECHA", "ACTIVIDAD", "PARTICIPANTES", "ESTADO"],
+                    [[c["fecha"], c["actividad"], c.get("participantes", ""), c["estado"]] for c in cronologia],
+                    col_widths=[2.2, 6.5, 4.5, 2.3])
+            else:
+                doc.add_paragraph("Todavía no hay entradas en la cronología.")
+
+            # 3. Minutas generadas
+            if minutas:
+                doc.add_page_break()
+                _heading_indexado(doc, f"{num_minutas}.  Minutas generadas", 1, idx_minutas)
+                doc.add_paragraph(f"Últimas {len(minutas)} {pl(len(minutas), 'minuta generada', 'minutas generadas')} para el proyecto.")
+                agregar_tabla_word(doc, ["FECHA", "ASUNTO", "LUGAR", "GENERADA POR"],
+                    [[m["fecha"], m["asunto"], m.get("lugar", ""), m.get("creado_por", "")] for m in minutas],
+                    col_widths=[2.2, 6.5, 4, 2.8])
+
+            # 4. Glosario
+            if glosario:
+                doc.add_page_break()
+                _heading_indexado(doc, f"{num_glosario}.  Glosario", 1, idx_glosario)
+                for g in glosario:
                     p = doc.add_paragraph(style="List Bullet")
                     p.add_run(g["termino"] + ": ").bold = True
                     p.add_run(g["definicion"])
+
             os.makedirs(OUTPUT_FOLDER, exist_ok=True)
             fname = f"Informe_PadAcuatico_{datetime.today().strftime('%Y%m%d_%H%M')}_{jid}.docx"
             dest  = os.path.join(OUTPUT_FOLDER, fname)
