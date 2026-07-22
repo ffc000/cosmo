@@ -30,6 +30,7 @@ import logging
 from datetime import datetime, date
 
 from flask import request, jsonify, session
+from werkzeug.utils import secure_filename
 
 from core import HIST_DB, login_required, modulo_required, get_db, notificar_telegram
 from blueprints.training import training_bp, _api_key
@@ -190,7 +191,12 @@ def api_antro_parsear():
         return jsonify({"ok": False, "error": "Tiene que ser un PDF."}), 400
 
     os.makedirs(ANTRO_DIR, exist_ok=True)
-    nombre = f"{uuid.uuid4().hex[:12]}_{f.filename}"
+    # secure_filename() saca separadores de ruta, "..", y caracteres raros
+    # del nombre original -- sin esto, un filename armado a mano (ej.
+    # "../../../../algo.pdf") podía escribir fuera de ANTRO_DIR (mismo bug
+    # que ya se había corregido en app.py para /api/repositorio, no
+    # replicado acá; encontrado en auditoría, 22/07/2026).
+    nombre = f"{uuid.uuid4().hex[:12]}_{secure_filename(f.filename) or 'informe.pdf'}"
     ruta = os.path.join(ANTRO_DIR, nombre)
     f.save(ruta)
 

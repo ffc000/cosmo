@@ -959,13 +959,20 @@ def _sync_worker(job_id: str, user: str, modo: str, semana_offset: int = 0):
         _sync_status[job_id]["total"] = total
         nuevas = 0
 
+        # Antes: una conexión SQLite + un SELECT por actividad, adentro del
+        # loop -- con el histórico completo (potencialmente miles de
+        # actividades, paginado de a 100 más arriba) esto abre y cierra
+        # miles de conexiones solo para chequear existencia. Trayendo los
+        # IDs ya guardados una sola vez, el chequeo por actividad queda en
+        # memoria (encontrado en auditoría, 22/07/2026).
+        with get_db(HIST_DB) as con:
+            ids_existentes = {r[0] for r in con.execute("SELECT id FROM garmin_actividades").fetchall()}
+
         for i, act in enumerate(actividades):
             act_id = str(act.get("activityId", ""))
             _sync_status[job_id]["progreso"] = i + 1
 
-            with get_db(HIST_DB) as con:
-                existe = con.execute("SELECT 1 FROM garmin_actividades WHERE id=?", (act_id,)).fetchone()
-            if existe:
+            if act_id in ids_existentes:
                 continue
 
             datos = _parsear_actividad(act)
@@ -982,6 +989,7 @@ def _sync_worker(job_id: str, user: str, modo: str, semana_offset: int = 0):
                 _sync_status[job_id]["errores"].append(f"FIT {act_id}: {e}")
 
             guardar_actividad(datos)
+            ids_existentes.add(act_id)
             nuevas += 1
             _sync_status[job_id]["nuevas"] = nuevas
 
