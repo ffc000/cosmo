@@ -345,13 +345,14 @@ threading.Thread(target=_chequear_acuerdos_vencidos, daemon=True).start()
 @login_required
 @modulo_required("senasa")
 def senasa_informe():
-    """Genera el informe SENASA en background — misma arquitectura que VUA."""
+    """Genera el informe SENASA en background — misma arquitectura de job
+    que VUA/Pad Acuático, y mismo formato visual que los informes SINTIA/
+    Pad Acuático (portada compuesta, índice, encabezado/pie institucional,
+    fuente unificada -- ver generar_documento.py) a pedido, 22/07/2026."""
     with get_db(HIST_DB, row_factory=True) as con:
         datos = {
-            "modulo": "SENASA",
             "cronologia": [dict(r) for r in con.execute("SELECT * FROM senasa_cronologia ORDER BY orden").fetchall()],
             "ejes":       [dict(r) for r in con.execute("SELECT * FROM senasa_ejes ORDER BY orden").fetchall()],
-            "minutas":    [dict(r) for r in con.execute("SELECT * FROM senasa_minutas ORDER BY creado DESC LIMIT 10").fetchall()],
             "acuerdos":   [dict(r) for r in con.execute("SELECT * FROM senasa_acuerdos ORDER BY estado, orden").fetchall()],
         }
     job_id = str(uuid.uuid4())[:8]
@@ -360,22 +361,110 @@ def senasa_informe():
     def _run(jid, datos):
         log = job_status[jid]["log"]
         try:
-            # Generar Word con python-docx (sin Node para SENASA)
             from docx import Document as DocxDoc
+            from docx.shared import Cm, Pt, RGBColor
+            from docx.enum.text import WD_ALIGN_PARAGRAPH
+            from generar_documento import (
+                _unificar_fuente_documento, _agregar_encabezado, _agregar_pie_pagina,
+                _ocultar_encabezado_portada, _generar_portada_compuesta,
+                _agregar_imagen_portada_ajustada, _insertar_indice, _heading_indexado,
+                agregar_tabla_word, kpi_box,
+            )
+            from generar_utils import pl
+
+            ejes, cronologia, acuerdos = datos["ejes"], datos["cronologia"], datos["acuerdos"]
+            pendientes = [a for a in acuerdos if a["estado"] != "Completado"]
+            hoy = datetime.today().strftime("%d/%m/%Y")
+
             doc = DocxDoc()
-            doc.add_heading("Informe de Avance — Integración SENASA / ARCA", 0)
-            doc.add_heading("Ejes de trabajo", 1)
-            for e in datos["ejes"]:
-                doc.add_heading(e["nombre"], 2)
-                if e.get("descripcion"): doc.add_paragraph(e["descripcion"])
-                doc.add_paragraph(f"Estado: {e['estado']}")
-            doc.add_heading("Cronología de reuniones", 1)
-            for c in datos["cronologia"]:
-                doc.add_paragraph(f"{c['fecha']} — {c['actividad']} ({c['estado']})", style="List Bullet")
-            doc.add_heading("Compromisos pendientes", 1)
-            for a in datos["acuerdos"]:
-                if a["estado"] != "Completado":
-                    doc.add_paragraph(f"{a['descripcion']} | {a.get('responsable','')} | {a.get('fecha_compromiso','')}", style="List Bullet")
+            _unificar_fuente_documento(doc)
+            for section in doc.sections:
+                section.top_margin = Cm(2.5); section.bottom_margin = Cm(2.5)
+                section.left_margin = Cm(3); section.right_margin = Cm(2.5)
+            _agregar_encabezado(doc, "Dirección de Reingeniería de Procesos Aduaneros")
+            _agregar_pie_pagina(doc, "Informe de Avance — Integración SENASA")
+            _ocultar_encabezado_portada(doc)
+
+            # Portada
+            imagen_portada = _generar_portada_compuesta(
+                titulo="INFORME DE AVANCE — INTEGRACIÓN SENASA",
+                subtitulo=f"Actualizado al {hoy}",
+                meta_lineas=[
+                    "Dirección de Reingeniería de Procesos Aduaneros (DG ADUA)",
+                    f"Última modificación: {hoy}",
+                    "Elaborado por: Sección Simplificación de Procesos Operativos — DI REPA",
+                ])
+            if imagen_portada:
+                _agregar_imagen_portada_ajustada(doc, imagen_portada)
+            else:
+                titulo = doc.add_heading("INFORME DE AVANCE — INTEGRACIÓN SENASA", 0)
+                titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                for txt, sz in [("Dirección de Reingeniería de Procesos Aduaneros (DG ADUA)", 12),
+                                 (f"Actualizado al {hoy}", 11)]:
+                    p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    run = p.add_run(txt); run.font.size = Pt(sz); run.font.color.rgb = RGBColor(0x40, 0x40, 0x40)
+                doc.add_paragraph()
+                dest = doc.add_paragraph(); dest.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                dest.add_run("Elaborado por: ").bold = True
+                dest.add_run("Sección Simplificación de Procesos Operativos — DI REPA")
+            doc.add_page_break()
+
+            # Índice -- Ejes y Cronología son fijos (1. y 2.); Compromisos
+            # pendientes es condicional (mismo criterio de contador que en
+            # pad_acuatico.py, no hardcodeado).
+            secciones = [(1, "Resumen Ejecutivo"), (1, "1.  Ejes de trabajo"), (1, "2.  Cronología de reuniones")]
+            idx_compromisos = None
+            if pendientes:
+                secciones.append((1, "3.  Compromisos pendientes")); idx_compromisos = 4
+            _insertar_indice(doc, secciones)
+
+            # Resumen ejecutivo
+            _heading_indexado(doc, "Resumen Ejecutivo", 1, 1)
+            doc.add_paragraph(
+                "El presente informe resume el estado de avance de la integración PAD / SIG-Embalajes "
+                f"con SENASA al {hoy}: ejes de trabajo definidos, cronología de reuniones realizadas y "
+                "pendientes, y compromisos asumidos que todavía siguen abiertos.")
+            en_curso = sum(1 for e in ejes if "curso" in e.get("estado", "").lower() or "análisis" in e.get("estado", "").lower() or "diseño" in e.get("estado", "").lower())
+            completados = sum(1 for e in ejes if "completado" in e.get("estado", "").lower())
+            pendientes_crono = sum(1 for c in cronologia if c.get("estado") == "Pendiente")
+            kpi_box(doc, [
+                ("EJES DE TRABAJO", str(len(ejes)), f"{completados} completados, {en_curso} en curso"),
+                ("REUNIONES", str(len(cronologia)), f"{pendientes_crono} pendientes"),
+                ("COMPROMISOS", str(len(acuerdos)), f"{len(pendientes)} pendientes"),
+            ])
+            doc.add_page_break()
+
+            # 1. Ejes de trabajo
+            _heading_indexado(doc, "1.  Ejes de trabajo", 1, 2)
+            if ejes:
+                doc.add_paragraph(f"Se relevaron {len(ejes)} {pl(len(ejes), 'eje de trabajo', 'ejes de trabajo')} de la integración.")
+                for e in ejes:
+                    p = doc.add_paragraph(); p.add_run(e["nombre"]).bold = True
+                    if e.get("descripcion"): doc.add_paragraph(e["descripcion"])
+                    ep = doc.add_paragraph(); ep.add_run("Estado: ").bold = True; ep.add_run(e["estado"])
+            else:
+                doc.add_paragraph("Todavía no hay ejes de trabajo cargados.")
+            doc.add_page_break()
+
+            # 2. Cronología de reuniones
+            _heading_indexado(doc, "2.  Cronología de reuniones", 1, 3)
+            if cronologia:
+                doc.add_paragraph(f"Se registraron {len(cronologia)} {pl(len(cronologia), 'evento', 'eventos')} en la cronología.")
+                agregar_tabla_word(doc, ["FECHA", "ACTIVIDAD", "PARTICIPANTES", "ESTADO"],
+                    [[c["fecha"], c["actividad"], c.get("participantes", ""), c["estado"]] for c in cronologia],
+                    col_widths=[2.2, 6.5, 4.5, 2.3])
+            else:
+                doc.add_paragraph("Todavía no hay entradas en la cronología.")
+
+            # 3. Compromisos pendientes
+            if pendientes:
+                doc.add_page_break()
+                _heading_indexado(doc, "3.  Compromisos pendientes", 1, idx_compromisos)
+                doc.add_paragraph(f"{len(pendientes)} de {len(acuerdos)} {pl(len(acuerdos), 'compromiso', 'compromisos')} todavía sin cerrar.")
+                agregar_tabla_word(doc, ["DESCRIPCIÓN", "RESPONSABLE", "FECHA COMPROMISO", "ESTADO"],
+                    [[a["descripcion"], a.get("responsable", ""), a.get("fecha_compromiso", ""), a["estado"]] for a in pendientes],
+                    col_widths=[6.5, 3.5, 3, 2.5])
+
             os.makedirs(OUTPUT_FOLDER, exist_ok=True)
             fname = f"Informe_SENASA_{datetime.today().strftime('%Y%m%d_%H%M')}_{jid}.docx"
             dest  = os.path.join(OUTPUT_FOLDER, fname)
