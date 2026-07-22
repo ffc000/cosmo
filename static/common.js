@@ -62,6 +62,21 @@ function escHtml(s) {
   }[c]));
 }
 
+// fechaLocalISO: fecha de HOY (o de la Date que se le pase) en formato
+// YYYY-MM-DD usando componentes LOCALES, sin pasar por UTC. Necesaria
+// porque `new Date().toISOString()` convierte a UTC -- en Argentina
+// (UTC-3), de noche eso corre la fecha un día para adelante (ej. 21:00
+// ART = 00:00 UTC del día siguiente). Antes este bug se corregía a mano,
+// copiado y pegado con nombres distintos, en algunos lugares sueltos
+// (stock.html, training.html) pero no en todos -- mismo problema que el
+// interceptor de CSRF de arriba: cada arreglo local no viajaba al resto
+// de las plantillas.
+function fechaLocalISO(d) {
+  d = d || new Date();
+  const yyyy = d.getFullYear(), mm = String(d.getMonth() + 1).padStart(2, '0'), dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 // abrirModal/cerrarModal: togglean la clase 'visible' de un .modal-overlay.
 // También estaban duplicadas letra por letra en varias plantillas.
 function abrirModal(id) {
