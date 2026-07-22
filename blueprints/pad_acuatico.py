@@ -17,6 +17,8 @@ patrón que senasa.py.
 import os
 import json
 import uuid
+import logging
+import threading
 
 from actas import generar_acta_word
 from datetime import datetime
@@ -24,8 +26,9 @@ from datetime import datetime
 from flask import Blueprint, request, jsonify, render_template, session, send_file
 
 from core import (
-    HIST_DB, login_required, modulo_required,
-    get_api_key, contexto_repositorio,
+    HIST_DB, OUTPUT_FOLDER, login_required, modulo_required,
+    get_api_key, contexto_repositorio, notificar_telegram,
+    job_status, job_create, job_get, _job_persist,
     _normalizar_fecha_a_ddmmaaaa, _validar_fecha_ddmmaaaa,
     validar_enum, ESTADOS_TAREA, get_db,
 )
@@ -269,3 +272,79 @@ def pad_acuatico_glosario_delete(gid):
     with get_db(HIST_DB) as con:
         con.execute("DELETE FROM pad_acuatico_glosario WHERE id=?", (gid,))
     return jsonify({"ok": True})
+
+# ── Informe (async) ───────────────────────────────────────────────────────────
+@pad_acuatico_bp.route("/api/pad_acuatico/informe")
+@login_required
+@modulo_required("pad_acuatico")
+def pad_acuatico_informe():
+    """Genera el informe Pad Acuático en background — misma arquitectura
+    que VUA/SENASA. A diferencia de SENASA (que tiene "compromisos
+    pendientes"), acá no hay tabla de acuerdos, así que en su lugar el
+    informe incluye el glosario."""
+    with get_db(HIST_DB, row_factory=True) as con:
+        datos = {
+            "modulo": "Pad Acuático",
+            "cronologia": [dict(r) for r in con.execute("SELECT * FROM pad_acuatico_cronologia ORDER BY orden").fetchall()],
+            "ejes":       [dict(r) for r in con.execute("SELECT * FROM pad_acuatico_ejes ORDER BY orden").fetchall()],
+            "minutas":    [dict(r) for r in con.execute("SELECT * FROM pad_acuatico_minutas ORDER BY creado DESC LIMIT 10").fetchall()],
+            "glosario":   [dict(r) for r in con.execute("SELECT * FROM pad_acuatico_glosario ORDER BY orden, termino").fetchall()],
+        }
+    job_id = str(uuid.uuid4())[:8]
+    job_create(job_id, "Generando informe Pad Acuático...", username=session.get("username", "?"))
+
+    def _run(jid, datos):
+        log = job_status[jid]["log"]
+        try:
+            from docx import Document as DocxDoc
+            doc = DocxDoc()
+            doc.add_heading("Informe de Avance — Pad Acuático / ARCA", 0)
+            doc.add_heading("Ejes de trabajo", 1)
+            for e in datos["ejes"]:
+                doc.add_heading(e["nombre"], 2)
+                if e.get("descripcion"): doc.add_paragraph(e["descripcion"])
+                doc.add_paragraph(f"Estado: {e['estado']}")
+            doc.add_heading("Cronología de reuniones", 1)
+            for c in datos["cronologia"]:
+                doc.add_paragraph(f"{c['fecha']} — {c['actividad']} ({c['estado']})", style="List Bullet")
+            if datos["glosario"]:
+                doc.add_heading("Glosario", 1)
+                for g in datos["glosario"]:
+                    p = doc.add_paragraph(style="List Bullet")
+                    p.add_run(g["termino"] + ": ").bold = True
+                    p.add_run(g["definicion"])
+            os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+            fname = f"Informe_PadAcuatico_{datetime.today().strftime('%Y%m%d_%H%M')}_{jid}.docx"
+            dest  = os.path.join(OUTPUT_FOLDER, fname)
+            doc.save(dest)
+            job_status[jid]["files"] = [dest]
+            log.append(f"✓ Informe generado: {fname}")
+            job_status[jid]["status"] = "done"
+            _job_persist(jid)
+            notificar_telegram(f"✓ Informe Pad Acuático listo ({job_status[jid].get('username','?')})")
+        except Exception as e:
+            log.append(f"✗ {e}")
+            job_status[jid]["status"] = "error"
+            _job_persist(jid)
+            notificar_telegram(f"⚠️ Informe Pad Acuático falló ({job_status[jid].get('username','?')}): {e}")
+
+    threading.Thread(target=_run, args=(job_id, datos)).start()
+    return jsonify({"ok": True, "job_id": job_id})
+
+@pad_acuatico_bp.route("/api/pad_acuatico/informe/download/<job_id>")
+@login_required
+@modulo_required("pad_acuatico")
+def pad_acuatico_informe_download(job_id):
+    import re, glob
+    job = job_get(job_id)
+    if job and job.get("status") == "done" and job.get("files") and os.path.exists(job["files"][0]):
+        return send_file(job["files"][0], as_attachment=True,
+            download_name=os.path.basename(job["files"][0]),
+            mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    if not re.match(r'^[a-zA-Z0-9]{1,32}$', job_id or ""):
+        return jsonify({"ok": False, "error": "job_id inválido"}), 400
+    archivos = sorted(glob.glob(os.path.join(OUTPUT_FOLDER, f"*{job_id}*.docx")), key=os.path.getmtime, reverse=True)
+    if archivos:
+        return send_file(archivos[0], as_attachment=True, download_name=os.path.basename(archivos[0]),
+            mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    return jsonify({"ok": False, "error": "Informe no encontrado"}), 404
