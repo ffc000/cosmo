@@ -642,9 +642,12 @@ def api_training_peso_guardar():
             VALUES (?,?,?,?,?,?,?,?)
             ON CONFLICT(fecha) DO UPDATE SET
                 peso_kg=COALESCE(excluded.peso_kg, entrenamiento_peso.peso_kg),
-                sensacion=excluded.sensacion, nota=excluded.nota,
-                energia=excluded.energia, animo=excluded.animo,
-                estres=excluded.estres, motivacion=excluded.motivacion
+                sensacion=COALESCE(excluded.sensacion, entrenamiento_peso.sensacion),
+                energia=COALESCE(excluded.energia, entrenamiento_peso.energia),
+                animo=COALESCE(excluded.animo, entrenamiento_peso.animo),
+                estres=COALESCE(excluded.estres, entrenamiento_peso.estres),
+                motivacion=COALESCE(excluded.motivacion, entrenamiento_peso.motivacion),
+                nota=CASE WHEN excluded.nota != '' THEN excluded.nota ELSE entrenamiento_peso.nota END
         """, (fecha, peso_kg, sensacion, nota, energia, animo, estres, motivacion))
     return jsonify({"ok": True})
 
