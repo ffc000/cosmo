@@ -547,7 +547,15 @@ async function cargarCronologia() {
   });
 }
 
-function esc(s) { return (s||'').replace(/'/g,"\\'").replace(/\n/g,' '); }
+// esc(): para insertar texto libre dentro de un onclick="..."; escapa \ y '
+// para que la cadena JS de comillas simples no se corte, y " como &quot;
+// (entidad HTML, no \") porque el navegador decodifica el VALOR del
+// atributo -- delimitado por comillas DOBLES -- antes de que el JS lo
+// parsee. Sin esto, una comilla doble en el texto (ej. en "participantes"
+// o "actividad") cortaba el atributo onclick y permitía inyectar HTML/JS
+// (encontrado en auditoría, 22/07/2026 -- antes solo se escapaba la
+// comilla simple, protegiendo la cadena JS pero no el atributo HTML).
+function esc(s) { return (s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;').replace(/\n/g,' '); }
 
 function abrirModalCrono() {
   document.getElementById('crono-edit-id').value = '';

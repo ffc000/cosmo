@@ -736,6 +736,17 @@ function generarMinuta(){
 // entre todas las plantillas — antes era una copia local idéntica acá).
 const esc = escHtml;
 
+// escOnclickAttr(): para insertar texto libre dentro de un onclick="...".
+// Distinta de esc()/escHtml() de arriba (esas son para texto HTML visible,
+// no para atributos). Escapa \ y ' para que la cadena JS de comillas
+// simples no se corte, y " como &quot; porque el navegador decodifica el
+// VALOR del atributo -- delimitado por comillas DOBLES -- antes de que el
+// JS lo parsee. Antes (en setCorreo/setNorm más abajo) solo se escapaba la
+// comilla simple: una comilla doble en la instrucción o la pregunta
+// cortaba el atributo onclick y permitía inyectar HTML/JS (encontrado en
+// auditoría, 22/07/2026).
+function escOnclickAttr(s) { return (s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;').replace(/\n/g,' '); }
+
 // ── Correos ──
 function setCorreo(t){document.getElementById('correo-instruccion').value=t}
 function generarCorreo(){
@@ -800,8 +811,8 @@ function loadCronologia(){
     items.forEach(item=>{
       html+=`<tr data-id="${item.id}">
         <td style="font-family:var(--mono);font-size:.72rem;white-space:nowrap"><span class="editable" onclick="editarCampo(this,'fecha',${item.id})">${item.fecha}</span></td>
-        <td style="min-width:200px"><span class="editable" onclick="editarCampo(this,'actividad',${item.id})">${item.actividad}</span></td>
-        <td class="col-hide" style="font-size:.75rem;color:var(--muted)"><span class="editable" onclick="editarCampo(this,'participantes',${item.id})">${item.participantes||''}</span></td>
+        <td style="min-width:200px"><span class="editable" onclick="editarCampo(this,'actividad',${item.id})">${escHtml(item.actividad)}</span></td>
+        <td class="col-hide" style="font-size:.75rem;color:var(--muted)"><span class="editable" onclick="editarCampo(this,'participantes',${item.id})">${escHtml(item.participantes||'')}</span></td>
         <td><select class="inline-input" style="width:auto;padding:.2rem .5rem;font-size:.72rem" onchange="actualizarEstado(${item.id},this.value)">
           <option ${item.estado==='Completado'?'selected':''}>Completado</option>
           <option ${item.estado==='En curso'?'selected':''}>En curso</option>
@@ -1097,7 +1108,7 @@ function loadRiesgos(){
 function loadCorreosRapidos(){
   fetch('/api/vua/correos_rapidos').then(r=>r.json()).then(data=>{
     const el=document.getElementById('correos-rapidos-container');if(!el)return;
-    el.innerHTML=(data.rows||[]).map(c=>`<button class="btn btn-outline btn-sm" onclick="setCorreo('${c.instruccion.replace(/'/g,"\\'")}')">${esc(c.etiqueta)}</button>`).join('');
+    el.innerHTML=(data.rows||[]).map(c=>`<button class="btn btn-outline btn-sm" onclick="setCorreo('${escOnclickAttr(c.instruccion)}')">${esc(c.etiqueta)}</button>`).join('');
   });
 }
 
@@ -1109,7 +1120,7 @@ function loadNormativaInfo(){
     const rows=data.rows||[];if(!rows.length){el.innerHTML='';return}
     el.innerHTML=rows.map(c=>{
       const label=esc(c.pregunta.length>60?c.pregunta.slice(0,60)+'…':c.pregunta);
-      return `<button class="btn btn-outline btn-sm" onclick="setNorm('${c.pregunta.replace(/'/g,"\\'")}')">${label}</button>`;
+      return `<button class="btn btn-outline btn-sm" onclick="setNorm('${escOnclickAttr(c.pregunta)}')">${label}</button>`;
     }).join('');
   });
 }

@@ -2277,7 +2277,11 @@ function renderCalSemana() {
 // Stub para que Claude chat siga funcionando
 async function cargarSemanas() { cargarCalendario(); }
 
-function esc(s) { return (s||'').replace(/'/g,"\\'").replace(/\n/g,' '); }
+// esc(): para insertar texto libre dentro de un onclick="..."; ver
+// explicación completa en senasa.html -- corrige que antes una comilla
+// doble en el texto (ej. en "nombre" o "nota_real") cortaba el atributo
+// onclick y permitía inyectar HTML/JS (encontrado en auditoría, 22/07/2026).
+function esc(s) { return (s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;').replace(/\n/g,' '); }
 // escHtml() ahora vive en common.js (compartida entre todas las plantillas).
 
 function editarSesion(id, desc, notas, dia, turno, fechaInicio) {

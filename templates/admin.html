@@ -1299,7 +1299,7 @@ function loadFeriados(){
     let html = '<table style="width:100%;border-collapse:collapse;font-size:.82rem">';
     html += '<thead><tr><th style="text-align:left;padding:.4rem .6rem">Fecha</th><th style="text-align:left;padding:.4rem .6rem">Descripción</th><th style="width:70px"></th></tr></thead><tbody>';
     data.rows.forEach(f=>{
-      html += `<tr><td style="padding:.4rem .6rem;font-family:var(--mono)">${f.fecha}</td><td style="padding:.4rem .6rem">${f.descripcion||'—'}</td>` +
+      html += `<tr><td style="padding:.4rem .6rem;font-family:var(--mono)">${escHtml(f.fecha)}</td><td style="padding:.4rem .6rem">${escHtml(f.descripcion||'—')}</td>` +
               `<td style="padding:.4rem .6rem"><button class="btn btn-outline btn-sm" onclick="borrarFeriado('${f.fecha}')">🗑</button></td></tr>`;
     });
     html += '</tbody></table>';
