@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<script src="/static/common.js"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CosmoTools — Pad Acuático</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#F0F4F8;--surface:#FFFFFF;--surface2:#F8FAFC;
+  --sidebar-bg:#1E2A3B;--sidebar-hover:rgba(255,255,255,.06);--sidebar-active:rgba(41,121,200,.15);
+  --border:#E5E7EB;--border-dark:rgba(255,255,255,.08);
+  --accent:#1A56DB;--accent-hover:#1447C0;--accent-light:#EBF5FF;
+  --accent2:#057A55;--accent2-light:#F0FFF4;
+  --warn:#D97706;--warn-light:#FFFBEB;
+  --danger:#DC2626;--danger-light:#FEF2F2;
+  --text:#111928;--text-sub:#374151;--muted:#6B7280;--dim:#9CA3AF;
+  --text-sidebar:#CBD5E1;--text-sidebar-muted:#64748B;
+  --mono:'IBM Plex Mono',monospace;--sans:'IBM Plex Sans',sans-serif;
+  --radius:8px;--radius-sm:4px;
+  --shadow-sm:0 1px 3px rgba(0,0,0,.07);--shadow:0 4px 12px rgba(0,0,0,.08);
+  --sidebar-w:230px;
+}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
+.app{display:flex;flex:1;min-height:0}
+.sidebar{width:var(--sidebar-w);min-width:var(--sidebar-w);background:var(--sidebar-bg);display:flex;flex-direction:column;z-index:50;transition:transform .25s ease}
+.sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:40}
+.sidebar-brand{padding:1.4rem 1.4rem 1rem;border-bottom:1px solid var(--border-dark)}
+.sidebar-brand .name{font-family:var(--mono);font-size:.92rem;font-weight:600;color:#fff}
+.sidebar-brand .sub{font-size:.65rem;color:var(--text-sidebar-muted);margin-top:.2rem}
+.sidebar-nav{flex:1;padding:.6rem 0;overflow-y:auto}
+.nav-section{font-family:var(--mono);font-size:.58rem;color:var(--text-sidebar-muted);letter-spacing:.18em;text-transform:uppercase;padding:.8rem 1.4rem .3rem}
+.nav-item{display:flex;align-items:center;gap:.7rem;padding:.62rem 1.4rem;cursor:pointer;color:var(--text-sidebar-muted);font-size:.82rem;transition:all .15s;border-left:2px solid transparent;user-select:none}
+.nav-item:hover{color:var(--text-sidebar);background:var(--sidebar-hover)}
+.nav-item.active{color:#fff;background:var(--sidebar-active);border-left-color:var(--accent)}
+.nav-icon{font-size:.9rem;width:18px;text-align:center;flex-shrink:0}
+.sidebar-footer{padding:.9rem 1.4rem;border-top:1px solid var(--border-dark)}
+.back-link{font-size:.72rem;color:var(--text-sidebar-muted);text-decoration:none;display:block;margin-bottom:.4rem;transition:color .15s}
+.back-link:hover{color:var(--text-sidebar)}
+.logout{font-size:.72rem;color:var(--text-sidebar-muted);text-decoration:none}
+.logout:hover{color:var(--text-sidebar)}
+.main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.topbar{background:var(--surface);border-bottom:1px solid var(--border);padding:.75rem 1.75rem;display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-shrink:0;box-shadow:var(--shadow-sm)}
+.topbar-left{display:flex;align-items:center;gap:.75rem}
+.hamburger{display:none;background:none;border:none;color:var(--muted);font-size:1.3rem;cursor:pointer;padding:.25rem;line-height:1;min-width:36px}
+.hamburger:hover{color:var(--text)}
+.topbar-title{font-family:var(--mono);font-size:.78rem;color:var(--accent);letter-spacing:.08em;font-weight:600}
+.topbar-user{font-family:var(--mono);font-size:.7rem;color:var(--muted)}
+.content{flex:1;padding:1.75rem;overflow-y:auto}
+.panel{display:none}.panel.active{display:block}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;margin-bottom:1.25rem;box-shadow:var(--shadow-sm)}
+.card-title{font-family:var(--mono);font-size:.65rem;color:var(--muted);letter-spacing:.14em;text-transform:uppercase;margin-bottom:.9rem;font-weight:600}
+label{display:block;font-size:.7rem;font-weight:600;color:var(--text-sub);letter-spacing:.05em;text-transform:uppercase;margin-bottom:.3rem}
+input[type=text],input[type=date],select,textarea{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:var(--mono);font-size:.85rem;padding:.55rem .8rem;outline:none;transition:border-color .2s}
+input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(26,86,219,.1)}
+textarea{resize:vertical;min-height:80px;font-family:var(--sans);font-size:.85rem}
+.form-row{display:grid;gap:.9rem;margin-bottom:.9rem}
+.form-row.cols2{grid-template-columns:1fr 1fr}
+.form-row.cols3{grid-template-columns:1fr 1fr 1fr}
+.btn{display:inline-flex;align-items:center;gap:.5rem;border:none;border-radius:var(--radius-sm);cursor:pointer;font-family:var(--sans);font-weight:600;font-size:.85rem;padding:.6rem 1.2rem;transition:all .15s}
+.btn-primary{background:var(--accent);color:#fff}.btn-primary:hover{background:var(--accent-hover)}
+.btn-primary:disabled{background:var(--dim);cursor:not-allowed}
+.btn-outline{background:var(--surface);color:var(--text-sub);border:1px solid var(--border)}.btn-outline:hover{border-color:var(--accent);color:var(--accent)}
+.btn-danger{background:var(--danger-light);color:var(--danger);border:1px solid rgba(220,38,38,.2)}
+.btn-sm{padding:.3rem .75rem;font-size:.75rem}
+.btn-full{width:100%;justify-content:center}
+.alert{padding:.75rem 1rem;border-radius:var(--radius-sm);font-size:.82rem;margin-bottom:.9rem}
+.alert-info{background:var(--accent-light);border:1px solid rgba(26,86,219,.2);color:var(--accent)}
+.alert-ok{background:var(--accent2-light);border:1px solid rgba(5,122,85,.2);color:var(--accent2)}
+.alert-warn{background:var(--warn-light);border:1px solid rgba(217,119,6,.2);color:var(--warn)}
+.data-table{width:100%;border-collapse:collapse;font-size:.8rem}
+.data-table th{font-family:var(--mono);font-size:.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;padding:.5rem .75rem;text-align:left;border-bottom:2px solid var(--border);background:var(--surface2)}
+.data-table td{padding:.55rem .75rem;border-bottom:1px solid var(--border);vertical-align:top;color:var(--text-sub)}
+.data-table tr:hover td{background:var(--bg)}
+.tag{font-family:var(--mono);font-size:.62rem;padding:.2rem .5rem;border-radius:20px;display:inline-block;font-weight:600}
+.tag-completado{background:var(--accent2-light);color:var(--accent2);border:1px solid rgba(5,122,85,.2)}
+.tag-pendiente{background:var(--warn-light);color:var(--warn);border:1px solid rgba(217,119,6,.2)}
+.tag-encurso{background:var(--accent-light);color:var(--accent);border:1px solid rgba(26,86,219,.2)}
+.eje-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:1rem 1.25rem;margin-bottom:.6rem;cursor:pointer;transition:all .15s;display:flex;align-items:flex-start;justify-content:space-between;gap:1rem}
+.eje-card:hover{border-color:rgba(26,86,219,.3);background:var(--accent-light)}
+.eje-num{font-family:var(--mono);font-size:.65rem;color:var(--muted);margin-bottom:.25rem}
+.eje-nombre{font-size:.85rem;font-weight:500;color:var(--text);line-height:1.4}
+.eje-desc{font-size:.75rem;color:var(--muted);margin-top:.25rem;line-height:1.45}
+.eje-estado{font-size:.72rem;margin-top:.3rem}
+.participante-row{display:flex;gap:.5rem;align-items:center;margin-bottom:.4rem}
+.participante-row input{flex:1}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:200;display:none;align-items:center;justify-content:center;padding:1rem}
+.modal-overlay.visible{display:flex}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.75rem;width:100%;max-width:560px;max-height:90vh;overflow-y:auto;box-shadow:var(--shadow)}
+.modal h3{font-size:.95rem;font-weight:600;color:var(--text);margin-bottom:1.1rem}
+.modal-actions{display:flex;gap:.6rem;justify-content:flex-end;margin-top:1.25rem}
+.ia-sugerencia{background:var(--accent-light);border:1px solid rgba(26,86,219,.2);border-radius:var(--radius-sm);padding:.9rem;margin-top:.75rem;font-size:.82rem;line-height:1.65;display:none;white-space:pre-wrap}
+.ia-sugerencia.visible{display:block}
+.lista-items{list-style:none;padding:0}
+.lista-items li{display:flex;gap:.5rem;align-items:flex-start;margin-bottom:.4rem}
+.lista-items li input{flex:1}
+.download-btn{display:inline-flex;align-items:center;gap:.4rem;background:var(--accent2-light);border:1px solid rgba(5,122,85,.25);border-radius:var(--radius-sm);color:var(--accent2);font-family:var(--mono);font-size:.72rem;padding:.45rem .9rem;text-decoration:none;transition:all .15s;font-weight:600;cursor:pointer}
+.download-btn:hover{background:#D1FAE5}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{width:13px;height:13px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;display:inline-block}
+.glosario-cat{font-family:var(--mono);font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:.15em;padding:.6rem 0 .3rem;border-bottom:1px solid var(--border);margin-bottom:.5rem}
+.glosario-item{display:flex;gap:.75rem;padding:.6rem 0;border-bottom:1px solid var(--border);align-items:flex-start}
+.glosario-item:last-child{border-bottom:none}
+.glosario-term{font-family:var(--mono);font-size:.78rem;font-weight:600;color:var(--accent);flex-shrink:0;min-width:110px}
+.glosario-def{font-size:.8rem;color:var(--text-sub);line-height:1.5;flex:1}
+@media(max-width:768px){
+  .sidebar{position:fixed;top:0;left:0;bottom:0;transform:translateX(-100%)}
+  .sidebar.open{transform:translateX(0)}
+  .sidebar-overlay.visible{display:block}
+  .hamburger{display:block}
+  .topbar-user{display:none}
+  .content{padding:1.1rem}
+  .form-row.cols2,.form-row.cols3{grid-template-columns:1fr}
+  .data-table{font-size:.73rem}
+  .data-table th,.data-table td{padding:.4rem .5rem}
+  .glosario-term{min-width:80px}
+}
+</style>
+</head>
+<body>
+<div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+<div class="app">
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <div class="name">PAD ACUÁTICO</div>
+      <div class="sub">Proyecto Pad Acuático</div>
+    </div>
+    <nav class="sidebar-nav">
+      {% include '_sidebar_nav.html' %}
+      <div class="nav-section">Proyecto</div>
+      <div class="nav-item active" data-tab="cronologia"><span class="nav-icon">📅</span><span class="nav-label">Cronología</span></div>
+      <div class="nav-item" data-tab="minutas"><span class="nav-icon">📋</span><span class="nav-label">Minutas</span></div>
+      <div class="nav-item" data-tab="ejes"><span class="nav-icon">🎯</span><span class="nav-label">Ejes de trabajo</span></div>
+      <div class="nav-item" data-tab="glosario"><span class="nav-icon">📖</span><span class="nav-label">Glosario</span></div>
+      <div class="nav-section">Gestión</div>
+      <div class="nav-item" data-tab="repositorio"><span class="nav-icon">🗂️</span><span class="nav-label">Repositorio</span></div>
+    </nav>
+    {% include '_sidebar_footer.html' %}
+
+  </div>
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-left">
+        <button class="hamburger" id="hamburger">&#9776;</button>
+        <div class="topbar-title">PAD ACUÁTICO</div>
+      </div>
+      <div class="topbar-user">{{ username }}</div>
+    </div>
+
+    <div class="content">
+
+      <!-- ═══════════ PANEL: CRONOLOGÍA ═══════════ -->
+      <div id="panel-cronologia" class="panel active">
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.9rem">
+            <div class="card-title" style="margin:0">Cronología del proyecto</div>
+            <button class="btn btn-primary btn-sm" onclick="abrirModalCrono()">➕ Agregar</button>
+          </div>
+          <div style="overflow-x:auto">
+            <table class="data-table">
+              <thead><tr><th>Fecha</th><th>Actividad</th><th>Participantes</th><th>Estado</th><th></th></tr></thead>
+              <tbody id="body-crono"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══════════ PANEL: MINUTAS ═══════════ -->
+      <div id="panel-minutas" class="panel">
+        <div class="card">
+          <div class="card-title">Nueva minuta</div>
+          <div class="alert alert-info" style="margin-bottom:1rem">
+            Podés pegar notas de la reunión y usar IA para estructurarlas, o completar el formulario directamente.
+          </div>
+          <!-- Sección IA -->
+          <div style="margin-bottom:1.25rem">
+            <label>Notas de la reunión (para estructurar con IA)</label>
+            <textarea id="notas-ia" rows="5" placeholder="Pegá acá tus notas y la IA va a estructurar la minuta..."></textarea>
+            <button class="btn btn-outline btn-sm" style="margin-top:.5rem" onclick="estructurarConIA()">
+              ✨ Estructurar con IA
+            </button>
+            <div id="ia-resultado" class="ia-sugerencia"></div>
+          </div>
+          <hr style="border:none;border-top:1px solid var(--border);margin-bottom:1.25rem">
+          <!-- Formulario manual -->
+          <div class="form-row cols2">
+            <div><label>Fecha</label><input type="text" id="m-fecha" placeholder="dd/mm/aaaa"></div>
+            <div><label>Lugar</label><input type="text" id="m-lugar" placeholder="Meet / presencial..."></div>
+          </div>
+          <div class="form-row">
+            <div><label>Asunto</label><input type="text" id="m-asunto" placeholder="Ej: Reunión técnica Pad Acuático"></div>
+          </div>
+          <!-- Participantes -->
+          <div style="margin-bottom:.9rem">
+            <label>Participantes</label>
+            <div id="participantes-list">
+              <div class="participante-row">
+                <input type="text" placeholder="Nombre" class="p-nombre">
+                <input type="text" placeholder="Cargo" class="p-cargo">
+                <input type="text" placeholder="Organismo" class="p-org">
+                <button class="btn btn-danger btn-sm" onclick="quitarParticipante(this)">✕</button>
+              </div>
+            </div>
+            <button class="btn btn-outline btn-sm" style="margin-top:.4rem" onclick="agregarParticipante()">+ Participante</button>
+          </div>
+          <!-- Secciones de la minuta -->
+          <div style="margin-bottom:.9rem">
+            <label>Temas tratados</label>
+            <ul class="lista-items" id="lista-temas"><li><input type="text" placeholder="Tema..."><button class="btn btn-danger btn-sm" onclick="quitarItem(this)">✕</button></li></ul>
+            <button class="btn btn-outline btn-sm" onclick="agregarItem('lista-temas')">+ Tema</button>
+          </div>
+          <div style="margin-bottom:.9rem">
+            <label>Principales conclusiones</label>
+            <ul class="lista-items" id="lista-conclusiones"><li><input type="text" placeholder="Conclusión..."><button class="btn btn-danger btn-sm" onclick="quitarItem(this)">✕</button></li></ul>
+            <button class="btn btn-outline btn-sm" onclick="agregarItem('lista-conclusiones')">+ Conclusión</button>
+          </div>
+          <div style="margin-bottom:.9rem">
+            <label>Compromisos asumidos</label>
+            <ul class="lista-items" id="lista-compromisos"><li><input type="text" placeholder="ORGANISMO — compromiso..."><button class="btn btn-danger btn-sm" onclick="quitarItem(this)">✕</button></li></ul>
+            <button class="btn btn-outline btn-sm" onclick="agregarItem('lista-compromisos')">+ Compromiso</button>
+          </div>
+          <div style="margin-bottom:1.25rem">
+            <label>Próximos pasos</label>
+            <ul class="lista-items" id="lista-proximos"><li><input type="text" placeholder="Próximo paso..."><button class="btn btn-danger btn-sm" onclick="quitarItem(this)">✕</button></li></ul>
+            <button class="btn btn-outline btn-sm" onclick="agregarItem('lista-proximos')">+ Paso</button>
+          </div>
+          <button class="btn btn-primary" onclick="generarMinuta()" id="btn-generar">
+            📄 Generar minuta Word
+          </button>
+          <div id="minuta-resultado" style="margin-top:1rem;display:none"></div>
+        </div>
+
+        <!-- Historial de minutas -->
+        <div class="card">
+          <div class="card-title">Minutas generadas</div>
+          <table class="data-table">
+            <thead><tr><th>Fecha</th><th>Asunto</th><th>Lugar</th><th>Generada por</th><th></th></tr></thead>
+            <tbody id="body-minutas"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ═══════════ PANEL: EJES DE TRABAJO ═══════════ -->
+      <div id="panel-ejes" class="panel">
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.9rem">
+            <div class="card-title" style="margin:0">Ejes de trabajo</div>
+            <button class="btn btn-primary btn-sm" onclick="abrirModalEjeNuevo()">➕ Nuevo eje</button>
+          </div>
+          <div id="lista-ejes"></div>
+        </div>
+      </div>
+
+      <!-- ═══════════ PANEL: GLOSARIO ═══════════ -->
+      <div id="panel-glosario" class="panel">
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.9rem;flex-wrap:wrap;gap:.5rem">
+            <div class="card-title" style="margin:0">Glosario del proyecto</div>
+            <div style="display:flex;gap:.5rem;align-items:center">
+              <input type="text" id="glosario-search" placeholder="Buscar..." style="width:160px;padding:.3rem .6rem;font-size:.78rem;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:var(--mono);outline:none">
+              <button class="btn btn-primary btn-sm" onclick="abrirModalGlosario()">➕ Agregar</button>
+            </div>
+          </div>
+          <div id="glosario-content"><div style="color:var(--muted);font-size:.82rem">Cargando...</div></div>
+        </div>
+      </div>
+
+      <!-- ═══════════ PANEL: REPOSITORIO ═══════════ -->
+      <div id="panel-repositorio" class="panel">
+        <div class="card">
+          <div class="card-title">Repositorio de documentos</div>
+          <p style="font-size:.82rem;color:var(--muted);margin-bottom:1rem">
+            Subí informes, antecedentes u otros documentos Word que no forman parte de la estructura fija del módulo.
+            El texto completo de todo lo que subas acá se envía como contexto a la IA en minutas y demás herramientas de Pad Acuático.
+          </p>
+          <div class="form-row">
+            <input type="file" id="repo-archivo" accept=".docx">
+            <button class="btn btn-primary" onclick="subirRepositorio('pad_acuatico')">⬆️ Subir</button>
+          </div>
+          <div id="repo-estado" style="margin-top:.5rem"></div>
+          <div id="repo-lista" style="margin-top:1rem"></div>
+        </div>
+      </div>
+
+    </div><!-- /content -->
+  </div><!-- /main -->
+</div><!-- /app -->
+
+<!-- MODAL CRONOLOGÍA -->
+<div class="modal-overlay" id="modal-crono">
+  <div class="modal">
+    <h3 id="modal-crono-titulo">Nueva entrada en cronología</h3>
+    <input type="hidden" id="crono-edit-id">
+    <div class="form-row cols2">
+      <div><label>Fecha</label><input type="text" id="crono-fecha" placeholder="dd/mm/aaaa o 'A definir'"></div>
+      <div><label>Estado</label>
+        <select id="crono-estado">
+          <option value="Completado">Completado</option>
+          <option value="Pendiente">Pendiente</option>
+          <option value="En curso">En curso</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div><label>Actividad</label><textarea id="crono-actividad" rows="3"></textarea></div>
+    </div>
+    <div class="form-row">
+      <div><label>Participantes</label><input type="text" id="crono-participantes"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="cerrarModal('modal-crono')">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarCrono()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL EJE -->
+<div class="modal-overlay" id="modal-eje">
+  <div class="modal">
+    <h3 id="modal-eje-titulo">Eje de trabajo</h3>
+    <input type="hidden" id="eje-edit-id">
+    <div class="form-row">
+      <div><label>Nombre</label><input type="text" id="eje-nombre"></div>
+    </div>
+    <div class="form-row">
+      <div><label>Descripción</label><textarea id="eje-descripcion" rows="3"></textarea></div>
+    </div>
+    <div class="form-row">
+      <div><label>Estado</label><input type="text" id="eje-estado" placeholder="En análisis, Pendiente, Completado..."></div>
+    </div>
+    <div id="modal-eje-error" style="color:var(--danger);font-size:.78rem;display:none;margin-top:.5rem"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="cerrarModal('modal-eje')">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarEje()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL GLOSARIO -->
+<div class="modal-overlay" id="modal-glosario">
+  <div class="modal">
+    <h3 id="modal-glosario-title">➕ Nuevo término</h3>
+    <input type="hidden" id="mg-id">
+    <div class="form-row cols2">
+      <div><label>Término / Sigla</label><input type="text" id="mg-termino" placeholder="Ej: PAD, IMO..."></div>
+      <div><label>Categoría</label>
+        <select id="mg-categoria">
+          <option value="proyecto">Proyecto</option>
+          <option value="actores">Actores</option>
+          <option value="normativa">Normativa</option>
+          <option value="sistemas">Sistemas</option>
+          <option value="general">General</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div><label>Definición</label><textarea id="mg-definicion" rows="3"></textarea></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline btn-sm" onclick="cerrarModal('modal-glosario')">Cancelar</button>
+      <button class="btn btn-primary btn-sm" onclick="guardarTermino()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Navegación ────────────────────────────────────────────────────────────────
+const sidebar = document.getElementById('sidebar');
+const overlay = document.getElementById('sidebar-overlay');
+document.getElementById('hamburger').addEventListener('click', () => {
+  sidebar.classList.toggle('open'); overlay.classList.toggle('visible');
+});
+overlay.addEventListener('click', () => {
+  sidebar.classList.remove('open'); overlay.classList.remove('visible');
+});
+
+function showTab(name) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item[data-tab]').forEach(i => i.classList.remove('active'));
+  const panel = document.getElementById('panel-' + name);
+  if (panel) panel.classList.add('active');
+  const navItem = document.querySelector(`.nav-item[data-tab="${name}"]`);
+  if (navItem) navItem.classList.add('active');
+  if (name === 'cronologia') cargarCronologia();
+  if (name === 'ejes') cargarEjes();
+  if (name === 'minutas') cargarMinutas();
+  if (name === 'glosario') loadGlosario();
+  if (name === 'repositorio') cargarRepositorio('pad_acuatico');
+}
+document.querySelectorAll('.nav-item[data-tab]').forEach(item => {
+  item.addEventListener('click', () => showTab(item.dataset.tab));
+});
+// Carga inicial (panel activo por default: cronología)
+cargarCronologia();
+
+// esc(): para insertar texto libre dentro de un onclick="..."; escapa \ y '
+// para que la cadena JS de comillas simples no se corte, y " como &quot;
+// (entidad HTML, no \") porque el navegador decodifica el VALOR del
+// atributo -- delimitado por comillas DOBLES -- antes de que el JS lo
+// parsee (mismo helper que ya usan senasa.html/training.html, corregido
+// en auditoría 22/07/2026 para escapar también comillas dobles).
+function esc(s) { return (s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;').replace(/\n/g,' '); }
+
+// ── Repositorio (genérico, compartido con VUA/SENASA/SINTIA) ─────────────────
+function cargarRepositorio(modulo){
+  fetch(`/api/repositorio/${modulo}`).then(r=>r.json()).then(data=>{
+    const el=document.getElementById('repo-lista');if(!el)return;
+    if(!data.ok||!data.rows.length){el.innerHTML='<div style="color:var(--muted);font-size:.82rem">Todavía no se subió ningún documento.</div>';return}
+    el.innerHTML='<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Archivo</th><th>Subido por</th><th>Fecha</th><th></th></tr></thead><tbody>'+
+      data.rows.map(d=>`<tr><td>${escHtml(d.nombre_archivo)}</td><td>${escHtml(d.subido_por)}</td><td style="font-family:var(--mono);font-size:.7rem">${escHtml((d.creado||'').slice(0,16))}</td><td><a href="/api/repositorio/${modulo}/${d.id}/download" class="btn btn-outline btn-sm">⬇️</a> <button class="btn btn-danger btn-sm" onclick="borrarRepositorio('${modulo}',${d.id})">🗑️</button></td></tr>`).join('')+
+      '</tbody></table></div>';
+  });
+}
+function subirRepositorio(modulo){
+  const input=document.getElementById('repo-archivo');
+  const estado=document.getElementById('repo-estado');
+  if(!input.files[0]){estado.innerHTML='<div class="alert alert-warn">Elegí un archivo .docx.</div>';return}
+  const fd=new FormData();fd.append('archivo',input.files[0]);
+  estado.innerHTML='<div class="alert alert-info"><span class="spinner"></span> Subiendo...</div>';
+  fetch(`/api/repositorio/${modulo}`,{method:'POST',body:fd}).then(r=>r.json()).then(d=>{
+    if(!d.ok){estado.innerHTML=`<div class="alert alert-warn">✗ ${escHtml(d.error)}</div>`;return}
+    estado.innerHTML='<div class="alert alert-ok">✓ Documento agregado.'+(d.agregadas_cronologia?` Se sumaron ${d.agregadas_cronologia} hito(s) a la cronología.`:'')+'</div>';
+    input.value='';
+    cargarRepositorio(modulo);
+  }).catch(e=>{estado.innerHTML=`<div class="alert alert-warn">Error: ${escHtml(e.message)}</div>`;});
+}
+function borrarRepositorio(modulo,id){
+  if(!confirm('¿Eliminar este documento del repositorio?'))return;
+  fetch(`/api/repositorio/${modulo}/${id}`,{method:'DELETE'}).then(r=>r.json()).then(d=>{if(d.ok)cargarRepositorio(modulo)});
+}
+
+// ── Cronología ────────────────────────────────────────────────────────────────
+async function cargarCronologia() {
+  const r = await fetch('/api/pad_acuatico/cronologia');
+  const d = await r.json();
+  const body = document.getElementById('body-crono');
+  body.innerHTML = '';
+  (d.rows || []).forEach(row => {
+    const tag = row.estado === 'Completado' ? 'tag-completado' : row.estado === 'En curso' ? 'tag-encurso' : 'tag-pendiente';
+    body.innerHTML += `<tr>
+      <td style="white-space:nowrap;font-family:var(--mono);font-size:.75rem">${escHtml(row.fecha)}</td>
+      <td>${escHtml(row.actividad)}</td>
+      <td style="font-size:.75rem;color:var(--muted)">${escHtml(row.participantes)}</td>
+      <td><span class="tag ${tag}">${escHtml(row.estado)}</span></td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-outline btn-sm" onclick="editarCrono(${row.id},'${esc(row.fecha)}','${esc(row.actividad)}','${esc(row.participantes)}','${esc(row.estado)}')">✏️</button>
+        <button class="btn btn-danger btn-sm" onclick="eliminarCrono(${row.id})">🗑</button>
+      </td>
+    </tr>`;
+  });
+}
+
+function abrirModalCrono() {
+  document.getElementById('crono-edit-id').value = '';
+  document.getElementById('crono-fecha').value = '';
+  document.getElementById('crono-actividad').value = '';
+  document.getElementById('crono-participantes').value = '';
+  document.getElementById('crono-estado').value = 'Pendiente';
+  document.getElementById('modal-crono-titulo').textContent = 'Nueva entrada en cronología';
+  abrirModal('modal-crono');
+}
+
+function editarCrono(id, fecha, actividad, participantes, estado) {
+  document.getElementById('crono-edit-id').value = id;
+  document.getElementById('crono-fecha').value = fecha;
+  document.getElementById('crono-actividad').value = actividad;
+  document.getElementById('crono-participantes').value = participantes;
+  document.getElementById('crono-estado').value = estado;
+  document.getElementById('modal-crono-titulo').textContent = 'Editar entrada';
+  abrirModal('modal-crono');
+}
+
+async function guardarCrono() {
+  const id = document.getElementById('crono-edit-id').value;
+  const data = {
+    fecha: document.getElementById('crono-fecha').value,
+    actividad: document.getElementById('crono-actividad').value,
+    participantes: document.getElementById('crono-participantes').value,
+    estado: document.getElementById('crono-estado').value,
+  };
+  if (data.fecha !== 'A definir' && !/^\d{2}\/\d{2}\/\d{4}$/.test(data.fecha)) {
+    alert('Formato de fecha inválido. Usá dd/mm/aaaa (ej: 06/07/2026) o dejalo como "A definir".');
+    return;
+  }
+  const url = id ? `/api/pad_acuatico/cronologia/${id}` : '/api/pad_acuatico/cronologia';
+  const method = id ? 'PUT' : 'POST';
+  const res = await (await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) })).json();
+  if (!res.ok) { alert('No se pudo guardar: ' + res.error); return; }
+  cerrarModal('modal-crono');
+  cargarCronologia();
+}
+
+async function eliminarCrono(id) {
+  if (!confirm('¿Eliminar esta entrada?')) return;
+  await fetch(`/api/pad_acuatico/cronologia/${id}`, { method: 'DELETE' });
+  cargarCronologia();
+}
+
+// ── Ejes ──────────────────────────────────────────────────────────────────────
+let ejesPadAcuaticoData = [];
+
+function abrirModalEjeNuevo() {
+  document.getElementById('modal-eje-titulo').textContent = '➕ Nuevo eje de trabajo';
+  document.getElementById('eje-edit-id').value = '';
+  document.getElementById('eje-nombre').value = '';
+  document.getElementById('eje-descripcion').value = '';
+  document.getElementById('eje-estado').value = 'Pendiente';
+  document.getElementById('modal-eje-error').style.display = 'none';
+  abrirModal('modal-eje');
+}
+
+function editarEje(id, nombre, descripcion, estado) {
+  document.getElementById('modal-eje-titulo').textContent = `✏️ Editar eje ${id}`;
+  document.getElementById('eje-edit-id').value = id;
+  document.getElementById('eje-nombre').value = nombre;
+  document.getElementById('eje-descripcion').value = descripcion;
+  document.getElementById('eje-estado').value = estado;
+  document.getElementById('modal-eje-error').style.display = 'none';
+  abrirModal('modal-eje');
+}
+
+async function guardarEje() {
+  const id = document.getElementById('eje-edit-id').value;
+  const data = {
+    nombre: document.getElementById('eje-nombre').value,
+    descripcion: document.getElementById('eje-descripcion').value,
+    estado: document.getElementById('eje-estado').value,
+  };
+  const url = id ? `/api/pad_acuatico/ejes/${id}` : '/api/pad_acuatico/ejes';
+  const method = id ? 'PUT' : 'POST';
+  const r = await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+  const res = await r.json();
+  if (res.ok) { cerrarModal('modal-eje'); cargarEjes(); }
+  else { document.getElementById('modal-eje-error').textContent = res.error || 'Error'; document.getElementById('modal-eje-error').style.display = 'block'; }
+}
+
+async function eliminarEje(id) {
+  if (!confirm('¿Eliminar este eje?')) return;
+  await fetch(`/api/pad_acuatico/ejes/${id}`, { method: 'DELETE' });
+  cargarEjes();
+}
+
+async function cargarEjes() {
+  const r = await fetch('/api/pad_acuatico/ejes');
+  const d = await r.json();
+  ejesPadAcuaticoData = d.rows || [];
+  const cont = document.getElementById('lista-ejes');
+  cont.innerHTML = '';
+  if (!ejesPadAcuaticoData.length) {
+    cont.innerHTML = '<p style="color:var(--muted);font-size:.82rem">Todavía no hay ejes de trabajo cargados.</p>';
+    return;
+  }
+  ejesPadAcuaticoData.forEach(eje => {
+    const tag = eje.estado.includes('Pendiente') ? 'tag-pendiente' : eje.estado.includes('diseño') || eje.estado.includes('análisis') ? 'tag-encurso' : 'tag-completado';
+    cont.innerHTML += `<div class="eje-card" style="cursor:default">
+      <div style="flex:1">
+        <div class="eje-num">EJE ${eje.id}</div>
+        <div class="eje-nombre">${escHtml(eje.nombre)}</div>
+        <div class="eje-desc">${escHtml(eje.descripcion || '')}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:.3rem;align-items:flex-end">
+        <span class="tag ${tag}" style="white-space:nowrap">${escHtml(eje.estado)}</span>
+        <div style="display:flex;gap:.3rem">
+          <button class="btn btn-outline btn-sm" style="padding:.2rem .4rem;font-size:.65rem" onclick="editarEje('${eje.id}','${esc(eje.nombre)}','${esc(eje.descripcion||'')}','${esc(eje.estado)}')">✏️</button>
+          <button class="btn btn-danger btn-sm" style="padding:.2rem .4rem;font-size:.65rem" onclick="eliminarEje(${eje.id})">✕</button>
+        </div>
+      </div>
+    </div>`;
+  });
+}
+
+// ── Minutas ───────────────────────────────────────────────────────────────────
+function agregarParticipante() {
+  const div = document.createElement('div');
+  div.className = 'participante-row';
+  div.innerHTML = `<input type="text" placeholder="Nombre" class="p-nombre"><input type="text" placeholder="Cargo" class="p-cargo"><input type="text" placeholder="Organismo" class="p-org"><button class="btn btn-danger btn-sm" onclick="quitarParticipante(this)">✕</button>`;
+  document.getElementById('participantes-list').appendChild(div);
+}
+function quitarParticipante(btn) { btn.closest('.participante-row').remove(); }
+
+function agregarItem(listaId) {
+  const li = document.createElement('li');
+  li.innerHTML = `<input type="text" placeholder="..."><button class="btn btn-danger btn-sm" onclick="quitarItem(this)">✕</button>`;
+  document.getElementById(listaId).appendChild(li);
+}
+function quitarItem(btn) { btn.closest('li').remove(); }
+
+function getItems(listaId) {
+  return Array.from(document.querySelectorAll(`#${listaId} input`)).map(i => i.value).filter(v => v.trim());
+}
+
+async function estructurarConIA() {
+  const notas = document.getElementById('notas-ia').value.trim();
+  if (!notas) { alert('Ingresá notas primero.'); return; }
+  const div = document.getElementById('ia-resultado');
+  div.textContent = 'Procesando con IA...';
+  div.classList.add('visible');
+  try {
+    const r = await fetch('/api/pad_acuatico/minuta_ia', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ notas })
+    });
+    const d = await r.json();
+    if (!d.ok) { div.textContent = 'Error: ' + d.error; return; }
+    const res = d.resultado;
+    if (res.asunto) document.getElementById('m-asunto').value = res.asunto;
+    if (res.temas) poblarLista('lista-temas', res.temas);
+    if (res.conclusiones) poblarLista('lista-conclusiones', res.conclusiones);
+    if (res.compromisos) poblarLista('lista-compromisos', res.compromisos);
+    if (res.proximos) poblarLista('lista-proximos', res.proximos);
+    div.textContent = '✓ Formulario completado con IA. Revisá y ajustá antes de generar.';
+  } catch(e) { div.textContent = 'Error: ' + e.message; }
+}
+
+function poblarLista(listaId, items) {
+  const ul = document.getElementById(listaId);
+  ul.innerHTML = '';
+  items.forEach(item => {
+    const li = document.createElement('li');
+    li.innerHTML = `<input type="text" value="${(item||'').replace(/"/g,'&quot;')}"><button class="btn btn-danger btn-sm" onclick="quitarItem(this)">✕</button>`;
+    ul.appendChild(li);
+  });
+}
+
+async function generarMinuta() {
+  const btn = document.getElementById('btn-generar');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Generando...';
+  const participantes = Array.from(document.querySelectorAll('.participante-row')).map(row => ({
+    nombre: row.querySelector('.p-nombre').value,
+    cargo:  row.querySelector('.p-cargo').value,
+    organismo: row.querySelector('.p-org').value,
+  })).filter(p => p.nombre.trim());
+  const data = {
+    fecha: document.getElementById('m-fecha').value,
+    lugar: document.getElementById('m-lugar').value,
+    asunto: document.getElementById('m-asunto').value,
+    participantes,
+    temas: getItems('lista-temas'),
+    conclusiones: getItems('lista-conclusiones'),
+    compromisos: getItems('lista-compromisos'),
+    proximos: getItems('lista-proximos'),
+  };
+  try {
+    const r = await fetch('/api/pad_acuatico/minuta', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(data)
+    });
+    const d = await r.json();
+    const div = document.getElementById('minuta-resultado');
+    div.style.display = 'block';
+    if (d.ok) {
+      div.innerHTML = `<div class="alert alert-ok">Minuta generada: <strong>${escHtml(d.fname)}</strong>
+        <a href="${d.download_url}" class="download-btn" style="margin-left:.75rem">⬇ Descargar</a>
+      </div>`;
+      if (d.cronologia_sugerida) {
+        const s = d.cronologia_sugerida;
+        div.innerHTML += `<div class="alert alert-info" style="margin-top:.5rem">
+          ¿Agregar esta reunión a la cronología?
+          <button class="btn btn-outline btn-sm" style="margin-left:.5rem"
+            onclick="agregarACronologia('${esc(s.fecha)}','${esc(s.actividad)}','${esc(s.participantes)}','${esc(s.estado)}')">
+            + Agregar
+          </button>
+        </div>`;
+      }
+      cargarMinutas();
+    } else {
+      div.innerHTML = `<div class="alert" style="background:var(--danger-light);color:var(--danger)">Error: ${escHtml(d.error)}</div>`;
+    }
+  } catch(e) {
+    document.getElementById('minuta-resultado').innerHTML = `<div class="alert" style="background:var(--danger-light);color:var(--danger)">${escHtml(e.message)}</div>`;
+    document.getElementById('minuta-resultado').style.display = 'block';
+  }
+  btn.disabled = false;
+  btn.innerHTML = '📄 Generar minuta Word';
+}
+
+async function agregarACronologia(fecha, actividad, participantes, estado) {
+  await fetch('/api/pad_acuatico/cronologia', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ fecha, actividad, participantes, estado })
+  });
+  alert('Agregado a cronología.');
+}
+
+async function cargarMinutas() {
+  const r = await fetch('/api/pad_acuatico/minutas');
+  const d = await r.json();
+  const body = document.getElementById('body-minutas');
+  body.innerHTML = '';
+  (d.rows || []).forEach(m => {
+    body.innerHTML += `<tr>
+      <td style="font-family:var(--mono);font-size:.75rem">${escHtml(m.fecha)}</td>
+      <td>${escHtml(m.asunto)}</td>
+      <td>${escHtml(m.lugar)}</td>
+      <td style="font-size:.75rem;color:var(--muted)">${escHtml(m.creado_por)}</td>
+      <td>
+        <a href="/api/pad_acuatico/minutas/${m.id}/download" class="download-btn">⬇ Word</a>
+      </td>
+    </tr>`;
+  });
+}
+
+// ── Glosario ──────────────────────────────────────────────────────────────────
+let glosarioData = [];
+let editandoTerminoId = null;
+
+function loadGlosario(){
+  fetch('/api/pad_acuatico/glosario').then(r=>r.json()).then(data=>{
+    glosarioData = data.rows || []; renderGlosario('');
+    const search = document.getElementById('glosario-search');
+    if (search) search.oninput = () => renderGlosario(search.value);
+  });
+}
+
+function renderGlosario(filtro){
+  const el = document.getElementById('glosario-content'); if (!el) return;
+  const rows = filtro
+    ? glosarioData.filter(r => r.termino.toLowerCase().includes(filtro.toLowerCase()) || r.definicion.toLowerCase().includes(filtro.toLowerCase()))
+    : glosarioData;
+  if (!rows.length) { el.innerHTML = '<div style="color:var(--muted);font-size:.82rem">Sin resultados.</div>'; return; }
+  const cats = {proyecto:'🏗 Proyecto', actores:'👥 Actores', normativa:'⚖️ Normativa', sistemas:'💻 Sistemas', general:'📌 General'};
+  const porCat = {};
+  rows.forEach(r => { if (!porCat[r.categoria]) porCat[r.categoria] = []; porCat[r.categoria].push(r); });
+  let html = '';
+  Object.entries(cats).forEach(([cat, label]) => {
+    if (!porCat[cat]) return;
+    html += `<div class="glosario-cat">${label}</div>`;
+    porCat[cat].forEach(r => {
+      html += `<div class="glosario-item">
+        <div class="glosario-term">${escHtml(r.termino)}</div>
+        <div class="glosario-def">${escHtml(r.definicion)}</div>
+        <div style="display:flex;flex-direction:column;gap:.2rem;flex-shrink:0">
+          <button class="btn btn-outline btn-sm" style="padding:.2rem .4rem;font-size:.6rem" onclick="editarTerminoById(${r.id})">✏️</button>
+          <button class="btn btn-danger btn-sm" style="padding:.2rem .4rem;font-size:.6rem" onclick="eliminarTermino(${r.id})">✕</button>
+        </div>
+      </div>`;
+    });
+  });
+  el.innerHTML = html;
+}
+
+function abrirModalGlosario(){
+  editandoTerminoId = null;
+  document.getElementById('modal-glosario-title').textContent = '➕ Nuevo término';
+  document.getElementById('mg-termino').value = '';
+  document.getElementById('mg-definicion').value = '';
+  document.getElementById('mg-categoria').value = 'general';
+  abrirModal('modal-glosario');
+}
+function editarTerminoById(id){
+  const r = glosarioData.find(x => x.id === id); if (!r) return;
+  editarTermino(id, r.termino, r.definicion, r.categoria);
+}
+function editarTermino(id, termino, definicion, categoria){
+  editandoTerminoId = id;
+  document.getElementById('modal-glosario-title').textContent = '✏️ Editar término';
+  document.getElementById('mg-termino').value = termino;
+  document.getElementById('mg-definicion').value = definicion;
+  document.getElementById('mg-categoria').value = categoria;
+  abrirModal('modal-glosario');
+}
+function guardarTermino(){
+  const data = {
+    termino: document.getElementById('mg-termino').value,
+    definicion: document.getElementById('mg-definicion').value,
+    categoria: document.getElementById('mg-categoria').value,
+  };
+  if (!data.termino || !data.definicion) { alert('Término y definición son obligatorios'); return; }
+  const url = editandoTerminoId ? `/api/pad_acuatico/glosario/${editandoTerminoId}` : '/api/pad_acuatico/glosario';
+  const method = editandoTerminoId ? 'PUT' : 'POST';
+  fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) })
+    .then(r => r.json()).then(d => { if (d.ok) { cerrarModal('modal-glosario'); loadGlosario(); } });
+}
+function eliminarTermino(id){
+  if (!confirm('¿Eliminar este término?')) return;
+  fetch(`/api/pad_acuatico/glosario/${id}`, { method: 'DELETE' }).then(() => loadGlosario());
+}
+</script>
+</body>
+</html>

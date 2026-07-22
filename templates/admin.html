@@ -168,6 +168,7 @@ select option{background:var(--surface)}
         <label style="display:flex;align-items:center;gap:.4rem;font-size:.82rem;text-transform:none;letter-spacing:0;color:var(--text-sub);cursor:pointer;font-weight:400"><input type="checkbox" value="sintia" id="mod-sintia"> 📊 SINTIA</label>
         <label style="display:flex;align-items:center;gap:.4rem;font-size:.82rem;text-transform:none;letter-spacing:0;color:var(--text-sub);cursor:pointer;font-weight:400"><input type="checkbox" value="vua" id="mod-vua"> ✈️ VUA</label>
         <label style="display:flex;align-items:center;gap:.4rem;font-size:.82rem;text-transform:none;letter-spacing:0;color:var(--text-sub);cursor:pointer;font-weight:400"><input type="checkbox" value="senasa" id="mod-senasa"> 🌿 SENASA</label>
+        <label style="display:flex;align-items:center;gap:.4rem;font-size:.82rem;text-transform:none;letter-spacing:0;color:var(--text-sub);cursor:pointer;font-weight:400"><input type="checkbox" value="pad_acuatico" id="mod-pad_acuatico"> 🌊 Pad Acuático</label>
         <label style="display:flex;align-items:center;gap:.4rem;font-size:.82rem;text-transform:none;letter-spacing:0;color:var(--text-sub);cursor:pointer;font-weight:400"><input type="checkbox" value="stock" id="mod-stock"> 🏭 Stock Depósitos</label>
         <label style="display:flex;align-items:center;gap:.4rem;font-size:.82rem;text-transform:none;letter-spacing:0;color:var(--text-sub);cursor:pointer;font-weight:400"><input type="checkbox" value="training" id="mod-training"> 🏃 Training</label>
         <label style="display:flex;align-items:center;gap:.4rem;font-size:.82rem;text-transform:none;letter-spacing:0;color:var(--text-sub);cursor:pointer;font-weight:400"><input type="checkbox" value="finanzas" id="mod-finanzas"> 💳 Finanzas</label>
@@ -896,7 +897,7 @@ function abrirModalUsuario(){
   document.getElementById('modal-usr-username').value='';document.getElementById('modal-usr-username').disabled=false;
   document.getElementById('modal-usr-password').value='';document.getElementById('modal-usr-password').placeholder='Mín. 8 caracteres';
   document.getElementById('modal-usr-rol').value='readonly';document.getElementById('modal-usr-activo').value='1';
-  ['sintia','vua','senasa','stock','training','finanzas','admin_bd','admin_sistema'].forEach(m=>document.getElementById('mod-'+m).checked=!m.startsWith('admin_'));
+  ['sintia','vua','senasa','pad_acuatico','stock','training','finanzas','admin_bd','admin_sistema'].forEach(m=>document.getElementById('mod-'+m).checked=!m.startsWith('admin_'));
   document.getElementById('modal-usr-error').style.display='none';
   document.getElementById('modal-usuario').classList.add('visible');
 }
@@ -909,12 +910,12 @@ function editarUsuario(id){
   document.getElementById('modal-usr-username').value=username;document.getElementById('modal-usr-username').disabled=true;
   document.getElementById('modal-usr-password').value='';document.getElementById('modal-usr-password').placeholder='Dejá vacío para no cambiar';
   document.getElementById('modal-usr-rol').value=rol;document.getElementById('modal-usr-activo').value=activo?'1':'0';
-  const mods=(modulos||'').split(',');['sintia','vua','senasa','stock','training','finanzas','admin_bd','admin_sistema'].forEach(m=>document.getElementById('mod-'+m).checked=mods.includes(m));
+  const mods=(modulos||'').split(',');['sintia','vua','senasa','pad_acuatico','stock','training','finanzas','admin_bd','admin_sistema'].forEach(m=>document.getElementById('mod-'+m).checked=mods.includes(m));
   document.getElementById('modal-usr-error').style.display='none';
   document.getElementById('modal-usuario').classList.add('visible');
 }
 function guardarUsuario(){
-  const modulos=['sintia','vua','senasa','stock','training','finanzas','admin_bd','admin_sistema'].filter(m=>document.getElementById('mod-'+m).checked).join(',');
+  const modulos=['sintia','vua','senasa','pad_acuatico','stock','training','finanzas','admin_bd','admin_sistema'].filter(m=>document.getElementById('mod-'+m).checked).join(',');
   const errEl=document.getElementById('modal-usr-error');
   if(editandoUserId){
     const data={rol:document.getElementById('modal-usr-rol').value,modulos,activo:parseInt(document.getElementById('modal-usr-activo').value)};
