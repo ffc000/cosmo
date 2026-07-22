@@ -137,6 +137,7 @@ textarea{resize:vertical;min-height:80px;font-family:var(--sans);font-size:.85re
       <div class="nav-item" data-tab="ejes"><span class="nav-icon">🎯</span><span class="nav-label">Ejes de trabajo</span></div>
       <div class="nav-item" data-tab="glosario"><span class="nav-icon">📖</span><span class="nav-label">Glosario</span></div>
       <div class="nav-section">Gestión</div>
+      <div class="nav-item" data-tab="informe"><span class="nav-icon">📥</span><span class="nav-label">Descargar informe</span></div>
       <div class="nav-item" data-tab="repositorio"><span class="nav-icon">🗂️</span><span class="nav-label">Repositorio</span></div>
     </nav>
     {% include '_sidebar_footer.html' %}
@@ -269,6 +270,23 @@ textarea{resize:vertical;min-height:80px;font-family:var(--sans);font-size:.85re
         </div>
       </div>
 
+      <!-- ═══════════ PANEL: INFORME ═══════════ -->
+      <div id="panel-informe" class="panel">
+        <div class="card">
+          <div class="card-title">Informe de avance — Pad Acuático</div>
+          <p style="font-size:.82rem;color:var(--muted);margin-bottom:1.25rem">
+            Genera un documento Word con ejes de trabajo, cronología de reuniones y glosario.
+          </p>
+          <button class="download-btn" id="btn-informe" onclick="generarInformePadAcuatico()">📄 Generar Informe Word</button>
+          <div id="informe-status" style="display:none;margin-top:1rem;font-size:.82rem;color:var(--muted)">
+            <span id="informe-status-txt">⏳ Generando informe...</span>
+            <div class="progress-outer" style="height:6px;background:var(--border,#e2e8f0);border-radius:4px;overflow:hidden;margin-top:.4rem">
+              <div class="progress-inner" id="informe-progress-inner" style="height:100%;width:0%;background:var(--accent,#1a56db);transition:width .4s ease"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- ═══════════ PANEL: REPOSITORIO ═══════════ -->
       <div id="panel-repositorio" class="panel">
         <div class="card">
@@ -390,6 +408,7 @@ function showTab(name) {
   if (name === 'minutas') cargarMinutas();
   if (name === 'glosario') loadGlosario();
   if (name === 'repositorio') cargarRepositorio('pad_acuatico');
+  // 'informe' no necesita carga al abrir el tab: es solo el botón de generar.
 }
 document.querySelectorAll('.nav-item[data-tab]').forEach(item => {
   item.addEventListener('click', () => showTab(item.dataset.tab));
@@ -779,6 +798,51 @@ function guardarTermino(){
 function eliminarTermino(id){
   if (!confirm('¿Eliminar este término?')) return;
   fetch(`/api/pad_acuatico/glosario/${id}`, { method: 'DELETE' }).then(() => loadGlosario());
+}
+
+// ── Informe ───────────────────────────────────────────────────────────────────
+async function generarInformePadAcuatico() {
+  const btn = document.getElementById('btn-informe');
+  const statusDiv = document.getElementById('informe-status');
+  const statusTxt = document.getElementById('informe-status-txt');
+  btn.disabled = true; btn.textContent = '⏳ Generando...';
+  statusDiv.style.display = 'block';
+  statusTxt.textContent = '⏳ Generando informe, por favor esperá...';
+  const progInner = document.getElementById('informe-progress-inner'); progInner.style.width = '0%';
+  try {
+    const r = await fetch('/api/pad_acuatico/informe');
+    const ct = r.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      if (r.url.includes('/login') || r.status === 302 || r.status === 401) { window.location.href = '/login'; return; }
+      throw new Error(`El servidor devolvió ${r.status}`);
+    }
+    const data = await r.json();
+    if (!data.ok) throw new Error(data.error || 'Error al iniciar generación');
+    const jobId = data.job_id;
+    await new Promise((resolve, reject) => {
+      const interval = setInterval(async () => {
+        try {
+          const sr = await fetch(`/api/job/${jobId}`);
+          const sd = await sr.json();
+          progInner.style.width = (sd.status === 'done' ? 100 : (sd.progreso || 0)) + '%';
+          if (sd.status === 'done') { clearInterval(interval); resolve(); }
+          else if (sd.status === 'error') { clearInterval(interval); reject(new Error((sd.log || ['Error']).join(' | '))); }
+          else { const log = sd.log || []; if (log.length) statusTxt.textContent = '⏳ ' + log[log.length-1]; }
+        } catch(e) { clearInterval(interval); reject(e); }
+      }, 2000);
+    });
+    statusTxt.textContent = '✓ Descargando...';
+    const a = document.createElement('a');
+    a.href = `/api/pad_acuatico/informe/download/${jobId}`;
+    a.download = `Informe_PadAcuatico_${fechaLocalISO()}.docx`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    statusTxt.textContent = '✓ Informe generado correctamente';
+    setTimeout(() => { statusDiv.style.display = 'none'; }, 3000);
+  } catch(e) {
+    statusTxt.textContent = '✗ Error: ' + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = '📄 Generar Informe Word';
+  }
 }
 </script>
 </body>

@@ -73,6 +73,10 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);display:flex
 .module-arrow{color:var(--dim);font-size:.9rem;transition:all .2s}
 .module-card:hover .module-arrow{color:var(--accent);transform:translateX(3px)}
 .module-card.senasa:hover .module-arrow{color:#057A55}
+.module-card.pad_acuatico::before{background:#0E7490}
+.module-card.pad_acuatico:hover{border-color:rgba(14,116,144,.3)}
+.module-card.pad_acuatico .module-icon{background:#ECFEFF;border-color:rgba(14,116,144,.15)}
+.module-card.pad_acuatico:hover .module-arrow{color:#0E7490}
 .module-card.stock::before{background:#7C3AED}
 .module-card.stock:hover{border-color:rgba(124,58,237,.3)}
 .module-card.stock .module-icon{background:#F5F3FF;border-color:rgba(124,58,237,.15)}
@@ -203,6 +207,17 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);display:flex
       <div class="module-desc">Integración PAD / SIG-Embalajes. Cronología de reuniones, ejes de trabajo, minutas y seguimiento de compromisos.</div>
       <div class="module-tags">
         <span class="module-tag">PAD</span><span class="module-tag">NORG</span><span class="module-tag">MIC/DTA</span><span class="module-tag">Tránsito sumario</span>
+      </div>
+    </a>{% endif %}
+    {% if 'pad_acuatico' in modulos %}<a href="/pad_acuatico" class="module-card pad_acuatico">
+      <div class="module-header">
+        <div class="module-icon">🌊</div>
+        <div class="module-arrow">→</div>
+      </div>
+      <div class="module-name">Pad Acuático</div>
+      <div class="module-desc">Proyecto Pad Acuático. Cronología de reuniones, ejes de trabajo, minutas con estructuración por IA, glosario e informe de avance.</div>
+      <div class="module-tags">
+        <span class="module-tag">Cronología</span><span class="module-tag">Minutas</span><span class="module-tag">Glosario</span>
       </div>
     </a>{% endif %}
     {% if 'stock' in modulos %}<a href="/stock" class="module-card stock">
