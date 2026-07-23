@@ -207,6 +207,18 @@ def pad_acuatico_minuta_download(minuta_id):
         download_name=os.path.basename(row["archivo"]),
         mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
+@pad_acuatico_bp.route("/api/pad_acuatico/minutas/<minuta_id>", methods=["DELETE"])
+@login_required
+@modulo_required("pad_acuatico")
+def pad_acuatico_minuta_delete(minuta_id):
+    with get_db(HIST_DB) as con:
+        row = con.execute("SELECT archivo FROM pad_acuatico_minutas WHERE id=?", (minuta_id,)).fetchone()
+        if row and row[0] and os.path.exists(row[0]):
+            try: os.remove(row[0])
+            except Exception: pass
+        con.execute("DELETE FROM pad_acuatico_minutas WHERE id=?", (minuta_id,))
+    return jsonify({"ok": True})
+
 # ── IA (estructurar notas de reunión) ─────────────────────────────────────────
 @pad_acuatico_bp.route("/api/pad_acuatico/minuta_ia", methods=["POST"])
 @login_required
@@ -242,7 +254,11 @@ def pad_acuatico_minuta_ia():
                 "estructura pedida abajo. Cada tema/conclusión/compromiso/paso debe quedar "
                 "redactado como una oración completa y entendible por alguien que no estuvo en "
                 "la reunión, no como una nota telegráfica.\n\n"
-                'Devolvé: {"asunto":"...","temas":["..."],"conclusiones":["..."],'
+                'Devolvé: {"notas_corregidas":"las notas originales reescritas como texto '
+                'corrido, en párrafos, ya corregidas y completadas -- esto es lo que el usuario '
+                'va a leer para VER qué le corregiste, así que tiene que reflejar el contenido '
+                'completo de las notas, no un resumen",'
+                '"asunto":"...","temas":["..."],"conclusiones":["..."],'
                 '"compromisos":["ORG — compromiso..."],"proximos":["..."]}'
             )}])
         texto = msg.content[0].text.strip().replace("```json","").replace("```","").strip()
