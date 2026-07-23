@@ -238,9 +238,6 @@ def senasa_acuerdos_list():
             "SELECT * FROM senasa_acuerdos ORDER BY estado ASC, orden ASC").fetchall()]
     return jsonify({"ok": True, "rows": rows})
 
-@senasa_bp.route("/api/senasa/acuerdos", methods=["POST"])
-@login_required
-@modulo_required("senasa")
 def _validar_fecha_compromiso(valor):
     """Devuelve (ok, valor_normalizado_o_mensaje_de_error).
     Vacío es válido (compromiso sin fecha límite), igual que 'A definir'
@@ -258,6 +255,9 @@ def _validar_fecha_compromiso(valor):
     return True, normalizada
 
 
+@senasa_bp.route("/api/senasa/acuerdos", methods=["POST"])
+@login_required
+@modulo_required("senasa")
 def senasa_acuerdos_add():
     data = request.json or {}
     ok, err = validar_enum(data.get("estado"), ESTADOS_TAREA, "estado")

@@ -283,6 +283,239 @@ def vua_xfwb():
     return send_file(buf,as_attachment=True,download_name="Checklist_XFWB.xlsx",
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+def _generar_word_informe_vua(datos):
+    """Migración de generar_informe_vua.js (modo "informe", 22/07/2026) a
+    python-docx, reusando el mismo toolkit compartido de portada/índice/
+    formato que ya usan SINTIA/SENASA/Pad Acuático (ver generar_documento.py)
+    -- unifica el "look" de todos los informes de la app y elimina la
+    dependencia de Node/subprocess para este camino (quedan ~60s de timeout
+    y un proceso externo menos que puede fallar).
+
+    El modo "minuta" de ese mismo .js (una sola acta, no el informe
+    completo) NO se migra acá -- sigue viviendo en generar_informe_vua.js,
+    fuera del alcance de este pedido.
+
+    Preserva el contenido y las secciones del informe original: Resumen
+    Ejecutivo, Antecedentes y Contexto (4 subsecciones desde vua_config),
+    Ejes de Trabajo (con cajas de color para propuesta VUCEA/postura
+    Aduana/recomendación DI REPA), Riesgos Identificados (matriz con
+    semáforo prob/impacto), Equipo del Proyecto (agrupado por organismo),
+    Cronología de Actividades, Glosario, y Minutas de Reuniones (solo si
+    hay alguna cargada)."""
+    from docx import Document as DocxDoc
+    from docx.shared import Cm, Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from generar_documento import (
+        _unificar_fuente_documento, _agregar_encabezado, _agregar_pie_pagina,
+        _ocultar_encabezado_portada, _generar_portada_compuesta,
+        _agregar_imagen_portada_ajustada, _insertar_indice, _heading_indexado,
+        agregar_tabla_word, set_cell_bg,
+    )
+    from generar_utils import pl
+
+    config = datos.get("config", []); ejes = datos.get("ejes", [])
+    equipo = datos.get("equipo", []); cronologia = datos.get("cronologia", [])
+    glosario = datos.get("glosario", []); riesgos = datos.get("riesgos", [])
+    minutas = datos.get("minutas", [])
+
+    def _cfg(clave):
+        return next((c.get("contenido", "") for c in config if c.get("clave") == clave), "")
+
+    hoy = datetime.today().strftime("%d/%m/%Y")
+
+    doc = DocxDoc()
+    _unificar_fuente_documento(doc)
+    for section in doc.sections:
+        section.top_margin = Cm(2.5); section.bottom_margin = Cm(2.5)
+        section.left_margin = Cm(3); section.right_margin = Cm(2.5)
+    _agregar_encabezado(doc, "Dirección de Reingeniería de Procesos Aduaneros")
+    _agregar_pie_pagina(doc, "Proyecto VUA — Estado de Situación")
+    _ocultar_encabezado_portada(doc)
+
+    # Portada
+    imagen_portada = _generar_portada_compuesta(
+        titulo="PROYECTO VUA — VENTANILLA ÚNICA AEROPORTUARIA",
+        subtitulo="Estado de Situación — Carga Aérea",
+        meta_lineas=[
+            "Dirección de Reingeniería de Procesos Aduaneros (DG ADUA)",
+            f"Última modificación: {hoy}",
+            "Elaborado por: Sección Simplificación de Procesos Operativos — DI REPA",
+        ])
+    if imagen_portada:
+        _agregar_imagen_portada_ajustada(doc, imagen_portada)
+    else:
+        titulo = doc.add_heading("PROYECTO VUA — VENTANILLA ÚNICA AEROPORTUARIA", 0)
+        titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        for txt, sz in [("Dirección de Reingeniería de Procesos Aduaneros (DG ADUA)", 12),
+                         (f"Estado de Situación — Carga Aérea al {hoy}", 11)]:
+            p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = p.add_run(txt); run.font.size = Pt(sz); run.font.color.rgb = RGBColor(0x40, 0x40, 0x40)
+        doc.add_paragraph()
+        dest = doc.add_paragraph(); dest.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        dest.add_run("Elaborado por: ").bold = True
+        dest.add_run("Sección Simplificación de Procesos Operativos — DI REPA")
+    doc.add_page_break()
+
+    # Índice -- misma numeración dinámica que el .js original: los
+    # primeros 7 son fijos, Minutas (8.) solo si hay alguna cargada.
+    secciones = [
+        (1, "Resumen Ejecutivo"), (1, "1.  Antecedentes y Contexto"),
+        (1, "2.  Ejes de Trabajo"), (1, "3.  Riesgos Identificados"),
+        (1, "4.  Equipo del Proyecto"), (1, "5.  Cronología de Actividades"),
+        (1, "6.  Glosario"),
+    ]
+    if minutas:
+        secciones.append((1, "7.  Minutas de Reuniones"))
+    _insertar_indice(doc, secciones)
+
+    # Resumen Ejecutivo
+    _heading_indexado(doc, "Resumen Ejecutivo", 1, 1)
+    resumen = _cfg("resumen_ejecutivo")
+    if resumen:
+        for linea in resumen.split("\n"):
+            if linea.strip(): doc.add_paragraph(linea)
+    else:
+        doc.add_paragraph("Sin resumen ejecutivo cargado todavía (ver configuración del módulo VUA).")
+    doc.add_page_break()
+
+    # 1. Antecedentes y Contexto
+    _heading_indexado(doc, "1.  Antecedentes y Contexto", 1, 2)
+    for num_sub, (titulo_sub, clave) in enumerate([
+        ("Antecedentes", "antecedentes"), ("Objetivo del Proyecto", "objetivo"),
+        ("Rol de la DGA", "rol_dga"), ("Alcance Operativo", "alcance_operativo"),
+    ], 1):
+        h = doc.add_paragraph(); h.add_run(f"1.{num_sub}.  {titulo_sub}").bold = True
+        contenido = _cfg(clave)
+        if contenido:
+            for linea in contenido.split("\n"):
+                if linea.strip(): doc.add_paragraph(linea)
+        else:
+            doc.add_paragraph("Sin contenido cargado.")
+    doc.add_page_break()
+
+    # 2. Ejes de Trabajo
+    _heading_indexado(doc, "2.  Ejes de Trabajo", 1, 3)
+    if ejes:
+        doc.add_paragraph(f"Se relevaron {len(ejes)} {pl(len(ejes), 'eje de trabajo', 'ejes de trabajo')} del proyecto.")
+        agregar_tabla_word(doc, ["ID", "EJE", "ESTADO"],
+            [[str(e.get("id", "")), e.get("nombre", ""), e.get("estado", "")] for e in ejes],
+            col_widths=[1.2, 8.5, 2.8])
+        doc.add_paragraph()
+        for idx, eje in enumerate(ejes, 1):
+            sub = doc.add_paragraph(); sub.add_run(f"2.{idx}.  {eje.get('nombre', '')}").bold = True
+            if eje.get("descripcion"):
+                doc.add_paragraph(eje["descripcion"])
+            for campo, etiqueta, color in [
+                ("propuesta_vucea", "PROPUESTA DE VUCEA", "EFF6FF"),
+                ("postura_aduana", "POSTURA DE ADUANA", "FFFBEB"),
+                ("recomendacion", "RECOMENDACIÓN DI REPA", "F0FFF4"),
+            ]:
+                if eje.get(campo):
+                    t = doc.add_table(rows=1, cols=1); t.style = "Table Grid"
+                    celda = t.rows[0].cells[0]; set_cell_bg(celda, color)
+                    celda.paragraphs[0].add_run(etiqueta).bold = True
+                    celda.add_paragraph(eje[campo])
+                    doc.add_paragraph()
+    else:
+        doc.add_paragraph("Todavía no hay ejes de trabajo cargados.")
+    doc.add_page_break()
+
+    # 3. Riesgos Identificados
+    _heading_indexado(doc, "3.  Riesgos Identificados", 1, 4)
+    if riesgos:
+        doc.add_paragraph(f"Se identificaron {len(riesgos)} {pl(len(riesgos), 'riesgo', 'riesgos')} para el proyecto.")
+
+        def _color_riesgo(val):
+            v = (val or "").lower()
+            if v in ("alto", "alta"): return "DC2626"
+            if v in ("medio", "media"): return "B45309"
+            return "057A55"
+
+        for idx, r in enumerate(riesgos, 1):
+            t = doc.add_table(rows=3, cols=2); t.style = "Table Grid"
+            hdr = t.rows[0].cells
+            hdr[0].merge(hdr[1])
+            set_cell_bg(hdr[0], "242D4F")
+            hp = hdr[0].paragraphs[0]
+            run_hdr = hp.add_run(f"{r.get('codigo') or f'{idx}'} — {r.get('titulo', '')}")
+            run_hdr.bold = True; run_hdr.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+            fila_pi = t.add_row().cells
+            set_cell_bg(fila_pi[0], _color_riesgo(r.get("probabilidad")))
+            run_p = fila_pi[0].paragraphs[0].add_run(f"Probabilidad: {r.get('probabilidad', 'N/D')}")
+            run_p.bold = True; run_p.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+            set_cell_bg(fila_pi[1], _color_riesgo(r.get("impacto")))
+            run_i = fila_pi[1].paragraphs[0].add_run(f"Impacto: {r.get('impacto', 'N/D')}")
+            run_i.bold = True; run_i.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+            t.rows[1].cells[0].merge(t.rows[1].cells[1])
+            set_cell_bg(t.rows[1].cells[0], "F0F4FF")
+            dp = t.rows[1].cells[0].paragraphs[0]
+            dp.add_run("Descripción: ").bold = True; dp.add_run(r.get("descripcion", ""))
+            t.rows[2].cells[0].merge(t.rows[2].cells[1])
+            set_cell_bg(t.rows[2].cells[0], "F0FFF4")
+            mp = t.rows[2].cells[0].paragraphs[0]
+            mp.add_run("Mitigación: ").bold = True; mp.add_run(r.get("mitigacion", ""))
+            doc.add_paragraph()
+    else:
+        doc.add_paragraph("Todavía no hay riesgos identificados cargados.")
+    doc.add_page_break()
+
+    # 4. Equipo del Proyecto
+    _heading_indexado(doc, "4.  Equipo del Proyecto", 1, 5)
+    if equipo:
+        grupos = {}
+        for m in equipo:
+            grupos.setdefault(m.get("organismo") or "Sin organismo", []).append(m)
+        for org, miembros in grupos.items():
+            sub = doc.add_paragraph(); sub.add_run(org).bold = True
+            agregar_tabla_word(doc, ["NOMBRE", "CARGO", "EMAIL"],
+                [[m.get("nombre", ""), m.get("cargo", ""), m.get("email", "")] for m in miembros],
+                col_widths=[3.5, 5, 3.5])
+            doc.add_paragraph()
+    else:
+        doc.add_paragraph("Todavía no hay integrantes de equipo cargados.")
+    doc.add_page_break()
+
+    # 5. Cronología de Actividades
+    _heading_indexado(doc, "5.  Cronología de Actividades", 1, 6)
+    if cronologia:
+        doc.add_paragraph(f"Se registraron {len(cronologia)} {pl(len(cronologia), 'evento', 'eventos')} en la cronología.")
+        agregar_tabla_word(doc, ["FECHA", "ACTIVIDAD", "PARTICIPANTES", "ESTADO"],
+            [[c.get("fecha", ""), c.get("actividad", ""), c.get("participantes", ""), c.get("estado", "")] for c in cronologia],
+            col_widths=[2.2, 6.5, 4.5, 2.3])
+    else:
+        doc.add_paragraph("Todavía no hay entradas en la cronología.")
+    doc.add_page_break()
+
+    # 6. Glosario
+    _heading_indexado(doc, "6.  Glosario", 1, 7)
+    if glosario:
+        agregar_tabla_word(doc, ["TÉRMINO", "DEFINICIÓN", "CATEGORÍA"],
+            [[g.get("termino", ""), g.get("definicion", ""), g.get("categoria", "")] for g in glosario],
+            col_widths=[3, 8, 2.5])
+    else:
+        doc.add_paragraph("Todavía no hay términos en el glosario.")
+
+    # 7. Minutas de Reuniones (condicional)
+    if minutas:
+        doc.add_page_break()
+        _heading_indexado(doc, "7.  Minutas de Reuniones", 1, 8)
+        filas = []
+        for m in minutas:
+            partic = m.get("participantes", "")
+            if isinstance(partic, str) and partic.startswith("["):
+                try:
+                    arr = json.loads(partic)
+                    partic = ", ".join(p.get("nombre", str(p)) if isinstance(p, dict) else str(p) for p in arr)
+                except Exception:
+                    pass
+            elif isinstance(partic, list):
+                partic = ", ".join(p.get("nombre", str(p)) if isinstance(p, dict) else str(p) for p in partic)
+            filas.append([m.get("fecha", ""), m.get("asunto", ""), m.get("lugar", ""), partic])
+        agregar_tabla_word(doc, ["FECHA", "ASUNTO", "LUGAR", "PARTICIPANTES"], filas,
+            col_widths=[2.2, 5.5, 3, 3.8])
+
+    return doc
+
 @vua_bp.route("/api/vua/informe")
 @login_required
 @modulo_required("vua")
@@ -313,41 +546,16 @@ def vua_informe():
     def _run_vua_informe(job_id, datos):
         log = job_status[job_id]["log"]
         try:
-            with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w", encoding="utf-8") as jf:
-                json.dump(datos, jf, ensure_ascii=False)
-                json_path = jf.name
-            out_path = json_path.replace(".json", ".docx")
-            script   = os.path.join(os.path.dirname(__file__), "generar_informe_vua.js")
-            result   = subprocess.run(["node", script, json_path, out_path],
-                           capture_output=True, text=True, encoding="utf-8",
-                           env={**os.environ, "LANG": "en_US.UTF-8", "NODE_OPTIONS": "--no-deprecation"},
-                           timeout=60)
-            if result.returncode != 0 or not os.path.exists(out_path):
-                stderr_txt = result.stderr[:400] if result.stderr else "(sin stderr)"
-                stdout_txt = result.stdout[:200] if result.stdout else "(sin stdout)"
-                log.append(f"✗ Error Node (rc={result.returncode}): {stderr_txt} | stdout: {stdout_txt}")
-                job_status[job_id]["status"] = "error"
-                _job_persist(job_id)
-                return
+            doc = _generar_word_informe_vua(datos)
             fname = f"Informe_VUA_{datetime.today().strftime('%Y%m%d_%H%M')}_{job_id}.docx"
             os.makedirs(OUTPUT_FOLDER, exist_ok=True)
             dest = os.path.join(OUTPUT_FOLDER, fname)
-            import shutil as _sh
-            _sh.copy2(out_path, dest)
-            try: os.unlink(out_path)
-            except: pass
+            doc.save(dest)
             job_status[job_id]["files"] = [dest]
             log.append(f"✓ Informe generado: {fname}")
             job_status[job_id]["status"] = "done"
             _job_persist(job_id)
             notificar_telegram(f"✓ Informe VUA listo ({job_status[job_id].get('username','?')})")
-            try: os.unlink(json_path)
-            except: pass
-        except subprocess.TimeoutExpired:
-            log.append("✗ Timeout generando informe")
-            job_status[job_id]["status"] = "error"
-            _job_persist(job_id)
-            notificar_telegram(f"⚠️ Informe VUA falló por timeout ({job_status[job_id].get('username','?')})")
         except Exception as e:
             log.append(f"✗ {e}")
             job_status[job_id]["status"] = "error"
