@@ -707,12 +707,15 @@ async function estructurarConIA() {
     if (!d.ok) { div.textContent = 'Error: ' + d.error; return; }
     const res = d.resultado;
     // Poblar formulario
+    if (res.notas_corregidas) document.getElementById('notas-ia').value = res.notas_corregidas;
     if (res.asunto) document.getElementById('m-asunto').value = res.asunto;
     if (res.temas) poblarLista('lista-temas', res.temas);
     if (res.conclusiones) poblarLista('lista-conclusiones', res.conclusiones);
     if (res.compromisos) poblarLista('lista-compromisos', res.compromisos);
     if (res.proximos) poblarLista('lista-proximos', res.proximos);
-    div.textContent = '✓ Formulario completado con IA. Revisá y ajustá antes de generar.';
+    div.textContent = res.notas_corregidas
+      ? '✓ Formulario completado con IA. Las notas de arriba se reemplazaron por la versión corregida -- revisá y ajustá antes de generar.'
+      : '✓ Formulario completado con IA. Revisá y ajustá antes de generar.';
   } catch(e) { div.textContent = 'Error: ' + e.message; }
 }
 
@@ -795,15 +798,22 @@ async function cargarMinutas() {
   body.innerHTML = '';
   (d.rows || []).forEach(m => {
     body.innerHTML += `<tr>
-      <td style="font-family:var(--mono);font-size:.75rem">${m.fecha}</td>
+      <td style="font-family:var(--mono);font-size:.75rem">${escHtml(m.fecha)}</td>
       <td>${escHtml(m.asunto)}</td>
       <td>${escHtml(m.lugar)}</td>
-      <td style="font-size:.75rem;color:var(--muted)">${m.creado_por}</td>
-      <td>
+      <td style="font-size:.75rem;color:var(--muted)">${escHtml(m.creado_por)}</td>
+      <td style="white-space:nowrap">
         <a href="/api/senasa/minutas/${m.id}/download" class="download-btn">⬇ Word</a>
+        <button class="btn btn-danger btn-sm" onclick="eliminarMinuta('${m.id}')">🗑</button>
       </td>
     </tr>`;
   });
+}
+
+async function eliminarMinuta(id) {
+  if (!confirm('¿Eliminar esta minuta? Esta acción no se puede deshacer.')) return;
+  await fetch(`/api/senasa/minutas/${id}`, { method: 'DELETE' });
+  cargarMinutas();
 }
 
 // ── Acuerdos ──────────────────────────────────────────────────────────────────

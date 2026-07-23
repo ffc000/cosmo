@@ -106,6 +106,9 @@ textarea{resize:vertical;min-height:80px;font-family:var(--sans);font-size:.85re
 .glosario-item:last-child{border-bottom:none}
 .glosario-term{font-family:var(--mono);font-size:.78rem;font-weight:600;color:var(--accent);flex-shrink:0;min-width:110px}
 .glosario-def{font-size:.8rem;color:var(--text-sub);line-height:1.5;flex:1}
+.equipo-grid{display:grid;grid-template-columns:1fr 1fr;gap:.6rem}
+.persona-card{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:.65rem .9rem}
+@media(max-width:768px){.equipo-grid{grid-template-columns:1fr}}
 @media(max-width:768px){
   .sidebar{position:fixed;top:0;left:0;bottom:0;transform:translateX(-100%)}
   .sidebar.open{transform:translateX(0)}
@@ -136,6 +139,7 @@ textarea{resize:vertical;min-height:80px;font-family:var(--sans);font-size:.85re
       <div class="nav-item" data-tab="minutas"><span class="nav-icon">📋</span><span class="nav-label">Minutas</span></div>
       <div class="nav-item" data-tab="ejes"><span class="nav-icon">🎯</span><span class="nav-label">Ejes de trabajo</span></div>
       <div class="nav-item" data-tab="glosario"><span class="nav-icon">📖</span><span class="nav-label">Glosario</span></div>
+      <div class="nav-item" data-tab="integrantes"><span class="nav-icon">👥</span><span class="nav-label">Integrantes</span></div>
       <div class="nav-section">Gestión</div>
       <div class="nav-item" data-tab="informe"><span class="nav-icon">📥</span><span class="nav-label">Descargar informe</span></div>
       <div class="nav-item" data-tab="repositorio"><span class="nav-icon">🗂️</span><span class="nav-label">Repositorio</span></div>
@@ -270,6 +274,21 @@ textarea{resize:vertical;min-height:80px;font-family:var(--sans);font-size:.85re
         </div>
       </div>
 
+      <!-- ═══════════ PANEL: INTEGRANTES ═══════════ -->
+      <div id="panel-integrantes" class="panel">
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.9rem">
+            <div class="card-title" style="margin:0">Integrantes</div>
+            <button class="btn btn-primary btn-sm" onclick="abrirModalIntegrante()">➕ Agregar</button>
+          </div>
+          <p style="font-size:.78rem;color:var(--muted);margin-bottom:1rem">
+            Esta lista es compartida con SENASA, VUA y SINTIA — lo que agregues o edites acá
+            aparece igual en esos módulos, y viceversa.
+          </p>
+          <div id="integrantes-content"><div style="color:var(--muted);font-size:.82rem">Cargando...</div></div>
+        </div>
+      </div>
+
       <!-- ═══════════ PANEL: INFORME ═══════════ -->
       <div id="panel-informe" class="panel">
         <div class="card">
@@ -358,6 +377,29 @@ textarea{resize:vertical;min-height:80px;font-family:var(--sans);font-size:.85re
   </div>
 </div>
 
+<!-- MODAL INTEGRANTE -->
+<div class="modal-overlay" id="modal-integrante">
+  <div class="modal">
+    <h3 id="modal-integrante-title">➕ Agregar integrante</h3>
+    <input type="hidden" id="mi-id">
+    <div class="form-row cols2">
+      <div><label>Nombre</label><input type="text" id="mi-nombre" placeholder="Nombre completo"></div>
+      <div><label>Organismo</label><input type="text" id="mi-organismo" placeholder="ARCA, SENASA..."></div>
+    </div>
+    <div class="form-row">
+      <div><label>Cargo</label><input type="text" id="mi-cargo" placeholder="Jefe de..."></div>
+    </div>
+    <div class="form-row">
+      <div><label>Email (opcional)</label><input type="text" id="mi-email" placeholder="usuario@organismo.gob.ar"></div>
+    </div>
+    <div id="modal-integrante-error" style="color:var(--danger);font-size:.78rem;margin-top:.5rem;display:none"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline btn-sm" onclick="cerrarModalIntegrante()">Cancelar</button>
+      <button class="btn btn-primary btn-sm" onclick="guardarIntegrante()">Guardar</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL GLOSARIO -->
 <div class="modal-overlay" id="modal-glosario">
   <div class="modal">
@@ -407,6 +449,7 @@ function showTab(name) {
   if (name === 'ejes') cargarEjes();
   if (name === 'minutas') cargarMinutas();
   if (name === 'glosario') loadGlosario();
+  if (name === 'integrantes') loadIntegrantes();
   if (name === 'repositorio') cargarRepositorio('pad_acuatico');
   // 'informe' no necesita carga al abrir el tab: es solo el botón de generar.
 }
@@ -626,12 +669,15 @@ async function estructurarConIA() {
     const d = await r.json();
     if (!d.ok) { div.textContent = 'Error: ' + d.error; return; }
     const res = d.resultado;
+    if (res.notas_corregidas) document.getElementById('notas-ia').value = res.notas_corregidas;
     if (res.asunto) document.getElementById('m-asunto').value = res.asunto;
     if (res.temas) poblarLista('lista-temas', res.temas);
     if (res.conclusiones) poblarLista('lista-conclusiones', res.conclusiones);
     if (res.compromisos) poblarLista('lista-compromisos', res.compromisos);
     if (res.proximos) poblarLista('lista-proximos', res.proximos);
-    div.textContent = '✓ Formulario completado con IA. Revisá y ajustá antes de generar.';
+    div.textContent = res.notas_corregidas
+      ? '✓ Formulario completado con IA. Las notas de arriba se reemplazaron por la versión corregida -- revisá y ajustá antes de generar.'
+      : '✓ Formulario completado con IA. Revisá y ajustá antes de generar.';
   } catch(e) { div.textContent = 'Error: ' + e.message; }
 }
 
@@ -717,11 +763,18 @@ async function cargarMinutas() {
       <td>${escHtml(m.asunto)}</td>
       <td>${escHtml(m.lugar)}</td>
       <td style="font-size:.75rem;color:var(--muted)">${escHtml(m.creado_por)}</td>
-      <td>
+      <td style="white-space:nowrap">
         <a href="/api/pad_acuatico/minutas/${m.id}/download" class="download-btn">⬇ Word</a>
+        <button class="btn btn-danger btn-sm" onclick="eliminarMinuta('${m.id}')">🗑</button>
       </td>
     </tr>`;
   });
+}
+
+async function eliminarMinuta(id) {
+  if (!confirm('¿Eliminar esta minuta? Esta acción no se puede deshacer.')) return;
+  await fetch(`/api/pad_acuatico/minutas/${id}`, { method: 'DELETE' });
+  cargarMinutas();
 }
 
 // ── Glosario ──────────────────────────────────────────────────────────────────
@@ -798,6 +851,88 @@ function guardarTermino(){
 function eliminarTermino(id){
   if (!confirm('¿Eliminar este término?')) return;
   fetch(`/api/pad_acuatico/glosario/${id}`, { method: 'DELETE' }).then(() => loadGlosario());
+}
+
+// ── Integrantes (compartido con SENASA/VUA/SINTIA vía /api/integrantes) ──────
+let integrantesData = [];
+let editandoIntegranteId = null;
+
+function loadIntegrantes() {
+  fetch('/api/integrantes').then(r => r.json()).then(data => {
+    integrantesData = data.rows || [];
+    const el = document.getElementById('integrantes-content');
+    if (!el) return;
+    const organismos = [...new Set(integrantesData.map(p => p.organismo))];
+    let html = '';
+    organismos.forEach(org => {
+      const personas = integrantesData.filter(p => p.organismo === org);
+      html += `<div style="margin-bottom:1.25rem">
+        <div style="font-family:var(--mono);font-size:.62rem;color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:.1em;margin-bottom:.5rem">${escHtml(org)}</div>
+        <div class="equipo-grid">${personas.map(p => `
+          <div class="persona-card" style="display:flex;align-items:flex-start;justify-content:space-between;gap:.4rem">
+            <div>
+              <div style="font-size:.8rem;font-weight:600;color:var(--text)">${escHtml(p.nombre)}</div>
+              <div style="font-size:.7rem;color:var(--muted);margin-top:.1rem">${escHtml(p.cargo)}</div>
+              ${p.email ? `<div style="font-family:var(--mono);font-size:.62rem;color:var(--accent);margin-top:.15rem">${escHtml(p.email)}</div>` : ''}
+            </div>
+            <div style="display:flex;flex-direction:column;gap:.2rem">
+              ${p.id ? `<button class="btn btn-outline btn-sm" style="padding:.2rem .4rem;font-size:.65rem" onclick="editarIntegrante(${p.id})">✏️</button>
+              <button class="btn btn-danger btn-sm" style="padding:.2rem .4rem;font-size:.65rem" onclick="eliminarIntegrante(${p.id})">✕</button>` : ''}
+            </div>
+          </div>`).join('')}
+        </div>
+      </div>`;
+    });
+    el.innerHTML = html || '<div style="color:var(--muted);font-size:.82rem">Sin integrantes cargados.</div>';
+  });
+}
+
+function abrirModalIntegrante() {
+  editandoIntegranteId = null;
+  document.getElementById('modal-integrante-title').textContent = '➕ Agregar integrante';
+  ['nombre', 'cargo', 'organismo', 'email'].forEach(f => document.getElementById('mi-' + f).value = '');
+  document.getElementById('modal-integrante-error').style.display = 'none';
+  abrirModal('modal-integrante');
+}
+
+function editarIntegrante(id) {
+  const p = integrantesData.find(x => x.id === id);
+  if (!p) return;
+  editandoIntegranteId = id;
+  document.getElementById('modal-integrante-title').textContent = '✏️ Editar integrante';
+  document.getElementById('mi-nombre').value = p.nombre;
+  document.getElementById('mi-cargo').value = p.cargo;
+  document.getElementById('mi-organismo').value = p.organismo;
+  document.getElementById('mi-email').value = p.email || '';
+  document.getElementById('modal-integrante-error').style.display = 'none';
+  abrirModal('modal-integrante');
+}
+
+function cerrarModalIntegrante() { cerrarModal('modal-integrante'); }
+
+async function guardarIntegrante() {
+  const data = {
+    nombre: document.getElementById('mi-nombre').value.trim(),
+    cargo: document.getElementById('mi-cargo').value.trim(),
+    organismo: document.getElementById('mi-organismo').value.trim(),
+    email: document.getElementById('mi-email').value.trim()
+  };
+  const errEl = document.getElementById('modal-integrante-error');
+  if (!data.nombre || !data.cargo || !data.organismo) {
+    errEl.textContent = 'Nombre, cargo y organismo son obligatorios.';
+    errEl.style.display = 'block'; return;
+  }
+  const url = editandoIntegranteId ? `/api/integrantes/${editandoIntegranteId}` : '/api/integrantes';
+  const method = editandoIntegranteId ? 'PUT' : 'POST';
+  const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+  const d = await r.json();
+  if (d.ok) { cerrarModalIntegrante(); loadIntegrantes(); }
+  else { errEl.textContent = d.error || 'Error al guardar.'; errEl.style.display = 'block'; }
+}
+
+function eliminarIntegrante(id) {
+  if (!confirm('¿Eliminar este integrante?')) return;
+  fetch(`/api/integrantes/${id}`, { method: 'DELETE' }).then(() => loadIntegrantes());
 }
 
 // ── Informe ───────────────────────────────────────────────────────────────────
