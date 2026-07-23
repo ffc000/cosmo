@@ -19,9 +19,7 @@ import json
 import uuid
 import time
 import logging
-import tempfile
 import threading
-import subprocess
 
 from actas import generar_acta_word
 from datetime import datetime, date, timedelta
@@ -132,36 +130,7 @@ def vua_minuta():
     minuta_id = str(uuid.uuid4())[:8]
     fname = f"Acta_{fecha.replace('/','_')}_{asunto[:30].replace(' ','_')}_{minuta_id}.docx"
     ruta = os.path.join("/data/minutas", fname)
-
-    # Mejora 5: intentar generar con Node (mejor formato); fallback a python-docx
-    script = os.path.join(os.path.dirname(__file__), "generar_informe_vua.js")
-    datos_minuta = {
-        "fecha": fecha, "asunto": asunto, "lugar": lugar,
-        "participantes": participantes, "temas": temas,
-        "acuerdos": acuerdos, "proximos": proximos,
-    }
-    usó_node = False
-    if os.path.exists(script):
-        import tempfile as _tmp
-        with _tmp.NamedTemporaryFile(suffix=".json", delete=False, mode="w", encoding="utf-8") as jf:
-            json.dump(datos_minuta, jf, ensure_ascii=False)
-            json_path = jf.name
-        try:
-            res = subprocess.run(["node", script, json_path, ruta, "minuta"],
-                                 capture_output=True, text=True, encoding="utf-8",
-                                 env={**os.environ, "LANG": "en_US.UTF-8", "NODE_OPTIONS": "--no-deprecation"},
-                                 timeout=20)
-            if res.returncode == 0 and os.path.exists(ruta):
-                usó_node = True
-        except Exception as e:
-            logging.debug(f"Node.js generación Word falló (se usará método alternativo): {e}")
-        finally:
-            try: os.unlink(json_path)
-            except: pass
-
-    if not usó_node:
-        # Fallback: python-docx básico (comportamiento anterior)
-        doc.save(ruta)
+    doc.save(ruta)
 
     with get_db(HIST_DB) as con:
         con.execute("INSERT INTO vua_minutas VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'))",
@@ -183,7 +152,7 @@ def vua_minuta():
     return jsonify({
         "ok":       True,
         "minuta_id": minuta_id,
-        "download_url": f"/api/vua/minuta/{minuta_id}/download",
+        "download_url": f"/api/vua/minutas/{minuta_id}/download",
         "fname":    fname,
         "cronologia_sugerida": crono_sugerida,
     })
