@@ -732,6 +732,27 @@ function poblarLista(listaId, items) {
   });
 }
 
+function limpiarFormularioMinuta() {
+  document.getElementById('notas-ia').value = '';
+  document.getElementById('ia-resultado').classList.remove('visible');
+  document.getElementById('ia-resultado').textContent = '';
+  document.getElementById('m-fecha').value = '';
+  document.getElementById('m-lugar').value = '';
+  document.getElementById('m-asunto').value = '';
+  document.getElementById('participantes-list').innerHTML =
+    '<div class="participante-row"><input type="text" placeholder="Nombre" class="p-nombre">' +
+    '<input type="text" placeholder="Cargo" class="p-cargo"><input type="text" placeholder="Organismo" class="p-org">' +
+    '<button class="btn btn-danger btn-sm" onclick="quitarParticipante(this)">✕</button></div>';
+  const placeholders = {
+    'lista-temas': 'Tema...', 'lista-conclusiones': 'Conclusión...',
+    'lista-compromisos': 'ORGANISMO — compromiso...', 'lista-proximos': 'Próximo paso...',
+  };
+  for (const [id, ph] of Object.entries(placeholders)) {
+    document.getElementById(id).innerHTML =
+      `<li><input type="text" placeholder="${ph}"><button class="btn btn-danger btn-sm" onclick="quitarItem(this)">✕</button></li>`;
+  }
+}
+
 async function generarMinuta() {
   const btn = document.getElementById('btn-generar');
   btn.disabled = true;
@@ -774,6 +795,7 @@ async function generarMinuta() {
         </div>`;
       }
       cargarMinutas();
+      limpiarFormularioMinuta();
     } else {
       div.innerHTML = `<div class="alert" style="background:var(--danger-light);color:var(--danger)">Error: ${escHtml(d.error)}</div>`;
     }
