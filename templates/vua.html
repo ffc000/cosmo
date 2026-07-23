@@ -370,9 +370,12 @@ select option{background:var(--surface)}
             <div style="display:flex;gap:.5rem">
               <select id="rol-select" style="flex:1">
                 <option value="">— Participante predefinido —</option>
+                <optgroup label="Roles predefinidos VUA">
                 {% for nombre, cargo in roles.items() %}
                 <option value="{{ nombre }}" data-cargo="{{ cargo }}">{{ nombre }}</option>
                 {% endfor %}
+                </optgroup>
+                <optgroup label="Integrantes" id="optgroup-integrantes"></optgroup>
                 <option value="__custom__">+ Otro participante</option>
               </select>
               <button class="btn btn-outline btn-sm" onclick="agregarParticipante()">Agregar</button>
@@ -687,6 +690,16 @@ document.getElementById('min-fecha').value=fechaLocalISO();
 
 // ── Participantes ──
 let participantes=[];
+function cargarIntegrantesParaSelectorVua(){
+  fetch('/api/integrantes').then(r=>r.json()).then(data=>{
+    const og=document.getElementById('optgroup-integrantes');
+    if(!og)return;
+    og.innerHTML=(data.rows||[]).map(p=>
+      `<option value="${esc(p.nombre)}" data-cargo="${esc(p.cargo)}${p.organismo?' — '+esc(p.organismo):''}">${esc(p.nombre)}</option>`
+    ).join('');
+  });
+}
+cargarIntegrantesParaSelectorVua();
 function agregarParticipante(){
   const sel=document.getElementById('rol-select');const val=sel.value;if(!val)return;
   let nombre,cargo;
