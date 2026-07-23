@@ -217,11 +217,29 @@ def senasa_minuta_ia():
         import anthropic, httpx
         client = anthropic.Anthropic(api_key=api_key, http_client=httpx.Client(follow_redirects=True))
         msg = client.messages.create(
-            model="claude-haiku-4-5-20251001", max_tokens=1500,
-            system="Sos asistente de DI REPA (ARCA Argentina). Estructurás minutas de reuniones con SENASA. Respondés solo con JSON válido." + contexto_repositorio("senasa"),
+            model="claude-haiku-4-5-20251001", max_tokens=1800,
+            system=(
+                "Sos asistente de DI REPA (ARCA Argentina). Trabajás con notas de reunión con "
+                "SENASA tomadas al vuelo durante la reunión -- suelen tener errores de tipeo, "
+                "abreviaturas, y frases cortadas o telegráficas. Tu trabajo es CORREGIR y "
+                "COMPLETAR esas notas para armar una minuta prolija, no solo repartirlas en "
+                "campos tal cual están escritas. Redactás en español rioplatense institucional, "
+                "en oraciones completas y claras. No inventás información que no esté presente o "
+                "claramente implícita en las notas -- si algo quedó ambiguo o incompleto, "
+                "redactalo de la forma más razonable sin agregar hechos, nombres, fechas o "
+                "compromisos que no estén en el original. Respondés solo con JSON válido."
+                + contexto_repositorio("senasa")
+            ),
             messages=[{"role":"user","content":(
-                f"Estructurá estas notas de reunión SENASA-ARCA en JSON:\n{notas}\n\n"
-                'Devolvé: {"asunto":"...","temas":["..."],"conclusiones":["..."],"compromisos":["ORG — compromiso..."],"proximos":["..."]}'
+                f"Notas de la reunión, tal como se tomaron (pueden tener errores de tipeo, "
+                f"abreviaturas o frases cortadas):\n\n{notas}\n\n"
+                "A partir de estas notas: corregí ortografía y gramática, completá las frases "
+                "truncadas o abreviadas en oraciones claras y prolijas, y organizá todo en la "
+                "estructura pedida abajo. Cada tema/conclusión/compromiso/paso debe quedar "
+                "redactado como una oración completa y entendible por alguien que no estuvo en "
+                "la reunión, no como una nota telegráfica.\n\n"
+                'Devolvé: {"asunto":"...","temas":["..."],"conclusiones":["..."],'
+                '"compromisos":["ORG — compromiso..."],"proximos":["..."]}'
             )}])
         texto = msg.content[0].text.strip().replace("```json","").replace("```","").strip()
         return jsonify({"ok": True, "resultado": json.loads(texto)})
