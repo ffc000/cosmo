@@ -144,7 +144,7 @@ def senasa_ejes_delete(iid):
 def senasa_minutas_list():
     with get_db(HIST_DB, row_factory=True) as con:
         rows = [dict(r) for r in con.execute(
-            "SELECT id,fecha,asunto,lugar,creado_por,creado FROM senasa_minutas ORDER BY creado DESC").fetchall()]
+            "SELECT id,fecha,asunto,lugar,creado_por,creado FROM senasa_minutas ORDER BY creado DESC LIMIT 50").fetchall()]
     return jsonify({"ok": True, "rows": rows})
 
 @senasa_bp.route("/api/senasa/minuta", methods=["POST"])
@@ -152,9 +152,11 @@ def senasa_minutas_list():
 @modulo_required("senasa")
 def senasa_minuta_create():
     data = request.json or {}
+    asunto      = (data.get("asunto") or "").strip()
+    if not asunto:
+        return jsonify({"ok": False, "error": "El asunto es obligatorio."}), 400
     minuta_id = str(uuid.uuid4())[:8]
-    fecha       = data.get("fecha","")
-    asunto      = data.get("asunto","")
+    fecha       = (data.get("fecha") or "").strip() or datetime.today().strftime("%d/%m/%Y")
     lugar       = data.get("lugar","")
     participantes = data.get("participantes",[])
     temas         = data.get("temas",[])
@@ -229,7 +231,7 @@ def senasa_minuta_ia():
         import anthropic, httpx
         client = anthropic.Anthropic(api_key=api_key, http_client=httpx.Client(follow_redirects=True))
         msg = client.messages.create(
-            model="claude-haiku-4-5-20251001", max_tokens=1800,
+            model="claude-haiku-4-5-20251001", max_tokens=3000,
             system=(
                 "Sos asistente de DI REPA (ARCA Argentina). Trabajás con notas de reunión con "
                 "SENASA tomadas al vuelo durante la reunión -- suelen tener errores de tipeo, "

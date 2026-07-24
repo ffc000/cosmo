@@ -631,9 +631,19 @@ def vua_cronologia_delete(item_id):
 @login_required
 @modulo_required("vua")
 def vua_minutas_list():
+    """Mismo patrón que SENASA/Pad Acuático (GET /api/{modulo}/minutas).
+    Antes, el tab "Historial" de VUA llamaba a /api/historial/completo
+    (endpoint general de auditoría, admin_required("bd")) filtrando del
+    lado del cliente a tipo==='minuta' -- cualquier usuario VUA sin
+    permiso de admin BD podía CREAR una minuta pero no verla, descargarla
+    ni borrarla después, porque ese endpoint le devolvía 403 (encontrado
+    en auditoría, 23/07/2026). LIMIT 50 para no crecer sin límite con los
+    años (mismo criterio que otras listas de esta app)."""
     with get_db(HIST_DB, row_factory=True) as con:
-        rows=[dict(r) for r in con.execute("SELECT id,fecha,asunto,lugar,creado_por,creado FROM vua_minutas ORDER BY creado DESC").fetchall()]
-    return jsonify({"ok":True,"rows":rows})
+        rows = [dict(r) for r in con.execute(
+            "SELECT id, creado as fecha, asunto as descripcion, 'minuta' as tipo "
+            "FROM vua_minutas ORDER BY creado DESC LIMIT 50").fetchall()]
+    return jsonify({"ok": True, "rows": rows})
 
 @vua_bp.route("/api/vua/minutas/<minuta_id>/download")
 @login_required
