@@ -114,18 +114,28 @@ def vua_index():
 @modulo_required("vua")
 def vua_minuta():
     data = request.json or {}
-    asunto       = data.get("asunto","")
-    fecha        = data.get("fecha", datetime.today().strftime("%d/%m/%Y"))
+    asunto = (data.get("asunto") or "").strip()
+    if not asunto:
+        return jsonify({"ok": False, "error": "El asunto es obligatorio."}), 400
+    fecha        = (data.get("fecha") or "").strip() or datetime.today().strftime("%d/%m/%Y")
     lugar        = data.get("lugar","")
     participantes = data.get("participantes",[])
     temas        = data.get("temas",[])
-    acuerdos     = data.get("acuerdos",[])
+    conclusiones = data.get("conclusiones",[])
+    # "compromisos" es el nombre nuevo (unificado con SENASA/Pad Acuático/SINTIA);
+    # se sigue guardando en la columna "acuerdos" para no perder los datos
+    # viejos ni tener que migrar destructivamente (ver ALTER TABLE más arriba
+    # en app.py). Acepta también "acuerdos" por compatibilidad con quien
+    # todavía le pegue a la API con el nombre viejo.
+    compromisos  = data.get("compromisos", data.get("acuerdos", []))
     proximos     = data.get("proximos",[])
+    notas_completas = data.get("notas_completas", "")
 
     doc = generar_acta_word(
         "ACTA DE REUNIÓN", fecha, asunto, lugar, participantes,
-        secciones=[("Temas tratados", temas), ("Acuerdos", acuerdos), ("Próximos pasos", proximos)],
-        roles_predefinidos=ROLES_PREDEFINIDOS,
+        secciones=[("Temas tratados", temas), ("Conclusiones", conclusiones),
+                   ("Compromisos", compromisos), ("Próximos pasos", proximos)],
+        roles_predefinidos=ROLES_PREDEFINIDOS, notas_completas=notas_completas,
     )
     minuta_id = str(uuid.uuid4())[:8]
     fname = f"Acta_{fecha.replace('/','_')}_{asunto[:30].replace(' ','_')}_{minuta_id}.docx"
@@ -133,9 +143,13 @@ def vua_minuta():
     doc.save(ruta)
 
     with get_db(HIST_DB) as con:
-        con.execute("INSERT INTO vua_minutas VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'))",
+        con.execute("""INSERT INTO vua_minutas
+            (id, fecha, asunto, lugar, participantes, temas, acuerdos, proximos,
+             archivo, creado_por, creado, conclusiones)
+            VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'),?)""",
             (minuta_id, fecha, asunto, lugar, json.dumps(participantes), json.dumps(temas),
-             json.dumps(acuerdos), json.dumps(proximos), ruta, session.get("username","?")))
+             json.dumps(compromisos), json.dumps(proximos), ruta, session.get("username","?"),
+             json.dumps(conclusiones)))
 
     # Construir sugerencia de cronología a partir de los datos de la reunión
     partic_nombres = ", ".join(
@@ -1047,64 +1061,71 @@ def vua_consultas_frecuentes_delete(cid):
 @login_required
 @modulo_required("vua")
 def vua_minuta_ia():
-    """Mejora 6: minuta_ia con contexto de minutas anteriores para detectar pendientes."""
+    """Contrato unificado con SENASA/Pad Acuático/SINTIA (23/07/2026): recibe
+    notas libres, corrige y completa, devuelve notas_corregidas + campos
+    estructurados. Se conserva el plus que ya tenía esta versión (Mejora 6):
+    contexto de las últimas 5 minutas del proyecto, para que la IA pueda
+    detectar pendientes de reuniones anteriores."""
     api_key = get_api_key()
     if not api_key: return jsonify({"ok": False, "error": "API key no configurada"})
     data = request.json or {}
-    asunto        = data.get("asunto", "")
-    participantes = data.get("participantes", [])
-    temas         = data.get("temas", [])
+    notas = (data.get("notas") or "").strip()
+    if not notas: return jsonify({"ok": False, "error": "Sin notas"})
     try:
         import anthropic, httpx
         client = anthropic.Anthropic(api_key=api_key, http_client=httpx.Client(follow_redirects=True))
 
-        # Cargar últimas 5 minutas para contexto acumulado
         with get_db(HIST_DB, row_factory=True) as con:
             minutas_ant = [dict(r) for r in con.execute(
                 "SELECT fecha, asunto, acuerdos, proximos FROM vua_minutas ORDER BY creado DESC LIMIT 5").fetchall()]
-
         ctx_minutas = ""
         if minutas_ant:
-            ctx_minutas = "\n\nCONTEXTO — Últimas minutas del proyecto (para detectar pendientes y continuidad):\n"
-            for m in reversed(minutas_ant):  # cronológico
+            ctx_minutas = "\n\nCONTEXTO -- Últimas minutas del proyecto (para detectar pendientes y continuidad):\n"
+            for m in reversed(minutas_ant):
                 try:
-                    acuerdos_prev = json.loads(m.get("acuerdos","[]") or "[]")
-                    proximos_prev = json.loads(m.get("proximos","[]") or "[]")
+                    compromisos_prev = json.loads(m.get("acuerdos", "[]") or "[]")
+                    proximos_prev = json.loads(m.get("proximos", "[]") or "[]")
                     ctx_minutas += (f"\n• {m['fecha']} — {m['asunto']}\n"
-                                    f"  Acuerdos: {'; '.join(acuerdos_prev[:3])}\n"
+                                    f"  Compromisos: {'; '.join(compromisos_prev[:3])}\n"
                                     f"  Próximos pasos: {'; '.join(proximos_prev[:3])}\n")
-                except: pass
+                except Exception:
+                    pass
 
-        p_txt = "; ".join([p.get("nombre","") + " (" + p.get("cargo","") + ")" for p in participantes])
-        t_txt = "\n".join(["- " + t for t in temas])
-
-        prompt = (
-            "Sos analista de DI REPA. Generá un borrador de acta para el proyecto VUA.\n"
-            f"ASUNTO: {asunto}\n"
-            f"PARTICIPANTES: {p_txt}\n"
-            f"TEMAS TRATADOS HOY:\n{t_txt}"
-            f"{ctx_minutas}\n\n"
-            "Con ese contexto:\n"
-            "1. Redactá los puntos tratados en esta reunión\n"
-            "2. Identificá acuerdos concretos (con responsable si es posible)\n"
-            "3. Definí próximos pasos, mencionando si alguno viene de reuniones anteriores y aún está pendiente\n\n"
-            "Devolvé SOLO JSON válido (sin markdown):\n"
-            "{\"temas_tratados\":[\"...\"]}\n"
-            "{\"acuerdos\":[\"...\"]}\n"
-            "{\"proximos_pasos\":[\"...\"]}\n"
-            "{\"pendientes_anteriores\":[\"...\"]}\n"
-            "Estilo: formal, español rioplatense institucional."
-        )
         msg = client.messages.create(
-            model="claude-haiku-4-5-20251001", max_tokens=1800,
-            system="Sos un asistente experto en gestión de proyectos aduaneros para ARCA Argentina. Respondés solo con JSON válido, sin texto adicional." + contexto_repositorio("vua"),
-            messages=[{"role": "user", "content": prompt}])
+            model="claude-haiku-4-5-20251001", max_tokens=3000,
+            system=(
+                "Sos asistente de DI REPA (ARCA Argentina). Trabajás con notas de reunión del "
+                "proyecto VUA tomadas al vuelo durante la reunión -- suelen tener errores de "
+                "tipeo, abreviaturas, y frases cortadas o telegráficas. Tu trabajo es CORREGIR "
+                "y COMPLETAR esas notas para armar una minuta prolija, no solo repartirlas en "
+                "campos tal cual están escritas. Redactás en español rioplatense institucional, "
+                "en oraciones completas y claras. No inventás información que no esté presente o "
+                "claramente implícita en las notas -- si algo quedó ambiguo o incompleto, "
+                "redactalo de la forma más razonable sin agregar hechos, nombres, fechas o "
+                "compromisos que no estén en el original. Si el contexto de reuniones anteriores "
+                "muestra un pendiente relacionado con las notas de hoy, podés mencionarlo en "
+                "próximos pasos. Respondés solo con JSON válido."
+                + ctx_minutas + contexto_repositorio("vua")
+            ),
+            messages=[{"role":"user","content":(
+                f"Notas de la reunión, tal como se tomaron (pueden tener errores de tipeo, "
+                f"abreviaturas o frases cortadas):\n\n{notas}\n\n"
+                "A partir de estas notas: corregí ortografía y gramática, completá las frases "
+                "truncadas o abreviadas en oraciones claras y prolijas, y organizá todo en la "
+                "estructura pedida abajo. Cada tema/conclusión/compromiso/paso debe quedar "
+                "redactado como una oración completa y entendible por alguien que no estuvo en "
+                "la reunión, no como una nota telegráfica.\n\n"
+                'Devolvé: {"notas_corregidas":"las notas originales reescritas como texto '
+                'corrido, en párrafos, ya corregidas y completadas -- esto es lo que el usuario '
+                'va a leer para VER qué le corregiste, así que tiene que reflejar el contenido '
+                'completo de las notas, no un resumen",'
+                '"asunto":"...","temas":["..."],"conclusiones":["..."],'
+                '"compromisos":["ORG — compromiso..."],"proximos":["..."]}'
+            )}])
         texto = msg.content[0].text.strip().replace("```json","").replace("```","").strip()
-        resultado = json.loads(texto)
-        return jsonify({"ok": True, **resultado})
+        return jsonify({"ok": True, "resultado": json.loads(texto)})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
-
 
 
 # ── Importar minuta desde Word con IA ────────────────────────────────────────
@@ -1112,80 +1133,14 @@ def vua_minuta_ia():
 @login_required
 @modulo_required("vua")
 def vua_minuta_importar():
-    """Recibe un .docx, extrae el texto y usa la IA para estructurarlo en campos de minuta."""
+    """Recibe un .docx, extrae el texto y usa la IA para estructurarlo en
+    campos de minuta -- lógica compartida con los otros 3 módulos, ver
+    actas.importar_minuta_desde_docx (antes duplicada acá a mano)."""
+    from actas import importar_minuta_desde_docx
     api_key = get_api_key()
-    if not api_key: return jsonify({"ok": False, "error": "API key no configurada"})
-    if "archivo" not in request.files:
-        return jsonify({"ok": False, "error": "No se recibió archivo"})
-
-    archivo = request.files["archivo"]
-    if not archivo.filename.endswith(".docx"):
-        return jsonify({"ok": False, "error": "Solo se aceptan archivos .docx"})
-
-    # Extraer texto del Word con python-docx
-    try:
-        from docx import Document as DocxDoc
-        import io as _io
-        doc_bytes = archivo.read()
-        docx_doc  = DocxDoc(_io.BytesIO(doc_bytes))
-        # Extraer párrafos y tablas
-        partes = []
-        for p in docx_doc.paragraphs:
-            txt = p.text.strip()
-            if txt: partes.append(txt)
-        for tabla in docx_doc.tables:
-            for fila in tabla.rows:
-                celda_txt = " | ".join(c.text.strip() for c in fila.cells if c.text.strip())
-                if celda_txt: partes.append(celda_txt)
-        texto_completo = "\n".join(partes)
-    except Exception as e:
-        return jsonify({"ok": False, "error": f"Error leyendo el Word: {e}"})
-
-    if not texto_completo.strip():
-        return jsonify({"ok": False, "error": "El documento está vacío o no se pudo extraer texto"})
-
-    # Llamar a la IA para estructurar
-    try:
-        import anthropic, httpx
-        client = anthropic.Anthropic(api_key=api_key, http_client=httpx.Client(follow_redirects=True))
-
-        prompt = (
-            "El siguiente texto es una minuta/acta de reunión del proyecto VUA (Ventanilla Única Aeroportuaria — ARCA Argentina).\n"
-            "Extraé y estructurá la información en el JSON solicitado.\n\n"
-            f"TEXTO DE LA MINUTA:\n{texto_completo[:6000]}\n\n"
-            "Devolvé SOLO este JSON válido (sin markdown ni texto adicional):\n"
-            "{\n"
-            '  "asunto": "título o asunto principal de la reunión",\n'
-            '  "fecha": "fecha en formato YYYY-MM-DD si la encontrás, sino vacío",\n'
-            '  "lugar": "lugar o modalidad (ej: Videoconferencia, Sala 3 Paseo Colón)",\n'
-            '  "participantes": [\n'
-            '    {"nombre": "Nombre completo o sigla del organismo", "cargo": "cargo si está disponible"}\n'
-            '  ],\n'
-            '  "temas_tratados": ["tema 1", "tema 2"],\n'
-            '  "acuerdos": ["acuerdo 1", "acuerdo 2"],\n'
-            '  "proximos_pasos": ["paso 1", "paso 2"]\n'
-            "}\n\n"
-            "Reglas:\n"
-            "- temas_tratados: los temas principales que se discutieron, uno por ítem, en forma concisa\n"
-            "- acuerdos: compromisos concretos que se tomaron en la reunión\n"
-            "- proximos_pasos: tareas o acciones pendientes mencionadas\n"
-            "- Si la fecha está escrita en texto (ej: '11 de junio de 2026'), convertila a YYYY-MM-DD\n"
-            "- Español rioplatense, con tildes y caracteres especiales correctos (á, é, í, ó, ú, ñ), sin markdown"
-        )
-
-        msg = client.messages.create(
-            model="claude-haiku-4-5-20251001", max_tokens=2000,
-            system="Sos un asistente experto en gestión de proyectos aduaneros para ARCA Argentina. Extraés información estructurada de minutas institucionales. Respondés solo con JSON válido." + contexto_repositorio("vua"),
-            messages=[{"role": "user", "content": prompt}]
-        )
-        texto_resp = msg.content[0].text.strip().replace("```json","").replace("```","").strip()
-        resultado  = json.loads(texto_resp)
-        return jsonify({"ok": True, **resultado})
-
-    except json.JSONDecodeError as e:
-        return jsonify({"ok": False, "error": f"La IA no devolvió JSON válido: {e}"})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)})
+    resultado = importar_minuta_desde_docx(
+        request.files.get("archivo"), api_key, "VUA", contexto_repositorio("vua"))
+    return jsonify(resultado)
 
 
 # ── VUA Resumen ejecutivo generado por IA (Mejora 7) ─────────────────────────

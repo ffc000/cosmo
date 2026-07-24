@@ -98,6 +98,19 @@ def senasa_crono_delete(iid):
         con.execute("DELETE FROM senasa_cronologia WHERE id=?", (iid,))
     return jsonify({"ok": True})
 
+@senasa_bp.route("/api/senasa/minuta/importar", methods=["POST"])
+@login_required
+@modulo_required("senasa")
+def senasa_minuta_importar():
+    """Recibe un .docx, extrae el texto y usa la IA para estructurarlo en
+    campos de minuta -- lógica compartida con los otros 3 módulos, ver
+    actas.importar_minuta_desde_docx."""
+    from actas import importar_minuta_desde_docx
+    api_key = get_api_key()
+    resultado = importar_minuta_desde_docx(
+        request.files.get("archivo"), api_key, "SENASA", contexto_repositorio("senasa"))
+    return jsonify(resultado)
+
 # ── Ejes SENASA ───────────────────────────────────────────────────────────────
 @senasa_bp.route("/api/senasa/ejes", methods=["GET"])
 @login_required

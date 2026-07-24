@@ -102,6 +102,19 @@ def pad_acuatico_crono_delete(iid):
         con.execute("DELETE FROM pad_acuatico_cronologia WHERE id=?", (iid,))
     return jsonify({"ok": True})
 
+@pad_acuatico_bp.route("/api/pad_acuatico/minuta/importar", methods=["POST"])
+@login_required
+@modulo_required("pad_acuatico")
+def pad_acuatico_minuta_importar():
+    """Recibe un .docx, extrae el texto y usa la IA para estructurarlo en
+    campos de minuta -- lógica compartida con los otros 3 módulos, ver
+    actas.importar_minuta_desde_docx."""
+    from actas import importar_minuta_desde_docx
+    api_key = get_api_key()
+    resultado = importar_minuta_desde_docx(
+        request.files.get("archivo"), api_key, "Pad Acuático", contexto_repositorio("pad_acuatico"))
+    return jsonify(resultado)
+
 # ── Ejes de trabajo ───────────────────────────────────────────────────────────
 @pad_acuatico_bp.route("/api/pad_acuatico/ejes", methods=["GET"])
 @login_required
