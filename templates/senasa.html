@@ -184,82 +184,10 @@ textarea{resize:vertical;min-height:80px;font-family:var(--sans);font-size:.85re
       </div>
 
       <!-- ═══════════ PANEL: MINUTAS ═══════════ -->
-      <div id="panel-minutas" class="panel">
-        <div class="card">
-          <div class="card-title">Nueva minuta</div>
-          <div class="alert alert-info" style="margin-bottom:1rem">
-            Podés pegar notas de la reunión y usar IA para estructurarlas, o completar el formulario directamente.
-          </div>
-          <!-- Sección IA -->
-          <div style="margin-bottom:1.25rem">
-            <label>Notas de la reunión (para estructurar con IA)</label>
-            <textarea id="notas-ia" rows="5" placeholder="Pegá acá tus notas y la IA va a estructurar la minuta..."></textarea>
-            <button class="btn btn-outline btn-sm" style="margin-top:.5rem" onclick="estructurarConIA()">
-              ✨ Estructurar con IA
-            </button>
-            <div id="ia-resultado" class="ia-sugerencia"></div>
-          </div>
-          <hr style="border:none;border-top:1px solid var(--border);margin-bottom:1.25rem">
-          <!-- Formulario manual -->
-          <div class="form-row cols2">
-            <div><label>Fecha</label><input type="text" id="m-fecha" placeholder="dd/mm/aaaa"></div>
-            <div><label>Lugar</label><input type="text" id="m-lugar" placeholder="Meet / presencial..."></div>
-          </div>
-          <div class="form-row">
-            <div><label>Asunto</label><input type="text" id="m-asunto" placeholder="Ej: Reunión técnica PAD-SIG Embalajes"></div>
-          </div>
-          <!-- Participantes -->
-          <div style="margin-bottom:.9rem">
-            <label>Participantes</label>
-            <div id="participantes-list">
-              <div class="participante-row">
-                <input type="text" placeholder="Nombre" class="p-nombre">
-                <input type="text" placeholder="Cargo" class="p-cargo">
-                <input type="text" placeholder="Organismo" class="p-org">
-                <button class="btn btn-danger btn-sm" onclick="quitarParticipante(this)">✕</button>
-              </div>
-            </div>
-            <button class="btn btn-outline btn-sm" style="margin-top:.4rem" onclick="agregarParticipante()">+ Participante</button>
-            <select id="picker-integrantes" style="margin-top:.4rem;margin-left:.4rem;width:auto;display:inline-block;font-family:var(--sans);font-size:.8rem" onchange="agregarParticipanteDeIntegrante(this)">
-              <option value="">+ Desde integrantes...</option>
-            </select>
-          </div>
-          <!-- Secciones de la minuta -->
-          <div style="margin-bottom:.9rem">
-            <label>Temas tratados</label>
-            <ul class="lista-items" id="lista-temas"><li><input type="text" placeholder="Tema..."><button class="btn btn-danger btn-sm" onclick="quitarItem(this)">✕</button></li></ul>
-            <button class="btn btn-outline btn-sm" onclick="agregarItem('lista-temas')">+ Tema</button>
-          </div>
-          <div style="margin-bottom:.9rem">
-            <label>Principales conclusiones</label>
-            <ul class="lista-items" id="lista-conclusiones"><li><input type="text" placeholder="Conclusión..."><button class="btn btn-danger btn-sm" onclick="quitarItem(this)">✕</button></li></ul>
-            <button class="btn btn-outline btn-sm" onclick="agregarItem('lista-conclusiones')">+ Conclusión</button>
-          </div>
-          <div style="margin-bottom:.9rem">
-            <label>Compromisos asumidos</label>
-            <ul class="lista-items" id="lista-compromisos"><li><input type="text" placeholder="ORGANISMO — compromiso..."><button class="btn btn-danger btn-sm" onclick="quitarItem(this)">✕</button></li></ul>
-            <button class="btn btn-outline btn-sm" onclick="agregarItem('lista-compromisos')">+ Compromiso</button>
-          </div>
-          <div style="margin-bottom:1.25rem">
-            <label>Próximos pasos</label>
-            <ul class="lista-items" id="lista-proximos"><li><input type="text" placeholder="Próximo paso..."><button class="btn btn-danger btn-sm" onclick="quitarItem(this)">✕</button></li></ul>
-            <button class="btn btn-outline btn-sm" onclick="agregarItem('lista-proximos')">+ Paso</button>
-          </div>
-          <button class="btn btn-primary" onclick="generarMinuta()" id="btn-generar">
-            📄 Generar minuta Word
-          </button>
-          <div id="minuta-resultado" style="margin-top:1rem;display:none"></div>
-        </div>
-
-        <!-- Historial de minutas -->
-        <div class="card">
-          <div class="card-title">Minutas generadas</div>
-          <table class="data-table">
-            <thead><tr><th>Fecha</th><th>Asunto</th><th>Lugar</th><th>Generada por</th><th></th></tr></thead>
-            <tbody id="body-minutas"></tbody>
-          </table>
-        </div>
-      </div>
+      {% set minutas_modulo = 'senasa' %}
+      {% set minutas_titulo = 'SENASA' %}
+      {% set minutas_cronologia = true %}
+      {% include '_panel_minutas.html' %}
 
       <!-- ═══════════ PANEL: ACUERDOS ═══════════ -->
       <div id="panel-acuerdos" class="panel">
@@ -442,7 +370,7 @@ function showTab(name) {
   if (navItem) navItem.classList.add('active');
   if (name === 'cronologia') cargarCronologia();
   if (name === 'ejes') cargarEjes();
-  if (name === 'minutas') { cargarMinutas(); cargarPickerIntegrantes(); }
+  if (name === 'minutas') MinutasUI.init();
   if (name === 'acuerdos') cargarAcuerdos();
   if (name === 'integrantes') loadIntegrantes();
   if (name === 'repositorio') cargarRepositorio('senasa');
@@ -676,176 +604,10 @@ async function cargarEjes() {
 }
 
 // ── Minutas ───────────────────────────────────────────────────────────────────
-// cargarPickerIntegrantes()/agregarParticipanteDeIntegrante() ahora viven en
-// common.js (compartidas con pad_acuatico.html -- estaban duplicadas letra
-// por letra acá, ver auditoría 23/07/2026).
-function agregarParticipante() {
-  const div = document.createElement('div');
-  div.className = 'participante-row';
-  div.innerHTML = `<input type="text" placeholder="Nombre" class="p-nombre"><input type="text" placeholder="Cargo" class="p-cargo"><input type="text" placeholder="Organismo" class="p-org"><button class="btn btn-danger btn-sm" onclick="quitarParticipante(this)">✕</button>`;
-  document.getElementById('participantes-list').appendChild(div);
-}
-function quitarParticipante(btn) { btn.closest('.participante-row').remove(); }
-
-function agregarItem(listaId) {
-  const li = document.createElement('li');
-  li.innerHTML = `<input type="text" placeholder="..."><button class="btn btn-danger btn-sm" onclick="quitarItem(this)">✕</button>`;
-  document.getElementById(listaId).appendChild(li);
-}
-function quitarItem(btn) { btn.closest('li').remove(); }
-
-function getItems(listaId) {
-  return Array.from(document.querySelectorAll(`#${listaId} input`)).map(i => i.value).filter(v => v.trim());
-}
-
-async function estructurarConIA() {
-  const notas = document.getElementById('notas-ia').value.trim();
-  if (!notas) { alert('Ingresá notas primero.'); return; }
-  const div = document.getElementById('ia-resultado');
-  div.textContent = 'Procesando con IA...';
-  div.classList.add('visible');
-  try {
-    const r = await fetch('/api/senasa/minuta_ia', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ notas })
-    });
-    const d = await r.json();
-    if (!d.ok) { div.textContent = 'Error: ' + d.error; return; }
-    const res = d.resultado;
-    // Poblar formulario
-    if (res.notas_corregidas) document.getElementById('notas-ia').value = res.notas_corregidas;
-    if (res.asunto) document.getElementById('m-asunto').value = res.asunto;
-    if (res.temas) poblarLista('lista-temas', res.temas);
-    if (res.conclusiones) poblarLista('lista-conclusiones', res.conclusiones);
-    if (res.compromisos) poblarLista('lista-compromisos', res.compromisos);
-    if (res.proximos) poblarLista('lista-proximos', res.proximos);
-    div.textContent = res.notas_corregidas
-      ? '✓ Formulario completado con IA. Las notas de arriba se reemplazaron por la versión corregida -- revisá y ajustá antes de generar.'
-      : '✓ Formulario completado con IA. Revisá y ajustá antes de generar.';
-  } catch(e) { div.textContent = 'Error: ' + e.message; }
-}
-
-function poblarLista(listaId, items) {
-  const ul = document.getElementById(listaId);
-  ul.innerHTML = '';
-  items.forEach(item => {
-    const li = document.createElement('li');
-    li.innerHTML = `<input type="text" value="${(item||'').replace(/"/g,'&quot;')}"><button class="btn btn-danger btn-sm" onclick="quitarItem(this)">✕</button>`;
-    ul.appendChild(li);
-  });
-}
-
-function limpiarFormularioMinuta() {
-  document.getElementById('notas-ia').value = '';
-  document.getElementById('ia-resultado').classList.remove('visible');
-  document.getElementById('ia-resultado').textContent = '';
-  document.getElementById('m-fecha').value = '';
-  document.getElementById('m-lugar').value = '';
-  document.getElementById('m-asunto').value = '';
-  document.getElementById('participantes-list').innerHTML =
-    '<div class="participante-row"><input type="text" placeholder="Nombre" class="p-nombre">' +
-    '<input type="text" placeholder="Cargo" class="p-cargo"><input type="text" placeholder="Organismo" class="p-org">' +
-    '<button class="btn btn-danger btn-sm" onclick="quitarParticipante(this)">✕</button></div>';
-  const placeholders = {
-    'lista-temas': 'Tema...', 'lista-conclusiones': 'Conclusión...',
-    'lista-compromisos': 'ORGANISMO — compromiso...', 'lista-proximos': 'Próximo paso...',
-  };
-  for (const [id, ph] of Object.entries(placeholders)) {
-    document.getElementById(id).innerHTML =
-      `<li><input type="text" placeholder="${ph}"><button class="btn btn-danger btn-sm" onclick="quitarItem(this)">✕</button></li>`;
-  }
-}
-
-async function generarMinuta() {
-  const asunto = document.getElementById('m-asunto').value.trim();
-  if (!asunto) { alert('El asunto es obligatorio.'); document.getElementById('m-asunto').focus(); return; }
-  const btn = document.getElementById('btn-generar');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span> Generando...';
-  const participantes = Array.from(document.querySelectorAll('.participante-row')).map(row => ({
-    nombre: row.querySelector('.p-nombre').value,
-    cargo:  row.querySelector('.p-cargo').value,
-    organismo: row.querySelector('.p-org').value,
-  })).filter(p => p.nombre.trim());
-  const data = {
-    fecha: document.getElementById('m-fecha').value,
-    lugar: document.getElementById('m-lugar').value,
-    asunto,
-    participantes,
-    temas: getItems('lista-temas'),
-    conclusiones: getItems('lista-conclusiones'),
-    compromisos: getItems('lista-compromisos'),
-    proximos: getItems('lista-proximos'),
-    notas_completas: document.getElementById('notas-ia').value,
-  };
-  try {
-    const r = await fetch('/api/senasa/minuta', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify(data)
-    });
-    const d = await r.json();
-    const div = document.getElementById('minuta-resultado');
-    div.style.display = 'block';
-    if (d.ok) {
-      div.innerHTML = `<div class="alert alert-ok">Minuta generada: <strong>${d.fname}</strong>
-        <a href="${d.download_url}" class="download-btn" style="margin-left:.75rem">⬇ Descargar</a>
-      </div>`;
-      // Sugerir agregar a cronología
-      if (d.cronologia_sugerida) {
-        const s = d.cronologia_sugerida;
-        div.innerHTML += `<div class="alert alert-info" style="margin-top:.5rem">
-          ¿Agregar esta reunión a la cronología?
-          <button class="btn btn-outline btn-sm" style="margin-left:.5rem"
-            onclick="agregarACronologia('${esc(s.fecha)}','${esc(s.actividad)}','${esc(s.participantes)}','${esc(s.estado)}')">
-            + Agregar
-          </button>
-        </div>`;
-      }
-      cargarMinutas();
-      limpiarFormularioMinuta();
-    } else {
-      div.innerHTML = `<div class="alert" style="background:var(--danger-light);color:var(--danger)">Error: ${escHtml(d.error)}</div>`;
-    }
-  } catch(e) {
-    document.getElementById('minuta-resultado').innerHTML = `<div class="alert" style="background:var(--danger-light);color:var(--danger)">${escHtml(e.message)}</div>`;
-    document.getElementById('minuta-resultado').style.display = 'block';
-  }
-  btn.disabled = false;
-  btn.innerHTML = '📄 Generar minuta Word';
-}
-
-async function agregarACronologia(fecha, actividad, participantes, estado) {
-  await fetch('/api/senasa/cronologia', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ fecha, actividad, participantes, estado })
-  });
-  alert('Agregado a cronología.');
-}
-
-async function cargarMinutas() {
-  const r = await fetch('/api/senasa/minutas');
-  const d = await r.json();
-  const body = document.getElementById('body-minutas');
-  body.innerHTML = '';
-  (d.rows || []).forEach(m => {
-    body.innerHTML += `<tr>
-      <td style="font-family:var(--mono);font-size:.75rem">${escHtml(m.fecha)}</td>
-      <td>${escHtml(m.asunto)}</td>
-      <td>${escHtml(m.lugar)}</td>
-      <td style="font-size:.75rem;color:var(--muted)">${escHtml(m.creado_por)}</td>
-      <td style="white-space:nowrap">
-        <a href="/api/senasa/minutas/${m.id}/download" class="download-btn">⬇ Word</a>
-        <button class="btn btn-danger btn-sm" onclick="eliminarMinuta('${m.id}')">🗑</button>
-      </td>
-    </tr>`;
-  });
-}
-
-async function eliminarMinuta(id) {
-  if (!confirm('¿Eliminar esta minuta? Esta acción no se puede deshacer.')) return;
-  await fetch(`/api/senasa/minutas/${id}`, { method: 'DELETE' });
-  cargarMinutas();
-}
+// Toda la lógica del panel de Minutas (agregarParticipante, generarMinuta,
+// cargarMinutas, IA, importar .docx, etc.) ahora vive en MinutasUI, dentro de
+// common.js -- compartida por los 4 módulos con panel de Minutas (unificación
+// 23/07/2026). Ver templates/_panel_minutas.html para el HTML.
 
 // ── Acuerdos ──────────────────────────────────────────────────────────────────
 async function cargarAcuerdos() {

@@ -129,11 +129,6 @@ select option{background:var(--surface)}
 .glosario-term{font-family:var(--mono);font-size:.78rem;font-weight:600;color:var(--accent);flex-shrink:0;min-width:110px}
 .glosario-def{font-size:.8rem;color:var(--text-sub);line-height:1.5;flex:1}
 .glosario-cat-badge{font-family:var(--mono);font-size:.58rem;padding:.15rem .4rem;border-radius:20px;background:var(--bg);border:1px solid var(--border);color:var(--muted);flex-shrink:0}
-.minuta-preview{background:var(--surface2);border:1px solid rgba(26,86,219,.2);border-radius:var(--radius-sm);padding:1rem;margin-top:.75rem;display:none}
-.minuta-preview.visible{display:block}
-.minuta-preview-section{margin-bottom:.75rem}
-.minuta-preview-title{font-family:var(--mono);font-size:.62rem;color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:.1em;margin-bottom:.3rem}
-.minuta-preview-item{font-size:.8rem;color:var(--text-sub);line-height:1.55;margin-bottom:.3rem;padding-left:.75rem;border-left:2px solid var(--border)}
 @keyframes spin{to{transform:rotate(360deg)}}
 .spinner{width:13px;height:13px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;display:inline-block}
 @media(max-width:768px){
@@ -313,7 +308,6 @@ select option{background:var(--surface)}
       <div class="nav-item" id="nav-glosario"    onclick="showPanel('glosario')"><span class="nav-icon">📖</span><span class="nav-label">Glosario</span></div>
       <div class="nav-section">Gestión</div>
       <div class="nav-item" id="nav-equipo"      onclick="showPanel('equipo')"><span class="nav-icon">👥</span><span class="nav-label">Integrantes</span></div>
-      <div class="nav-item" id="nav-historial"   onclick="showPanel('historial')"><span class="nav-icon">📁</span><span class="nav-label">Historial</span></div>
       <div class="nav-item" id="nav-informe"     onclick="showPanel('informe')"><span class="nav-icon">📥</span><span class="nav-label">Descargar informe</span></div>
       <div class="nav-item" id="nav-repositorio" onclick="showPanel('repositorio')"><span class="nav-icon">🗂️</span><span class="nav-label">Repositorio</span></div>
     </nav>
@@ -331,62 +325,10 @@ select option{background:var(--surface)}
     <div class="content">
 
       <!-- MINUTAS -->
-      <div class="panel" id="tab-minutas">
-        <div class="card">
-          <div class="card-title">Importar Acta existente (.docx)</div>
-          <p style="font-size:.82rem;color:var(--muted);margin-bottom:1rem">Seleccioná un archivo Word y la IA lo estructurará en los campos del formulario.</p>
-          <input type="file" id="imp-file" accept=".docx" style="font-size:.82rem;margin-bottom:.75rem;display:block">
-          <button class="btn btn-outline btn-full" onclick="importarMinutaDocx()">✨ Estructurar con IA</button>
-          <p id="imp-status" style="font-size:.78rem;color:var(--muted);margin-top:.5rem;display:none"></p>
-        </div>
-        <div class="card">
-          <div class="card-title">Nueva Acta de Reunión</div>
-          <div style="margin-bottom:1.25rem">
-            <label>Notas de la reunión <span style="color:var(--muted);font-weight:400">(opcional — la IA las estructurará)</span></label>
-            <textarea id="min-notas" rows="4" placeholder="Pegá acá tus notas y la IA completará los campos automáticamente..."></textarea>
-            <button class="btn btn-outline btn-sm" style="margin-top:.5rem" id="btn-borrador-ia" onclick="generarBorradorIA()">✨ Generar borrador con IA</button>
-          </div>
-          <div class="minuta-preview" id="minuta-preview" style="width:100%;box-sizing:border-box;margin-bottom:1rem">
-            <div style="font-family:var(--mono);font-size:.65rem;color:var(--accent);font-weight:600;margin-bottom:.75rem">BORRADOR IA — Revisá antes de usar</div>
-            <div class="minuta-preview-section" id="preview-temas"></div>
-            <div class="minuta-preview-section" id="preview-acuerdos"></div>
-            <div class="minuta-preview-section" id="preview-pasos"></div>
-            <div style="display:flex;gap:.5rem;margin-top:.75rem">
-              <button class="btn btn-outline btn-sm" onclick="aplicarBorrador()">✓ Usar este borrador</button>
-              <button class="btn btn-outline btn-sm" style="color:var(--muted)" onclick="document.getElementById('minuta-preview').classList.remove('visible')">✕ Descartar</button>
-            </div>
-          </div>
-          <hr style="border:none;border-top:1px solid var(--border);margin-bottom:1.25rem">
-          <div class="form-row cols2">
-            <div><label>Asunto</label><input type="text" id="min-asunto" placeholder="Mesa de trabajo VUA — XFWB"></div>
-            <div><label>Fecha</label><input type="date" id="min-fecha"></div>
-          </div>
-          <div class="form-row">
-            <div><label>Lugar / Modalidad</label><input type="text" id="min-lugar" placeholder="Videoconferencia / Sala 3 Paseo Colón"></div>
-          </div>
-          <div class="form-row">
-            <label>Participantes</label>
-            <div id="participantes-list" style="margin-bottom:.5rem"></div>
-            <div style="display:flex;gap:.5rem">
-              <select id="rol-select" style="flex:1">
-                <option value="">— Participante predefinido —</option>
-                <optgroup label="Roles predefinidos VUA">
-                {% for nombre, cargo in roles.items() %}
-                <option value="{{ nombre }}" data-cargo="{{ cargo }}">{{ nombre }}</option>
-                {% endfor %}
-                </optgroup>
-                <optgroup label="Integrantes" id="optgroup-integrantes"></optgroup>
-                <option value="__custom__">+ Otro participante</option>
-              </select>
-              <button class="btn btn-outline btn-sm" onclick="agregarParticipante()">Agregar</button>
-            </div>
-          </div>
-          <div class="form-row"><div><label>Temas tratados <span style="color:var(--muted);font-weight:400">(uno por línea)</span></label><textarea id="min-temas" rows="4" placeholder="Análisis del XFWB&#10;Estado RG 5756/2025&#10;Próximos pasos MANE"></textarea></div></div>
-          <div class="form-row"><div><label>Acuerdos <span style="color:var(--muted);font-weight:400">(uno por línea)</span></label><textarea id="min-acuerdos" rows="3"></textarea></div></div>
-          <div class="form-row"><div><label>Próximos pasos <span style="color:var(--muted);font-weight:400">(uno por línea)</span></label><textarea id="min-proximos" rows="3"></textarea></div></div>
-          <button class="btn btn-primary btn-full" style="margin-top:.5rem" onclick="generarMinuta()">📋 Generar y guardar Acta</button>
-        </div>
-      </div>
+      {% set minutas_modulo = 'vua' %}
+      {% set minutas_titulo = 'VUA' %}
+      {% set minutas_cronologia = true %}
+      {% include '_panel_minutas.html' %}
 
       <!-- CORREOS -->
       <div class="panel" id="tab-correos">
@@ -576,15 +518,6 @@ select option{background:var(--surface)}
       </div>
 
       <!-- HISTORIAL -->
-      <div class="panel" id="tab-historial">
-        <div class="card">
-          <div style="display:flex;gap:.4rem;margin-bottom:1rem;flex-wrap:wrap">
-            <button class="btn btn-outline btn-sm" id="fil-todos" onclick="filtrarHist('todos')">Todas las minutas</button>
-          </div>
-          <div id="hist-vua-content"><div style="color:var(--muted);font-size:.82rem">Cargando...</div></div>
-        </div>
-      </div>
-
       <!-- INFORME -->
       <div class="panel" id="tab-informe">
         <div class="card">
@@ -660,18 +593,22 @@ const TITULOS={
   minutas:'VUA — Minutas',correos:'VUA — Correos',normativa:'VUA — Normativa',
   bpmn:'VUA — Validar BPMN',xfwb:'VUA — Checklist XFWB',estado:'VUA — Estado del Proyecto',
   ejes:'VUA — Ejes de Trabajo',riesgos:'VUA — Riesgos',cronologia:'VUA — Cronología',
-  glosario:'VUA — Glosario',equipo:'VUA — Integrantes',historial:'VUA — Historial',
+  glosario:'VUA — Glosario',equipo:'VUA — Integrantes',
   informe:'VUA — Descargar Informe',repositorio:'VUA — Repositorio de Documentos'
 };
 function showPanel(id){
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.nav-item[id^="nav-"]').forEach(n=>n.classList.remove('active'));
-  const tab=document.getElementById('tab-'+id);
+  // El panel de Minutas usa id="panel-minutas" (compartido con los otros 3
+  // módulos, ver _panel_minutas.html) en vez de "tab-minutas" como el resto
+  // de los tabs propios de VUA -- de ahí el fallback.
+  const tab=document.getElementById('tab-'+id) || document.getElementById('panel-'+id);
   if(tab) tab.classList.add('active');
   const nav=document.getElementById('nav-'+id);
   if(nav) nav.classList.add('active');
   document.getElementById('topbar-title').textContent=TITULOS[id]||'VUA';
   sidebar.classList.remove('open');overlay.classList.remove('visible');
+  if(id==='minutas') MinutasUI.init();
   if(id==='historial')loadHistorial();
   if(id==='estado')loadConfigSections();
   if(id==='ejes')loadEjes();
@@ -686,64 +623,15 @@ function showPanel(id){
 }
 showPanel('minutas');
 
-document.getElementById('min-fecha').value=fechaLocalISO();
-
-// ── Participantes ──
-let participantes=[];
-function cargarIntegrantesParaSelectorVua(){
-  fetch('/api/integrantes').then(r=>r.json()).then(data=>{
-    const og=document.getElementById('optgroup-integrantes');
-    if(!og)return;
-    og.innerHTML=(data.rows||[]).map(p=>
-      `<option value="${esc(p.nombre)}" data-cargo="${esc(p.cargo)}${p.organismo?' — '+esc(p.organismo):''}">${esc(p.nombre)}</option>`
-    ).join('');
-  });
-}
-cargarIntegrantesParaSelectorVua();
-function agregarParticipante(){
-  const sel=document.getElementById('rol-select');const val=sel.value;if(!val)return;
-  let nombre,cargo;
-  if(val==='__custom__'){nombre=prompt('Nombre completo:');if(!nombre)return;cargo=prompt('Cargo / Organismo:');if(!cargo)return;}
-  else{nombre=val;cargo=sel.selectedOptions[0].dataset.cargo}
-  if(participantes.find(p=>p.nombre===nombre))return;
-  participantes.push({nombre,cargo});renderParticipantes();sel.value='';
-}
-function renderParticipantes(){
-  document.getElementById('participantes-list').innerHTML=participantes.map((p,i)=>`
-    <div class="participante-row">
-      <input type="text" value="${esc(p.nombre)}" readonly>
-      <input type="text" value="${esc(p.cargo)}" onchange="participantes[${i}].cargo=this.value">
-      <button class="btn btn-outline btn-sm" onclick="participantes.splice(${i},1);renderParticipantes()">✕</button>
-    </div>`).join('');
-}
-
-// ── Minutas ──
-function generarMinuta(){
-  const asunto=document.getElementById('min-asunto').value.trim();
-  const temas=document.getElementById('min-temas').value.split('\n').filter(l=>l.trim());
-  const acuerdos=document.getElementById('min-acuerdos').value.split('\n').filter(l=>l.trim());
-  const proximos=document.getElementById('min-proximos').value.split('\n').filter(l=>l.trim());
-  if(!asunto){alert('El asunto es obligatorio.');return}
-  if(!temas.length){alert('Ingresá al menos un tema tratado.');return}
-  if(!participantes.length){alert('Agregá al menos un participante.');return}
-  const btn=document.querySelector('.btn-primary[onclick="generarMinuta()"]');
-  if(btn){btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Generando...';}
-  fetch('/api/vua/minuta',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-    asunto,fecha:document.getElementById('min-fecha').value.split('-').reverse().join('/'),
-    lugar:document.getElementById('min-lugar').value,participantes,temas,acuerdos,proximos
-  })}).then(r=>r.blob()).then(blob=>{
-    if(btn){btn.disabled=false;btn.innerHTML='📋 Generar y guardar Acta';}
-    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='Acta_Reunion_VUA.docx';a.click();
-    ['min-asunto','min-lugar','min-temas','min-acuerdos','min-proximos'].forEach(id=>{document.getElementById(id).value='';});
-    participantes=[];renderParticipantes();
-    document.getElementById('min-fecha').value=fechaLocalISO();
-    document.getElementById('minuta-preview').classList.remove('visible');
-    setTimeout(()=>alert('✓ Acta generada y guardada en historial.'),300);
-  }).catch(e=>{
-    if(btn){btn.disabled=false;btn.innerHTML='📋 Generar y guardar Acta';}
-    alert('Error al generar el acta: '+e.message);
-  });
-}
+// Participantes/Minutas: toda la lógica (agregarParticipante, generarMinuta,
+// cargarMinutas, IA, importar .docx, picker de integrantes, etc.) ahora
+// vive en MinutasUI, dentro de common.js -- compartida por los 4 módulos
+// con panel de Minutas (unificación 23/07/2026). Ver
+// templates/_panel_minutas.html para el HTML. El viejo selector de "roles
+// predefinidos" propio de VUA (rol-select) y el flujo de borrador con
+// vista previa separada (generarBorradorIA/aplicarBorrador) se sacaron:
+// ahora los 4 módulos usan el mismo picker de integrantes + el mismo
+// flujo directo de corrección con IA.
 
 // esc(): alias histórico de escHtml (definida ahora en common.js, compartida
 // entre todas las plantillas — antes era una copia local idéntica acá).
@@ -1021,35 +909,11 @@ function guardarTermino(){
 }
 function eliminarTermino(id){if(!confirm('¿Eliminar este término?'))return;fetch(`/api/vua/glosario/${id}`,{method:'DELETE'}).then(()=>loadGlosario());}
 
-// ── Minutas IA ──
-let borradorIA=null;
-function generarBorradorIA(){
-  const asunto=document.getElementById('min-asunto').value.trim();
-  const temas=document.getElementById('min-temas').value.split('\n').filter(l=>l.trim());
-  if(!asunto||!temas.length){alert('Completá al menos el asunto y los temas tratados.');return}
-  const btn=document.getElementById('btn-borrador-ia');btn.disabled=true;btn.innerHTML='<span class="spinner" style="border-top-color:var(--accent)"></span> Generando...';
-  fetch('/api/vua/minuta_ia',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({asunto,participantes,temas})})
-    .then(r=>r.json()).then(data=>{
-      btn.disabled=false;btn.innerHTML='✨ Borrador con IA';
-      if(!data.ok){alert('Error: '+data.error);return}
-      borradorIA=data;
-      const prev=document.getElementById('minuta-preview');
-      const renderItems=(items,title)=>{if(!items||!items.length)return '';return `<div class="minuta-preview-section"><div class="minuta-preview-title">${title}</div>${items.map(i=>`<div class="minuta-preview-item">${i}</div>`).join('')}</div>`;};
-      document.getElementById('preview-temas').innerHTML=renderItems(data.temas_tratados,'Temas tratados');
-      document.getElementById('preview-acuerdos').innerHTML=renderItems(data.acuerdos,'Acuerdos');
-      document.getElementById('preview-pasos').innerHTML=renderItems(data.proximos_pasos,'Próximos pasos');
-      prev.classList.add('visible');
-    });
-}
-function aplicarBorrador(){
-  if(!borradorIA)return;
-  if(borradorIA.temas_tratados)document.getElementById('min-temas').value=borradorIA.temas_tratados.join('\n');
-  if(borradorIA.acuerdos)document.getElementById('min-acuerdos').value=borradorIA.acuerdos.join('\n');
-  if(borradorIA.proximos_pasos)document.getElementById('min-proximos').value=borradorIA.proximos_pasos.join('\n');
-  document.getElementById('minuta-preview').classList.remove('visible');
-}
+// generarBorradorIA/aplicarBorrador se eliminaron (unificación 23/07/2026):
+// era el flujo con vista previa separada, específico de VUA. Ahora los 4
+// módulos usan MinutasUI.estructurarConIA() (aplica directo al formulario,
+// con las notas corregidas visibles en el propio textarea).
 
-// ── Riesgos ──
 // ── Riesgos ──
 let riesgosData = [];
 function abrirModalRiesgoNuevo() {
@@ -1144,27 +1008,11 @@ function loadBpmnInfo(){
 }
 
 // ── Historial ──
-let histData=[],filtroActivo='todos';
-function loadHistorial(){fetch('/api/vua/minutas').then(r=>r.json()).then(data=>{histData=data.rows||[];renderHistorial()})}
-function filtrarHist(tipo){filtroActivo=tipo;renderHistorial()}
-function renderHistorial(){
-  const el=document.getElementById('hist-vua-content');
-  const rows=filtroActivo==='todos'?histData:histData.filter(r=>r.tipo===filtroActivo);
-  if(!rows.length){el.innerHTML='<div style="color:var(--muted);font-size:.82rem">No hay registros.</div>';return}
-  let html='<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Fecha</th><th>Tipo</th><th>Descripción</th><th>Archivos</th><th></th></tr></thead><tbody>';
-  rows.forEach(r=>{
-    const tipo='<span class="tag tag-minuta">📋 Minuta VUA</span>';
-    const dl=r.tipo==='minuta'?`<a href="/api/vua/minutas/${r.id}/download" class="download-btn" style="padding:.25rem .6rem;font-size:.65rem">📥</a>`:`${r.archivo_word?`<a href="/api/historial/${r.id}/download/word" class="download-btn" style="padding:.25rem .6rem;font-size:.65rem">📄</a>`:''} ${r.archivo_excel?`<a href="/api/historial/${r.id}/download/excel" class="download-btn" style="padding:.25rem .6rem;font-size:.65rem">📊</a>`:''}`;
-    html+=`<tr><td style="font-family:var(--mono);font-size:.68rem;white-space:nowrap">${(r.fecha||'').slice(0,16)}</td><td>${tipo}</td><td style="font-size:.78rem">${esc(r.descripcion||'')}</td><td style="display:flex;gap:.3rem;flex-wrap:wrap">${dl}</td><td><button class="btn btn-danger btn-sm" onclick="eliminarHist('${r.id}','${r.tipo}')">🗑</button></td></tr>`;
-  });
-  el.innerHTML=html+'</tbody></table></div>';
-}
-function eliminarHist(id,tipo){
-  if(!confirm('¿Eliminar?'))return;
-  const url=tipo==='minuta'?`/api/vua/minutas/${id}`:`/api/historial/${id}/revisar`;
-  const opts=tipo==='minuta'?{method:'DELETE'}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accion:'eliminar'})};
-  fetch(url,opts).then(()=>loadHistorial());
-}
+// loadHistorial/renderHistorial/eliminarHist/filtrarHist se eliminaron
+// (unificación 23/07/2026): la pestaña "Historial" mostraba únicamente
+// minutas VUA (filtro hardcodeado), y esa misma tabla ya vive embebida en
+// el panel de Minutas (ver _panel_minutas.html / MinutasUI.cargarMinutas
+// en common.js), así que quedó redundante.
 
 // ── Config secciones ──
 let configData=[];
@@ -1265,36 +1113,8 @@ function showToast(msg){
   t.textContent=msg;t.style.opacity='1';setTimeout(()=>{t.style.opacity='0';},2500);
 }
 
-// ── Importar minuta DOCX ──
-async function importarMinutaDocx(){
-  const inp=document.getElementById('imp-file');const status=document.getElementById('imp-status');
-  if(!inp||!inp.files||!inp.files[0]){alert('Seleccioná un archivo .docx primero');return}
-  const file=inp.files[0];if(!file.name.endsWith('.docx')){alert('Solo se aceptan archivos .docx');return}
-  if(status){status.style.display='block';status.textContent='⏳ Procesando...';status.style.color='';}
-  try{
-    const fd=new FormData();fd.append('archivo',file);
-    const r=await fetch('/api/vua/minuta/importar',{method:'POST',body:fd});
-    const d=await r.json();if(!d.ok)throw new Error(d.error||'Error');
-    if(d.asunto)document.getElementById('min-asunto').value=d.asunto;
-    if(d.fecha)document.getElementById('min-fecha').value=d.fecha;
-    if(d.lugar)document.getElementById('min-lugar').value=d.lugar;
-    if(d.temas_tratados)document.getElementById('min-temas').value=(d.temas_tratados||[]).join('\n');
-    if(d.acuerdos)document.getElementById('min-acuerdos').value=(d.acuerdos||[]).join('\n');
-    if(d.proximos_pasos)document.getElementById('min-proximos').value=(d.proximos_pasos||[]).join('\n');
-    if(d.participantes&&d.participantes.length){
-      participantes=[];document.getElementById('participantes-list').innerHTML='';
-      d.participantes.forEach(p=>{
-        const nombre=typeof p==='string'?p:(p.nombre||'');
-        const cargo=typeof p==='object'?(p.cargo||''):'';
-        if(!nombre)return;
-        participantes.push({nombre,cargo});
-      });
-      renderParticipantes();
-    }
-    if(status){status.textContent='✓ Revisá los campos y generá el acta.';status.style.color='var(--accent2)';}
-    inp.value='';
-  }catch(e){if(status){status.textContent='✗ '+e.message;status.style.color='#dc2626';}}
-}
+// importarMinutaDocx se eliminó (unificación 23/07/2026): ahora los 4
+// módulos usan MinutasUI.importarDocx(), ver common.js.
 
 // ── Cerrar modales ──
 // cerrarModal() y el listener de click-fuera-para-cerrar ahora viven en common.js.

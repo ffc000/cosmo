@@ -183,6 +183,7 @@ input:checked+.slider::before{transform:translateX(18px)}
       <div class="nav-item" id="nav-dat"     onclick="showPanel('dat')"><span class="nav-icon">🔍</span><span class="nav-label">Consulta DAT</span></div>
       <div class="nav-item" id="nav-rec"     onclick="showPanel('rec')"><span class="nav-icon">⚠️</span><span class="nav-label">Consulta Rechazos</span></div>
       <div class="nav-item" id="nav-aduanas" onclick="showPanel('aduanas')"><span class="nav-icon">🌎</span><span class="nav-label">Aduanas del país</span></div>
+      <div class="nav-item" id="nav-minutas" onclick="showPanel('minutas')"><span class="nav-icon">📋</span><span class="nav-label">Minutas</span></div>
       <div class="nav-item" id="nav-repositorio" onclick="showPanel('repositorio')"><span class="nav-icon">🗂️</span><span class="nav-label">Repositorio</span></div>
     </nav>
     <div class="sidebar-footer">
@@ -477,7 +478,7 @@ input:checked+.slider::before{transform:translateX(18px)}
               </select>
             </div>
           </div>
-          <div class="form-row cols2">
+          <div class="form-row cols3">
             <div><label>Ult. Estado</label>
               <select id="dat-ult-estado">
                 <option value="">Todos</option>
@@ -485,6 +486,11 @@ input:checked+.slider::before{transform:translateX(18px)}
             </div>
             <div><label>Var. Control</label>
               <select id="dat-var-control">
+                <option value="">Todos</option>
+              </select>
+            </div>
+            <div><label>Tipo de operación</label>
+              <select id="dat-tipo-operacion">
                 <option value="">Todos</option>
               </select>
             </div>
@@ -605,6 +611,12 @@ input:checked+.slider::before{transform:translateX(18px)}
           </div>
         </div>
       </div>
+
+      <!-- ═══════════ PANEL: MINUTAS ═══════════ -->
+      {% set minutas_modulo = 'sintia' %}
+      {% set minutas_titulo = 'SINTIA' %}
+      {% set minutas_cronologia = false %}
+      {% include '_panel_minutas.html' %}
 
       <div class="panel" id="tab-repositorio">
         <div class="card">
@@ -752,19 +764,23 @@ document.getElementById('hamburger').addEventListener('click',()=>{sidebar.class
 overlay.addEventListener('click',()=>{sidebar.classList.remove('open');overlay.classList.remove('visible')});
 
 // ── Panel switching ──
-const TITULOS = {dashboard:'SINTIA — Dashboard', generar:'SINTIA — Generar informe', dat:'SINTIA — Consulta DAT', rec:'SINTIA — Consulta Rechazos', repositorio:'SINTIA — Repositorio de Documentos', aduanas:'SINTIA — Aduanas del país'};
+const TITULOS = {dashboard:'SINTIA — Dashboard', generar:'SINTIA — Generar informe', dat:'SINTIA — Consulta DAT', rec:'SINTIA — Consulta Rechazos', minutas:'SINTIA — Minutas', repositorio:'SINTIA — Repositorio de Documentos', aduanas:'SINTIA — Aduanas del país'};
 let _dashCharts = {};
 let _dashLoaded = false;
 function showPanel(id) {
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.nav-item[id^="nav-"]').forEach(n=>n.classList.remove('active'));
-  document.getElementById('tab-'+id).classList.add('active');
+  // El panel de Minutas usa id="panel-minutas" (compartido con VUA/SENASA/
+  // Pad Acuático, ver _panel_minutas.html) en vez de "tab-{id}" como el
+  // resto de los tabs propios de SINTIA -- de ahí el fallback.
+  (document.getElementById('tab-'+id) || document.getElementById('panel-'+id)).classList.add('active');
   document.getElementById('nav-'+id).classList.add('active');
   document.getElementById('topbar-title').textContent = TITULOS[id] || '';
   // Limpiar el otro panel al cambiar
   if(id==='dat'){limpiarRec();_poblarSelectorAnio('dat-anio').then(()=>cargarOpcionesDat());}
   else if(id==='rec'){limpiarDat();}
   else if(id==='dashboard'){loadDashboard();}
+  else if(id==='minutas'){MinutasUI.init();}
   else if(id==='repositorio'){cargarRepositorio('sintia');}
   else if(id==='aduanas'){_poblarSelectorAnio('aduanas-anio').then(()=>cargarAduanasNacional());}
 }
@@ -960,6 +976,7 @@ async function cargarOpcionesDat(forzar) {
     llenar('dat-est', d.est_mic);
     llenar('dat-ult-estado', d.ult_estado);
     llenar('dat-var-control', d.var_control);
+    llenar('dat-tipo-operacion', d.tipo_operacion);
     llenar('dat-controles', d.controles);
     _datOpcionesAnioCargado = anio;
     const info = document.getElementById('dat-opciones-info');
@@ -999,6 +1016,7 @@ function buscarDat(){
     est:    document.getElementById('dat-est').value,
     ult_estado: document.getElementById('dat-ult-estado').value,
     var_control: document.getElementById('dat-var-control').value,
+    tipo_operacion: document.getElementById('dat-tipo-operacion').value,
     novedad:document.getElementById('dat-novedad').value,
     controles: document.getElementById('dat-controles').value,
     cant_controles_min: document.getElementById('dat-cant-controles-min').value,
@@ -1029,7 +1047,7 @@ function _fetchDat(){
 }
 function limpiarDat(){
   ['dat-fec-d','dat-fec-h','dat-ftx-d','dat-ftx-h','dat-mic','dat-lot','dat-empresa','dat-vehiculo','dat-cant-controles-min','dat-cant-controles-max'].forEach(id=>document.getElementById(id).value='');
-  ['dat-aduana','dat-tipo','dat-cargado','dat-pais','dat-est','dat-ult-estado','dat-var-control','dat-novedad','dat-controles'].forEach(id=>document.getElementById(id).value='');
+  ['dat-aduana','dat-tipo','dat-cargado','dat-pais','dat-est','dat-ult-estado','dat-var-control','dat-tipo-operacion','dat-novedad','dat-controles'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('dat-resultado').style.display='none';
   document.getElementById('dat-resumen').innerHTML='';
   document.getElementById('dat-filtro').value='';
@@ -1054,6 +1072,7 @@ function exportarDat(){
     est:document.getElementById('dat-est').value,
     ult_estado: document.getElementById('dat-ult-estado').value,
     var_control: document.getElementById('dat-var-control').value,
+    tipo_operacion: document.getElementById('dat-tipo-operacion').value,
     novedad:document.getElementById('dat-novedad').value,
     controles: document.getElementById('dat-controles').value,
     cant_controles_min: document.getElementById('dat-cant-controles-min').value,

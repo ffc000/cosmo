@@ -1,0 +1,106 @@
+{#
+  _panel_minutas.html — Panel de Minutas unificado (23/07/2026).
+
+  Variables que tiene que setear quien lo incluya (con {% set %} antes del
+  {% include %}):
+    minutas_modulo:      string, ej. 'pad_acuatico' -- se usa para armar
+                          las URLs de la API (/api/{{ minutas_modulo }}/...)
+    minutas_titulo:       nombre legible para los placeholders, ej. "Pad Acuático"
+    minutas_cronologia:   true/false -- si el módulo tiene panel de
+                          Cronología, se ofrece "¿Agregar a cronología?"
+                          después de generar. SINTIA no lo tiene.
+
+  El JS que maneja todo esto (agregarParticipante, generarMinuta,
+  cargarMinutas, etc.) vive en /static/common.js, compartido por los 4
+  módulos -- lee el módulo actual del atributo data-modulo de
+  #panel-minutas, así que este mismo HTML + el mismo JS sirven para los
+  cuatro sin duplicar nada.
+#}
+<div id="panel-minutas" class="panel" data-modulo="{{ minutas_modulo }}" data-cronologia="{{ 'true' if minutas_cronologia else 'false' }}">
+  <div class="card">
+    <div class="card-title">Notas de la reunión (para estructurar con IA)</div>
+    <div class="alert alert-info" style="margin-bottom:1rem">
+      Pegá tus notas tal como las tomaste -- con errores de tipeo o abreviado, no importa -- y la IA arma
+      una minuta corregida y completa. También podés importar un acta ya existente en Word, o completar el
+      formulario directamente.
+    </div>
+    <textarea id="notas-ia" rows="5" placeholder="Pegá acá tus notas y la IA va a estructurar la minuta..."></textarea>
+    <button class="btn btn-outline btn-sm" style="margin-top:.5rem" onclick="MinutasUI.estructurarConIA()">
+      ✨ Estructurar con IA
+    </button>
+    <div id="ia-resultado" class="ia-sugerencia"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Importar acta existente (.docx)</div>
+    <p style="font-size:.82rem;color:var(--muted);margin-bottom:1rem">
+      ¿Ya tenés un acta escrita afuera del sistema? Subila y la IA la estructura en el formulario de abajo.
+    </p>
+    <div class="form-row cols2">
+      <input type="file" id="importar-minuta-archivo" accept=".docx">
+      <button class="btn btn-outline" onclick="MinutasUI.importarDocx()">📤 Importar y estructurar</button>
+    </div>
+    <div id="importar-minuta-status" style="margin-top:.5rem;font-size:.82rem"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Nueva minuta</div>
+    <div class="form-row cols2">
+      <div><label>Fecha</label><input type="date" id="m-fecha"></div>
+      <div><label>Lugar</label><input type="text" id="m-lugar" placeholder="Meet / presencial..."></div>
+    </div>
+    <div class="form-row">
+      <div><label>Asunto</label><input type="text" id="m-asunto" placeholder="Ej: Reunión técnica {{ minutas_titulo }}"></div>
+    </div>
+
+    <div style="margin-bottom:.9rem">
+      <label>Participantes</label>
+      <div id="participantes-list">
+        <div class="participante-row">
+          <input type="text" placeholder="Nombre" class="p-nombre">
+          <input type="text" placeholder="Cargo" class="p-cargo">
+          <input type="text" placeholder="Organismo" class="p-org">
+          <button class="btn btn-danger btn-sm" onclick="MinutasUI.quitarParticipante(this)">✕</button>
+        </div>
+      </div>
+      <button class="btn btn-outline btn-sm" style="margin-top:.4rem" onclick="MinutasUI.agregarParticipante()">+ Participante</button>
+      <select id="picker-integrantes" style="margin-top:.4rem;margin-left:.4rem;width:auto;display:inline-block;font-family:var(--sans);font-size:.8rem" onchange="MinutasUI.agregarParticipanteDeIntegrante(this)">
+        <option value="">+ Desde integrantes...</option>
+      </select>
+    </div>
+
+    <div style="margin-bottom:.9rem">
+      <label>Temas tratados</label>
+      <ul class="lista-items" id="lista-temas"><li><input type="text" placeholder="Tema..."><button class="btn btn-danger btn-sm" onclick="MinutasUI.quitarItem(this)">✕</button></li></ul>
+      <button class="btn btn-outline btn-sm" onclick="MinutasUI.agregarItem('lista-temas', 'Tema...')">+ Tema</button>
+    </div>
+    <div style="margin-bottom:.9rem">
+      <label>Principales conclusiones</label>
+      <ul class="lista-items" id="lista-conclusiones"><li><input type="text" placeholder="Conclusión..."><button class="btn btn-danger btn-sm" onclick="MinutasUI.quitarItem(this)">✕</button></li></ul>
+      <button class="btn btn-outline btn-sm" onclick="MinutasUI.agregarItem('lista-conclusiones', 'Conclusión...')">+ Conclusión</button>
+    </div>
+    <div style="margin-bottom:.9rem">
+      <label>Compromisos asumidos</label>
+      <ul class="lista-items" id="lista-compromisos"><li><input type="text" placeholder="ORGANISMO — compromiso..."><button class="btn btn-danger btn-sm" onclick="MinutasUI.quitarItem(this)">✕</button></li></ul>
+      <button class="btn btn-outline btn-sm" onclick="MinutasUI.agregarItem('lista-compromisos', 'ORGANISMO — compromiso...')">+ Compromiso</button>
+    </div>
+    <div style="margin-bottom:1.25rem">
+      <label>Próximos pasos</label>
+      <ul class="lista-items" id="lista-proximos"><li><input type="text" placeholder="Próximo paso..."><button class="btn btn-danger btn-sm" onclick="MinutasUI.quitarItem(this)">✕</button></li></ul>
+      <button class="btn btn-outline btn-sm" onclick="MinutasUI.agregarItem('lista-proximos', 'Próximo paso...')">+ Paso</button>
+    </div>
+
+    <button class="btn btn-primary" onclick="MinutasUI.generarMinuta()" id="btn-generar">
+      📄 Generar minuta Word
+    </button>
+    <div id="minuta-resultado" style="margin-top:1rem;display:none"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Minutas generadas</div>
+    <table class="data-table">
+      <thead><tr><th>Fecha</th><th>Asunto</th><th>Lugar</th><th>Generada por</th><th></th></tr></thead>
+      <tbody id="body-minutas"></tbody>
+    </table>
+  </div>
+</div>
