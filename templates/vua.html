@@ -1145,7 +1145,7 @@ function loadBpmnInfo(){
 
 // ── Historial ──
 let histData=[],filtroActivo='todos';
-function loadHistorial(){fetch('/api/historial/completo').then(r=>r.json()).then(data=>{histData=(data.rows||[]).filter(r=>r.tipo==='minuta');renderHistorial()})}
+function loadHistorial(){fetch('/api/vua/minutas').then(r=>r.json()).then(data=>{histData=data.rows||[];renderHistorial()})}
 function filtrarHist(tipo){filtroActivo=tipo;renderHistorial()}
 function renderHistorial(){
   const el=document.getElementById('hist-vua-content');

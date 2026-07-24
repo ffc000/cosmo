@@ -757,6 +757,8 @@ function limpiarFormularioMinuta() {
 }
 
 async function generarMinuta() {
+  const asunto = document.getElementById('m-asunto').value.trim();
+  if (!asunto) { alert('El asunto es obligatorio.'); document.getElementById('m-asunto').focus(); return; }
   const btn = document.getElementById('btn-generar');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Generando...';
@@ -768,7 +770,7 @@ async function generarMinuta() {
   const data = {
     fecha: document.getElementById('m-fecha').value,
     lugar: document.getElementById('m-lugar').value,
-    asunto: document.getElementById('m-asunto').value,
+    asunto,
     participantes,
     temas: getItems('lista-temas'),
     conclusiones: getItems('lista-conclusiones'),
