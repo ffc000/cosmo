@@ -31,6 +31,8 @@ from blueprints.senasa import senasa_bp
 app.register_blueprint(senasa_bp)
 from blueprints.pad_acuatico import pad_acuatico_bp
 app.register_blueprint(pad_acuatico_bp)
+from blueprints.sintia_minutas import sintia_minutas_bp
+app.register_blueprint(sintia_minutas_bp)
 from blueprints.finanzas import finanzas_bp
 app.register_blueprint(finanzas_bp)
 
@@ -313,6 +315,8 @@ _LIMPIEZA_ARCHIVOS = [
     (STOCK_REPORTS_DIR,    [("stock_reportes", "file_path")],                              False),
     ("/data/minutas",      [("vua_minutas", "archivo")],                                   False),
     ("/data/minutas_senasa", [("senasa_minutas", "archivo")],                              False),
+    ("/data/minutas_pad_acuatico", [("pad_acuatico_minutas", "archivo")],                  False),
+    ("/data/minutas_sintia", [("sintia_minutas", "archivo")],                              False),
 ]
 
 def _limpiar_archivos_huerfanos():
@@ -554,6 +558,17 @@ def init_historial():
             participantes TEXT, temas TEXT, acuerdos TEXT, proximos TEXT,
             archivo TEXT, creado_por TEXT, creado TEXT
         )""")
+        # Unificación del panel de Minutas en los 4 módulos (23/07/2026):
+        # se suma "conclusiones" como campo propio, separado de "acuerdos"
+        # (que pasa a mostrarse como "Compromisos" en la UI unificada, sin
+        # tocar el nombre de columna para no perder datos viejos -- ver
+        # blueprints/vua.py, la API ahora acepta "compromisos" y lo guarda
+        # acá adentro). Try/except de resguardo, mismo criterio que
+        # descripcion/propuesta_vucea/etc. de vua_ejes arriba.
+        try:
+            con.execute("ALTER TABLE vua_minutas ADD COLUMN conclusiones TEXT DEFAULT '[]'")
+        except Exception:
+            pass  # ya existe
         con.execute("""CREATE TABLE IF NOT EXISTS vua_ejes (
             id TEXT PRIMARY KEY, nombre TEXT, estado TEXT, orden INTEGER DEFAULT 0,
             descripcion TEXT DEFAULT '', propuesta_vucea TEXT DEFAULT '',
@@ -711,6 +726,15 @@ def init_historial():
             valores TEXT NOT NULL,
             actualizado TEXT DEFAULT (datetime('now')),
             PRIMARY KEY (tabla, campo)
+        )""")
+
+        # Panel de Minutas de SINTIA (unificación de los 4 módulos, 23/07/2026)
+        # -- mismo esquema que senasa_minutas/pad_acuatico_minutas.
+        con.execute("""CREATE TABLE IF NOT EXISTS sintia_minutas (
+            id TEXT PRIMARY KEY, fecha TEXT, asunto TEXT, lugar TEXT,
+            participantes TEXT, temas TEXT, conclusiones TEXT,
+            compromisos TEXT, proximos TEXT, archivo TEXT,
+            creado_por TEXT, creado TEXT DEFAULT (datetime('now'))
         )""")
 
         # ── Metadata de modificaciones a tablas de DB_PATH (PAD) ────────────────────
