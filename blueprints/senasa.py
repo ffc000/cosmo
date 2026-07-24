@@ -168,6 +168,7 @@ def senasa_minuta_create():
         "ACTA DE REUNIÓN — SENASA / ARCA", fecha, asunto, lugar, participantes,
         secciones=[("Temas tratados", temas), ("Conclusiones", conclusiones),
                    ("Compromisos", compromisos), ("Próximos pasos", proximos)],
+        notas_completas=data.get("notas_completas", ""),
     )
 
     os.makedirs("/data/minutas_senasa", exist_ok=True)

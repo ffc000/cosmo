@@ -172,6 +172,7 @@ def pad_acuatico_minuta_create():
         "ACTA DE REUNIÓN — PAD ACUÁTICO / ARCA", fecha, asunto, lugar, participantes,
         secciones=[("Temas tratados", temas), ("Conclusiones", conclusiones),
                    ("Compromisos", compromisos), ("Próximos pasos", proximos)],
+        notas_completas=data.get("notas_completas", ""),
     )
 
     os.makedirs("/data/minutas_pad_acuatico", exist_ok=True)
