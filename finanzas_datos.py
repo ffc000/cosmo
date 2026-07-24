@@ -209,14 +209,32 @@ def _normalizar(desc: str) -> str:
     return re.sub(r"\s+", " ", desc.upper()).strip()
 
 
-def categorizar(db_path: str, descripcion: str):
-    """Devuelve categoria_id según las reglas guardadas (prioridad desc, luego
-    la regla más específica/larga gana en empate). None si no matchea nada."""
+def _obtener_reglas_categorizacion(db_path: str):
+    """Trae las reglas de categorización una sola vez, para reusar en un
+    loop con categorizar(..., reglas=...) en vez de que cada llamada abra
+    su propia conexión y vuelva a traer todo desde cero (encontrado en
+    auditoría, 23/07/2026: guardar_movimientos() y la previsualización de
+    import en blueprints/finanzas.py llamaban a categorizar() una vez POR
+    MOVIMIENTO de un resumen -- un resumen normal tiene decenas de líneas,
+    y esto duplicaba el trabajo: se llama una vez en la previsualización y
+    otra vez al confirmar el import)."""
     with get_db(db_path, row_factory=True) as con:
-        reglas = con.execute(
+        return con.execute(
             "SELECT patron, categoria_id, prioridad FROM fin_reglas_categorizacion "
             "ORDER BY prioridad DESC, LENGTH(patron) DESC"
         ).fetchall()
+
+
+def categorizar(db_path: str, descripcion: str, reglas=None):
+    """Devuelve categoria_id según las reglas guardadas (prioridad desc, luego
+    la regla más específica/larga gana en empate). None si no matchea nada.
+
+    reglas: opcional, resultado ya cargado de _obtener_reglas_categorizacion()
+    -- pasalo cuando llames a esto dentro de un loop (ver guardar_movimientos
+    más abajo) para no reabrir conexión y re-traer todas las reglas en cada
+    vuelta. Si no se pasa, se comporta igual que antes (self-contained)."""
+    if reglas is None:
+        reglas = _obtener_reglas_categorizacion(db_path)
     desc_norm = _normalizar(descripcion)
     for r in reglas:
         if r["patron"].upper() in desc_norm:
@@ -317,6 +335,7 @@ def guardar_movimientos(db_path: str, tarjeta_id: str, resumen_id: str, movimien
     with get_db(db_path, row_factory=True) as con:
         ahora = datetime.now().isoformat()
         resultado = []
+        reglas_cache = _obtener_reglas_categorizacion(db_path)
         for m in movimientos:
             mid = _id_movimiento(tarjeta_id, m["fecha"], m["descripcion"],
                                   m["monto_ars"], m["monto_usd"], m.get("comprobante", ""),
@@ -340,7 +359,7 @@ def guardar_movimientos(db_path: str, tarjeta_id: str, resumen_id: str, movimien
                         if prev:
                             categoria_id = prev["categoria_id"]
                     if not categoria_id:
-                        categoria_id = categorizar(db_path, m["descripcion"])
+                        categoria_id = categorizar(db_path, m["descripcion"], reglas=reglas_cache)
                 elif m["tipo"] == "cargo":
                     categoria_id = "cargos_tarjeta"
 
