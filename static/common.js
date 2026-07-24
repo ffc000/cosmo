@@ -96,3 +96,55 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   });
 });
+
+// cargarPickerIntegrantes/agregarParticipanteDeIntegrante: picker de
+// "+ Desde integrantes..." en el formulario de Minutas. Estaba duplicado
+// letra por letra en pad_acuatico.html y senasa.html (encontrado en
+// auditoría, 23/07/2026) -- se centraliza acá con el mismo criterio que
+// escHtml/fechaLocalISO/abrirModal de arriba. Depende de una convención
+// de IDs/clases que ya comparten esas plantillas: un <select
+// id="picker-integrantes">, un contenedor #participantes-list con filas
+// .participante-row que tienen inputs .p-nombre/.p-cargo/.p-org, y una
+// función agregarParticipante() en la página que agrega una fila vacía
+// (cada plantilla define la suya, con el mismo formato de fila). VUA no
+// usa este picker -- integra los integrantes directo en su propio
+// selector de "roles predefinidos" (ver vua.html) -- así que esta
+// función simplemente no se usa ahí, sin conflicto.
+let integrantesParaMinuta = [];
+function cargarPickerIntegrantes() {
+  fetch('/api/integrantes').then(r => r.json()).then(data => {
+    integrantesParaMinuta = data.rows || [];
+    const sel = document.getElementById('picker-integrantes');
+    if (!sel) return;
+    const organismos = [...new Set(integrantesParaMinuta.map(p => p.organismo))];
+    sel.innerHTML = '<option value="">+ Desde integrantes...</option>' + organismos.map(org => {
+      const personas = integrantesParaMinuta
+        .map((p, i) => ({ ...p, _idx: i }))
+        .filter(p => p.organismo === org);
+      return `<optgroup label="${escHtml(org)}">${personas.map(p =>
+        `<option value="${p._idx}">${escHtml(p.nombre)} — ${escHtml(p.cargo)}</option>`).join('')}</optgroup>`;
+    }).join('');
+  });
+}
+function agregarParticipanteDeIntegrante(selectEl) {
+  const idx = selectEl.value;
+  if (idx === '') return;
+  const persona = integrantesParaMinuta[idx];
+  selectEl.value = '';
+  if (!persona) return;
+  // Si ya está agregado (mismo nombre), no lo duplica
+  const yaEsta = Array.from(document.querySelectorAll('#participantes-list .p-nombre'))
+    .some(inp => inp.value.trim().toLowerCase() === persona.nombre.toLowerCase());
+  if (yaEsta) return;
+  // Reusa la primera fila vacía si existe; si no, agrega una nueva
+  let filas = document.querySelectorAll('#participantes-list .participante-row');
+  let fila = Array.from(filas).find(f => !f.querySelector('.p-nombre').value.trim());
+  if (!fila) {
+    agregarParticipante();
+    filas = document.querySelectorAll('#participantes-list .participante-row');
+    fila = filas[filas.length - 1];
+  }
+  fila.querySelector('.p-nombre').value = persona.nombre;
+  fila.querySelector('.p-cargo').value = persona.cargo || '';
+  fila.querySelector('.p-org').value = persona.organismo || '';
+}
