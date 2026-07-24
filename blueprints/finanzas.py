@@ -202,9 +202,10 @@ def api_fin_upload():
 
     # Pre-categorizar para la previsualización (todavía no se guarda en BD)
     posibles_dup_total = 0
+    reglas_cache = fin._obtener_reglas_categorizacion(HIST_DB)
     for m in movimientos:
         if m["tipo"] == "consumo":
-            m["categoria_id"] = fin.categorizar(HIST_DB, m["descripcion"])
+            m["categoria_id"] = fin.categorizar(HIST_DB, m["descripcion"], reglas=reglas_cache)
         elif m["tipo"] == "cargo":
             m["categoria_id"] = "cargos_tarjeta"
         else:
