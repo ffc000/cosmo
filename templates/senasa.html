@@ -776,6 +776,7 @@ async function generarMinuta() {
     conclusiones: getItems('lista-conclusiones'),
     compromisos: getItems('lista-compromisos'),
     proximos: getItems('lista-proximos'),
+    notas_completas: document.getElementById('notas-ia').value,
   };
   try {
     const r = await fetch('/api/senasa/minuta', {
