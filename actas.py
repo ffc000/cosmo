@@ -33,7 +33,7 @@ from generar_documento import agregar_tabla_word, _agregar_encabezado, _agregar_
 
 
 def generar_acta_word(titulo_doc, fecha, asunto, lugar, participantes, secciones,
-                       roles_predefinidos=None, nombre_archivo=""):
+                       roles_predefinidos=None, nombre_archivo="", notas_completas=""):
     """
     titulo_doc: encabezado del documento, ej. "ACTA DE REUNIÓN" (VUA) o
         "ACTA DE REUNIÓN — SENASA / ARCA" (SENASA).
@@ -47,6 +47,15 @@ def generar_acta_word(titulo_doc, fecha, asunto, lugar, participantes, secciones
     nombre_archivo: opcional, para mostrar en el pie de página -- el caller
         es quien decide el nombre final del archivo (esta función no lo
         guarda), así que si no se pasa, el pie queda sin nombre de archivo.
+    notas_completas: opcional -- texto corrido (ya corregido/completado por
+        IA o escrito a mano) con las notas de la reunión tal cual, para
+        agregar como sección final del acta. A pedido (23/07/2026): al
+        estructurar la reunión en temas/conclusiones/compromisos/próximos
+        se pierde matiz -- una nota puede tener contexto que no encaja
+        prolijo en ninguna de esas categorías. Esta sección final conserva
+        ese texto completo como respaldo, sin descartar nada. Si no se
+        pasa (o viene vacío), no se agrega ninguna sección -- mismo
+        comportamiento que antes para quien no la use.
 
     Devuelve un objeto Document (python-docx) ya armado — el caller decide
     dónde guardarlo (doc.save(ruta)).
@@ -101,5 +110,19 @@ def generar_acta_word(titulo_doc, fecha, asunto, lugar, participantes, secciones
         for item in items:
             p = doc.add_paragraph(style="List Bullet")
             p.add_run(item).font.size = Pt(11)
+
+    if notas_completas and notas_completas.strip():
+        doc.add_paragraph()
+        doc.add_paragraph().add_run("Notas completas de la reunión").bold = True
+        p_intro = doc.add_paragraph()
+        r_intro = p_intro.add_run(
+            "Texto de referencia con el detalle completo de la reunión, para consulta "
+            "si algo no quedó reflejado en las secciones de arriba.")
+        r_intro.italic = True
+        r_intro.font.size = Pt(9)
+        r_intro.font.color.rgb = RGBColor(0x6B, 0x72, 0x80)
+        for parrafo in notas_completas.strip().split("\n"):
+            if parrafo.strip():
+                doc.add_paragraph(parrafo.strip()).runs[0].font.size = Pt(10.5)
 
     return doc
